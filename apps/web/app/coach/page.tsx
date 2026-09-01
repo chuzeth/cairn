@@ -142,7 +142,7 @@ export default function CoachPage() {
     } catch (e) {
       patchLast((m) => ({
         ...m,
-        content: `**Impossible de joindre le coach.** ${e instanceof Error ? e.message : String(e)}\n\nVérifie que l'API tourne et que \`ANTHROPIC_API_KEY\` est renseignée dans \`.env\`.`,
+        content: `**Impossible de joindre le coach.** ${e instanceof Error ? e.message : String(e)}\n\nCe chat appelle l'API Anthropic, qui est facturée. Sans \`ANTHROPIC_API_KEY\`, utilise le coach par le serveur MCP depuis Claude Code — mêmes outils, mêmes données, aucun coût.`,
         streaming: false,
       }));
     } finally {

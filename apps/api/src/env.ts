@@ -19,12 +19,18 @@ const PLACEHOLDERS = [/^sk-ant-\.\.\.$/, /^\s*$/, /^x{3,}$/i, /^<.*>$/, /^change
 const isSet = (value: string | undefined): boolean =>
   value != null && !PLACEHOLDERS.some((p) => p.test(value.trim()));
 
+/**
+ * Ce sans quoi l'import Strava — donc tout le système — ne peut pas fonctionner.
+ *
+ * `ANTHROPIC_API_KEY` n'y figure pas : elle n'ouvre que le chat intégré et les
+ * analyses rédigées, et elle est facturée à l'usage. Tous les calculs sont
+ * déterministes et tournent sans elle ; le coach reste accessible par le serveur
+ * MCP, où le modèle est fourni par le client. Une clé absente n'est donc pas une
+ * configuration incomplète, c'est un choix.
+ */
 export function missingConfig(): string[] {
   const missing: string[] = [];
   if (!isSet(process.env.STRAVA_CLIENT_ID)) missing.push('STRAVA_CLIENT_ID');
   if (!isSet(process.env.STRAVA_CLIENT_SECRET)) missing.push('STRAVA_CLIENT_SECRET');
-  if (!isSet(process.env.ANTHROPIC_API_KEY) && !isSet(process.env.ANTHROPIC_AUTH_TOKEN)) {
-    missing.push('ANTHROPIC_API_KEY');
-  }
   return missing;
 }
