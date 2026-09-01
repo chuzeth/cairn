@@ -1,0 +1,19 @@
+{
+  "name": "@cairn/mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": { "cairn-mcp": "src/index.ts" },
+  "scripts": {
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts"
+  },
+  "dependencies": {
+    "@cairn/coach": "*",
+    "@cairn/core": "*",
+    "@cairn/db": "*",
+    "@cairn/physiology": "*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.76"
+  }
+}

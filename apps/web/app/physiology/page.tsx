@@ -1,0 +1,222 @@
+'use client';
+import { useCallback, useEffect, useState } from 'react';
+import { get, post, type StateResponse } from '@/lib/api';
+import { Badge, Card, ErrorBox, Loading, Metric } from '@/components/ui';
+import { DurationCurve } from '@/components/charts';
+
+interface Curves {
+  vitesse_graduee_par_duree_kmh: Record<string, number>;
+  vam_par_duree_m_par_h: Record<string, number>;
+  vitesse_critique: { retenue_kmh: number; ajustement_terrain_kmh: number | null; d_prime_m: number; qualite_ajustement: string; r2: number };
+  note: string;
+}
+
+const PROVENANCE_LABEL: Record<string, string> = {
+  lab: 'mesuré en laboratoire',
+  field: 'estimé depuis le terrain',
+  blended: 'laboratoire + terrain',
+  default: 'valeur par défaut',
+};
+const PROVENANCE_TONE: Record<string, string | undefined> = {
+  lab: 'good', field: 'metabolic', blended: undefined, default: 'watch',
+};
+
+/** Convertit « 5 min », « 1 h », « 30 s » en secondes, pour retracer les courbes. */
+function parseDurationLabel(label: string): number {
+  const m = /^([\d.]+)\s*(s|min|h)$/.exec(label.trim());
+  if (!m) return NaN;
+  const v = Number(m[1]);
+  return m[2] === 'h' ? v * 3600 : m[2] === 'min' ? v * 60 : v;
+}
+
+export default function PhysiologyPage() {
+  const [state, setState] = useState<StateResponse | null>(null);
+  const [curves, setCurves] = useState<Curves | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [rebuilding, setRebuilding] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const s = await get<StateResponse>('/api/state');
+      setState(s);
+      // Les courbes exigent un historique analysé : leur absence n'est pas une
+      // erreur, simplement une donnée pas encore disponible.
+      setCurves(await get<Curves>('/api/curves').catch(() => null));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const rebuild = async () => {
+    setRebuilding(true);
+    try { await post('/api/model/rebuild'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setRebuilding(false); }
+  };
+
+  if (error) return <ErrorBox error={error} onRetry={load} />;
+  if (!state) return <Loading />;
+
+  const m = state.model;
+  const lab = state.labTest as Record<string, any> | null;
+  const vamPoints = Object.entries(m.vamCurve ?? {})
+    .map(([k, v]) => ({ durationS: Number(k), value: v }))
+    .filter((p) => Number.isFinite(p.durationS) && p.value > 0);
+
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Physiologie</h1>
+          <p className="page-sub">
+            Modèle du {m.asOf} · confiance {Math.round(m.confidence * 100)} % ·
+            {' '}chaque paramètre indique s'il vient du laboratoire ou du terrain
+          </p>
+        </div>
+        <button className="btn" onClick={rebuild} disabled={rebuilding}>
+          {rebuilding ? <><span className="spinner" /> Recalcul…</> : 'Recalculer le modèle'}
+        </button>
+      </div>
+
+      <div className="grid grid-4" style={{ marginBottom: 14 }}>
+        <Card>
+          <Metric label="Vitesse critique" value={m.criticalSpeedKmh.toFixed(2)} unit="km/h" note={`${m.criticalPace}/km · D' ${m.dPrimeM} m`} tone="metabolic" />
+          <Badge tone={PROVENANCE_TONE[m.provenance.criticalSpeedMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.criticalSpeedMs ?? 'default']}</Badge>
+        </Card>
+        <Card>
+          <Metric label="VMA" value={m.vmaKmh.toFixed(1)} unit="km/h" note={`VO2max ${m.vo2maxRel} ml/kg/min`} />
+          <Badge tone={PROVENANCE_TONE[m.provenance.vmaMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.vmaMs ?? 'default']}</Badge>
+        </Card>
+        <Card>
+          <Metric label="Seuil 2 (anaérobie)" value={m.vt2Kmh.toFixed(1)} unit="km/h" note={`${m.vt2.hr} bpm`} tone="watch" />
+          <Badge tone={PROVENANCE_TONE[m.provenance['vt2.hr'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt2.hr'] ?? 'default']}</Badge>
+        </Card>
+        <Card>
+          <Metric label="Seuil 1 (aérobie)" value={m.vt1Kmh.toFixed(1)} unit="km/h" note={`${m.vt1.hr} bpm`} />
+          <Badge tone={PROVENANCE_TONE[m.provenance['vt1.hr'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt1.hr'] ?? 'default']}</Badge>
+        </Card>
+      </div>
+
+      <div className="grid grid-2" style={{ marginBottom: 14 }}>
+        <Card title="Zones d'entraînement" hint="Calibrées sur tes seuils actuels — elles évoluent avec toi.">
+          <table>
+            <thead><tr><th>Zone</th><th>Objectif</th><th className="right">FC</th><th className="right">Allure</th></tr></thead>
+            <tbody>
+              {state.zones.map((z) => (
+                <tr key={z.key}>
+                  <td>
+                    <div className="row" style={{ gap: 7 }}>
+                      <span className="legend-swatch" style={{ background: `var(--${z.key.toLowerCase()})`, width: 10, height: 10 }} />
+                      <strong className="small">{z.key}</strong>
+                    </div>
+                    <div className="tiny faint">{z.label}</div>
+                  </td>
+                  <td className="tiny muted" style={{ maxWidth: 260 }}>{z.purpose}</td>
+                  <td className="right mono tiny">
+                    {/* La première zone n'a pas de borne basse : on l'écrit comme telle
+                        plutôt que d'afficher un zéro ou un tiret trompeur. */}
+                    {z.hrMin > 0 ? `${Math.round(z.hrMin)} – ${Math.round(z.hrMax)}` : `< ${Math.round(z.hrMax)}`}
+                  </td>
+                  <td className="right mono tiny">
+                    {z.speedMinKmh > 0 ? `${z.paceMin} – ${z.paceMax}` : `> ${z.paceMin}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+
+        <Card title="Durabilité et descente" hint="Les deux qualités qui décident d'un trail, et que la VO2max ne dit pas.">
+          <div className="grid grid-2" style={{ marginBottom: 14 }}>
+            <Metric label="Perte de rendement" value={m.durabilityPctPerHour.toFixed(1)} unit="%/h" tone={m.durabilityPctPerHour < 3 ? 'good' : 'watch'} />
+            <Metric label="Par 1 000 m D+" value={m.durabilityPctPer1000mVert.toFixed(1)} unit="%" />
+          </div>
+          <div className="grid grid-2">
+            <Metric label="Aisance en descente" value={(m.descentSkill ?? 1).toFixed(2)} note="1,00 = bon trailer de référence" tone={(m.descentSkill ?? 1) >= 1 ? 'good' : 'watch'} />
+            <Metric label="FC max / repos" value={`${m.hrMax} / ${m.hrRest}`} unit="bpm" note={`réserve ${m.hrMax - m.hrRest} bpm`} />
+          </div>
+          <p className="tiny faint" style={{ marginTop: 14, marginBottom: 0 }}>
+            La durabilité mesure la vitesse à laquelle ton rendement s'effondre au fil de l'effort. C'est le
+            troisième pilier de la performance d'endurance, après la VO2max et l'économie de course — et le plus
+            entraînable des trois.
+          </p>
+        </Card>
+      </div>
+
+      {curves && Object.keys(curves.vitesse_graduee_par_duree_kmh).length > 2 && (
+        <Card
+          title="Courbe vitesse-durée"
+          hint={`Vitesse critique retenue ${curves.vitesse_critique.retenue_kmh.toFixed(2)} km/h · D' ${curves.vitesse_critique.d_prime_m} m · ajustement ${curves.vitesse_critique.qualite_ajustement}`}
+          style={{ marginBottom: 14 }}
+        >
+          <DurationCurve
+            points={Object.entries(curves.vitesse_graduee_par_duree_kmh)
+              .map(([k, v]) => ({ durationS: parseDurationLabel(k), value: v }))
+              .filter((p) => Number.isFinite(p.durationS))}
+            color="var(--metabolic)"
+            unit="km/h"
+            label="Meilleure vitesse corrigée de la pente"
+          />
+          <p className="tiny faint" style={{ marginTop: 8, marginBottom: 0 }}>{curves.note}</p>
+        </Card>
+      )}
+
+      {vamPoints.length > 2 && (
+        <Card title="Courbe de grimpeur" hint="Meilleure vitesse ascensionnelle soutenue, par durée." style={{ marginBottom: 14 }}>
+          <DurationCurve points={vamPoints} color="var(--mechanical)" unit="m D+/h" label="Vitesse ascensionnelle" />
+        </Card>
+      )}
+
+      {lab && (
+        <Card title="Test d'effort de référence" hint={`${lab.lab} · ${lab.date}`}>
+          <div className="grid grid-4" style={{ marginBottom: 16 }}>
+            <Metric label="VO2max" value={lab.vo2maxRel} unit="ml/kg/min" note={`${lab.vo2maxAbs} L/min`} />
+            <Metric label="VMA" value={(lab.vmaMs * 3.6).toFixed(1)} unit="km/h" />
+            <Metric label="FC max" value={lab.hrMax} unit="bpm" note={`QR max ${lab.rerMax}`} />
+            <Metric label="Masse" value={lab.bodyMassKg} unit="kg" note={`${lab.bodyFatPct} % de masse grasse`} />
+          </div>
+
+          <div className="grid grid-2" style={{ marginBottom: 16 }}>
+            <div>
+              <div className="metric-label" style={{ marginBottom: 6 }}>Seuils mesurés</div>
+              <table>
+                <tbody>
+                  <tr><td>Seuil ventilatoire 1</td><td className="right mono">{(lab.vt1.speedMs * 3.6).toFixed(1)} km/h</td><td className="right mono">{lab.vt1.hr} bpm</td></tr>
+                  <tr><td>Seuil ventilatoire 2</td><td className="right mono">{(lab.vt2.speedMs * 3.6).toFixed(1)} km/h</td><td className="right mono">{lab.vt2.hr} bpm</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <div className="metric-label" style={{ marginBottom: 6 }}>Ventilation</div>
+              <table>
+                <tbody>
+                  <tr><td>Capacité vitale</td><td className="right mono">{lab.vitalCapacityL} L</td></tr>
+                  <tr><td>Débit ventilatoire max</td><td className="right mono">{lab.veMaxLMin} L/min</td></tr>
+                  <tr><td>Fréquence respiratoire max</td><td className="right mono">{lab.respRateMax} cycles/min</td></tr>
+                  <tr><td>Coefficient d'utilisation pulmonaire</td><td className="right mono">{lab.pulmonaryUseCoefPct} %</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {Array.isArray(lab.practitionerNotes) && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="metric-label" style={{ marginBottom: 6 }}>Remarques du préparateur</div>
+              <ul className="small muted" style={{ margin: 0, paddingLeft: 18 }}>
+                {lab.practitionerNotes.map((n: string, i: number) => <li key={i}>{n}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {lab.interpretation && (
+            <div>
+              <div className="metric-label" style={{ marginBottom: 6 }}>Interprétation</div>
+              <p className="small muted" style={{ margin: 0 }}>{lab.interpretation}</p>
+            </div>
+          )}
+        </Card>
+      )}
+    </>
+  );
+}

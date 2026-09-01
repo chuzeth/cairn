@@ -1,0 +1,33 @@
+{
+  "name": "cairn",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Cairn — plateforme de coaching trail/running personnalisé, pilotée par les données Strava et le raisonnement Claude.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w @cairn/api",
+    "dev:web": "npm run dev -w @cairn/web",
+    "db:push": "npm run push -w @cairn/db",
+    "db:seed": "npm run seed -w @cairn/db",
+    "setup": "npm install && npm run db:push && npm run db:seed",
+    "mcp": "npm run start -w @cairn/mcp",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --pretty"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "declaration": false,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cairn/core": ["packages/core/src/index.ts"],
+      "@cairn/core/*": ["packages/core/src/*"],
+      "@cairn/physiology": ["packages/physiology/src/index.ts"],
+      "@cairn/physiology/*": ["packages/physiology/src/*"],
+      "@cairn/db": ["packages/db/src/index.ts"],
+      "@cairn/db/*": ["packages/db/src/*"],
+      "@cairn/strava": ["packages/strava/src/index.ts"],
+      "@cairn/strava/*": ["packages/strava/src/*"],
+      "@cairn/coach": ["packages/coach/src/index.ts"],
+      "@cairn/coach/*": ["packages/coach/src/*"]
+    }
+  }
+}

@@ -1,0 +1,532 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import * as db from '@cairn/db';
+import {
+  applyAdjustments, chat, describeAdjustments, evaluateAdjustments,
+  executeTool, generateWeeklyReview, loadAthleteState, rebuildPhysiologyModel,
+  summarizeWeek,
+} from '@cairn/coach';
+import {
+  authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
+} from '@cairn/strava';
+import type { ActivityStreams } from '@cairn/core';
+import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
+import { env, missingConfig } from './env.js';
+import { backfill, ingestActivity, processPendingWebhooks, stravaClientFor } from './sync.js';
+
+const dayMs = 86_400_000;
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
+
+export async function buildServer() {
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? 'info' },
+    bodyLimit: 8 * 1024 * 1024,
+  });
+
+  await app.register(cors, {
+    origin: [env.webOrigin, 'http://localhost:3000', 'http://127.0.0.1:3000'],
+    credentials: true,
+  });
+
+  const A = env.athleteId;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Santé & configuration
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get('/health', async () => {
+    const tokens = await db.getStravaTokens(A);
+    const sync = await db.getSyncState(A);
+    const activityCount = (await db.listActivities(A, { limit: 1 })).length;
+    return {
+      ok: true,
+      athleteId: A,
+      stravaConnected: tokens != null,
+      missingConfig: missingConfig(),
+      sync: sync ?? null,
+      hasActivities: activityCount > 0,
+    };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OAuth Strava
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get('/auth/strava', async (req, reply) => {
+    try {
+      const config = readOAuthConfig();
+      return reply.redirect(authorizeUrl(config, A));
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get<{ Querystring: { code?: string; error?: string; state?: string; scope?: string } }>(
+    '/auth/strava/callback',
+    async (req, reply) => {
+      const { code, error, scope } = req.query;
+      if (error || !code) {
+        return reply
+          .type('text/html; charset=utf-8')
+          .send(page('Connexion refusée', `Strava a renvoyé : <code>${escapeHtml(error ?? 'aucun code')}</code>.`));
+      }
+      try {
+        const config = readOAuthConfig();
+        const tokens = await exchangeCode(config, code);
+        const athleteId = req.query.state ?? A;
+
+        await db.saveStravaTokens(athleteId, {
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          expiresAt: tokens.expires_at,
+          scope: tokens.scope ?? scope,
+          stravaAthleteId: tokens.athlete?.id ?? 0,
+        });
+
+        // Le premier import démarre en tâche de fond : la page doit répondre
+        // immédiatement, l'import peut durer plusieurs minutes.
+        void backfill(athleteId, { maxActivities: 60, withInsights: false }).catch((e) =>
+          app.log.error({ err: e }, 'échec du premier import'),
+        );
+
+        return reply.type('text/html; charset=utf-8').send(
+          page(
+            'Strava connecté',
+            `Compte <strong>${escapeHtml(tokens.athlete?.firstname ?? '')} ${escapeHtml(tokens.athlete?.lastname ?? '')}</strong> relié.<br>
+             L'import de ton historique a démarré en arrière-plan.<br><br>
+             <a href="${env.webOrigin}">Ouvrir Cairn →</a>`,
+          ),
+        );
+      } catch (e) {
+        return reply
+          .type('text/html; charset=utf-8')
+          .send(page('Échec de la connexion', escapeHtml(e instanceof Error ? e.message : String(e))));
+      }
+    },
+  );
+
+  app.get('/auth/status', async () => {
+    const tokens = await db.getStravaTokens(A);
+    return {
+      connected: tokens != null,
+      stravaAthleteId: tokens?.stravaAthleteId ?? null,
+      scope: tokens?.scope ?? null,
+      expiresAt: tokens?.expiresAt ?? null,
+      authorizeUrl: (() => {
+        try {
+          return authorizeUrl(readOAuthConfig(), A);
+        } catch {
+          return null;
+        }
+      })(),
+    };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Webhooks Strava
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Handshake de validation : Strava appelle cette URL en GET à la création
+  // de la souscription et attend l'écho du challenge.
+  app.get<{ Querystring: Record<string, string> }>('/webhook/strava', async (req, reply) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    if (mode === 'subscribe' && token === env.webhookVerifyToken) {
+      return reply.send({ 'hub.challenge': challenge });
+    }
+    return reply.code(403).send({ error: 'Jeton de vérification invalide.' });
+  });
+
+  app.post('/webhook/strava', async (req, reply) => {
+    const body = req.body as {
+      object_type?: string; object_id?: number; aspect_type?: string; owner_id?: number;
+    };
+    // Strava exige une réponse sous 2 s : on enregistre puis on traite après coup.
+    if (body?.object_type && body.object_id != null && body.aspect_type && body.owner_id != null) {
+      await db.recordWebhookEvent({
+        objectType: body.object_type,
+        objectId: body.object_id,
+        aspectType: body.aspect_type,
+        ownerId: body.owner_id,
+        payload: body,
+      });
+      setImmediate(() => {
+        processPendingWebhooks().catch((e) => app.log.error({ err: e }, 'échec du traitement webhook'));
+      });
+    }
+    return reply.code(200).send({ received: true });
+  });
+
+  app.post('/webhook/subscribe', async (req, reply) => {
+    try {
+      const client = stravaClientFor(A);
+      const callback = `${env.publicBaseUrl}/webhook/strava`;
+      const existing = await client.listSubscriptions();
+      for (const sub of existing) {
+        if (sub.callback_url !== callback) await client.deleteSubscription(sub.id);
+      }
+      const already = existing.find((s) => s.callback_url === callback);
+      const sub = already ?? (await client.createSubscription(callback, env.webhookVerifyToken));
+      await db.updateSyncState(A, { webhookSubscriptionId: sub.id });
+      return { subscription: sub, callback };
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get('/webhook/status', async (reply) => {
+    try {
+      const subs = await stravaClientFor(A).listSubscriptions();
+      return { subscriptions: subs, expectedCallback: `${env.publicBaseUrl}/webhook/strava` };
+    } catch (e) {
+      return { subscriptions: [], error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Synchronisation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.post<{ Body: { maxActivities?: number; sinceEpoch?: number; withInsights?: boolean } }>(
+    '/api/sync',
+    async (req, reply) => {
+      try {
+        const result = await backfill(A, req.body ?? {});
+        return result;
+      } catch (e) {
+        if (e instanceof StravaRateLimitError) {
+          return reply.code(429).send({ error: e.message, retryAfterMs: e.retryAfterMs });
+        }
+        return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+      }
+    },
+  );
+
+  app.post<{ Params: { stravaId: string } }>('/api/sync/activity/:stravaId', async (req, reply) => {
+    try {
+      return await ingestActivity(A, Number(req.params.stravaId), { withInsight: true });
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.post('/api/model/rebuild', async (req, reply) => {
+    try {
+      return await rebuildPhysiologyModel(A);
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Lecture
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get('/api/state', async (req, reply) => {
+    try {
+      const s = await loadAthleteState(A);
+      return {
+        athlete: { id: s.profile.id, name: s.profile.name, constraints: s.profile.constraints },
+        model: {
+          ...s.model,
+          criticalSpeedKmh: round2(msToKmh(s.model.criticalSpeedMs)),
+          criticalPace: formatPace(s.model.criticalSpeedMs),
+          vmaKmh: round2(msToKmh(s.model.vmaMs)),
+          vt1Kmh: round2(msToKmh(s.model.vt1.speedMs)),
+          vt2Kmh: round2(msToKmh(s.model.vt2.speedMs)),
+        },
+        zones: s.zones.map((z) => ({
+          ...z,
+          speedMinKmh: round2(msToKmh(z.speedMinMs)),
+          speedMaxKmh: round2(msToKmh(z.speedMaxMs)),
+          paceMin: formatPace(z.speedMaxMs),
+          paceMax: formatPace(z.speedMinMs),
+        })),
+        today: s.today,
+        readiness: s.readiness,
+        weeklyTotals: s.weeklyTotals,
+        upcomingRaces: s.upcomingRaces.map((r) => ({
+          ...r,
+          daysUntil: Math.round((new Date(r.date).getTime() - Date.now()) / dayMs),
+        })),
+        hasPlan: s.plan != null,
+        labTest: s.profile.labTests[0] ?? null,
+      };
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get('/api/pmc', async (req, reply) => {
+    const q = req.query as { days?: string };
+    const days = Number(q.days ?? 180);
+    try {
+      const s = await loadAthleteState(A);
+      const cutoff = daysAgo(days);
+      return {
+        metabolic: s.pmc.metabolic.filter((p) => p.date >= cutoff),
+        mechanical: s.pmc.mechanical.filter((p) => p.date >= cutoff),
+        acwr: s.pmc.acwr.filter((p) => p.date >= cutoff),
+        rampRate: s.pmc.rampRate.filter((p) => p.date >= cutoff),
+        monotony: s.pmc.monotony.filter((p) => p.date >= cutoff),
+      };
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get('/api/curves', async (req, reply) => {
+    try {
+      const result = await executeTool(A, 'get_performance_curves', {});
+      return result.content;
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get('/api/activities', async (req) => {
+    const q = req.query as { from?: string; to?: string; limit?: string };
+    const activities = await db.listActivities(A, {
+      from: q.from ?? daysAgo(90),
+      to: q.to,
+      limit: Number(q.limit ?? 100),
+    });
+    const analyses = await db.getAnalyses(activities.map((a) => a.id));
+    return activities.map((a) => {
+      const an = analyses.get(a.id);
+      return {
+        ...a,
+        distanceKm: round2(a.distanceM / 1000),
+        durationLabel: formatDuration(a.movingTimeS),
+        pace: formatPace(a.averageSpeedMs),
+        load: an?.load ?? null,
+        zones: an?.zones.threeZone ?? null,
+        decoupling: an?.decoupling.pctDrift ?? null,
+        intervalCount: an?.intervals.length ?? 0,
+        flags: an?.flags.filter((f) => f.severity !== 'info').length ?? 0,
+      };
+    });
+  });
+
+  app.get<{ Params: { id: string } }>('/api/activities/:id', async (req, reply) => {
+    const activity = await db.getActivity(req.params.id);
+    if (!activity) return reply.code(404).send({ error: 'Activité introuvable.' });
+    const analysis = await db.getAnalysis(req.params.id);
+    const insight = await db.getInsightForActivity(req.params.id);
+    const streams = await db.getStreams(req.params.id);
+    return {
+      activity,
+      analysis,
+      insight,
+      // Flux sous-échantillonnés : suffisant pour tracer, sans envoyer 3 Mo au navigateur.
+      streams: streams ? downsample(streams.streams, 900) : null,
+    };
+  });
+
+  app.get('/api/plan', async (req) => {
+    const q = req.query as { from?: string; weeks?: string };
+    const from = q.from ?? daysAgo(7);
+    const weeks = Number(q.weeks ?? 6);
+    const to = iso(new Date(new Date(`${from}T00:00:00Z`).getTime() + weeks * 7 * dayMs));
+    const plan = await db.getActivePlan(A);
+    const sessions = await db.listPlannedSessions(A, from, to);
+    const activities = await db.listActivities(A, { from, to: iso(new Date()), limit: 200 });
+    return {
+      plan: plan?.plan ?? null,
+      weekSummaries: plan?.weeks.map(summarizeWeek) ?? [],
+      sessions,
+      completedByDate: Object.fromEntries(
+        activities.map((a) => [a.startDateLocal.slice(0, 10), { id: a.id, name: a.name }]),
+      ),
+    };
+  });
+
+  app.get('/api/insights', async (req) => {
+    const q = req.query as { limit?: string };
+    return db.listInsights(A, Number(q.limit ?? 25));
+  });
+
+  app.get('/api/races', async () => db.listRaceGoals(A));
+
+  app.post('/api/races', async (req, reply) => {
+    try {
+      const result = await executeTool(A, 'upsert_race', req.body);
+      return result.content;
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/races/:id', async (req) => {
+    await db.deleteRaceGoal(req.params.id);
+    return { deleted: req.params.id };
+  });
+
+  app.post('/api/predict', async (req, reply) => {
+    try {
+      const result = await executeTool(A, 'predict_race', req.body);
+      return result.content;
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.post<{ Body: { race_id: string; reason?: string; start_date?: string } }>(
+    '/api/plan/rebuild',
+    async (req, reply) => {
+      try {
+        const result = await executeTool(A, 'rebuild_plan', {
+          ...req.body,
+          reason: req.body.reason ?? 'Reconstruction demandée depuis l\'application.',
+        });
+        return result.content;
+      } catch (e) {
+        return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+      }
+    },
+  );
+
+  app.post('/api/checkin', async (req, reply) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      await db.upsertCheckIn({
+        athleteId: A,
+        date: (body.date as string) ?? iso(new Date()),
+        sleepHours: body.sleepHours as number | undefined,
+        sleepQuality: body.sleepQuality as number | undefined,
+        soreness: body.soreness as number | undefined,
+        stress: body.stress as number | undefined,
+        motivation: body.motivation as number | undefined,
+        restingHr: body.restingHr as number | undefined,
+        hrvRmssd: body.hrvRmssd as number | undefined,
+        bodyMassKg: body.bodyMassKg as number | undefined,
+        notes: body.notes as string | undefined,
+      });
+      // Un relevé peut changer la disponibilité du jour : on réévalue tout de suite.
+      const state = await loadAthleteState(A);
+      const upcoming = await db.listPlannedSessions(A, iso(new Date()), iso(new Date(Date.now() + 14 * dayMs)));
+      const adjustments = evaluateAdjustments(state, upcoming);
+      const applied = await applyAdjustments(A, adjustments, 'readiness');
+      return {
+        readiness: state.readiness,
+        adjustments: applied,
+        adjustmentSummary: applied > 0 ? describeAdjustments(adjustments) : null,
+      };
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get('/api/checkins', async (req) => {
+    const q = req.query as { from?: string };
+    return db.listCheckIns(A, q.from ?? daysAgo(30));
+  });
+
+  app.get('/api/gear', async () => {
+    const gear = await db.listGear(A);
+    return gear.map((g) => ({
+      ...g,
+      distanceKm: Math.round(g.distanceM / 1000),
+      wearPct: g.replaceAtKm ? Math.round((g.distanceM / 1000 / g.replaceAtKm) * 100) : null,
+    }));
+  });
+
+  app.post('/api/review/weekly', async (req, reply) => {
+    try {
+      const insight = await generateWeeklyReview(A);
+      if (!insight) return reply.code(503).send({ error: "Analyse hebdomadaire indisponible." });
+      return insight;
+    } catch (e) {
+      return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Chat
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  app.get('/api/chat/history', async (req) => {
+    const q = req.query as { limit?: string };
+    return db.listChatMessages(A, Number(q.limit ?? 50));
+  });
+
+  /**
+   * Diffusion du chat en Server-Sent Events. Les appels d'outils sont émis au
+   * fil de l'eau : l'athlète voit sur quelles données le coach s'appuie pendant
+   * qu'il réfléchit, ce qui rend le raisonnement vérifiable plutôt que magique.
+   */
+  app.post<{ Body: { message: string } }>('/api/chat', async (req, reply) => {
+    const message = req.body?.message?.trim();
+    if (!message) return reply.code(400).send({ error: 'Message vide.' });
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      'Access-Control-Allow-Origin': env.webOrigin,
+    });
+
+    const send = (event: unknown) => {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    // Battement pour empêcher les proxys de couper une réflexion longue.
+    const heartbeat = setInterval(() => reply.raw.write(': ping\n\n'), 15_000);
+
+    try {
+      for await (const event of chat({ athleteId: A, message })) {
+        send(event);
+      }
+    } catch (e) {
+      send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      clearInterval(heartbeat);
+      reply.raw.end();
+    }
+    return reply;
+  });
+
+  return app;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Sous-échantillonne les flux pour l'affichage. */
+function downsample(input: ActivityStreams, target: number): Record<string, unknown> {
+  const streams = input as unknown as Record<string, unknown>;
+  const time = streams.time as number[] | undefined;
+  if (!time || time.length <= target) return streams;
+  const step = Math.ceil(time.length / target);
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(streams)) {
+    if (!Array.isArray(value)) {
+      out[key] = value;
+      continue;
+    }
+    out[key] = value.filter((_, i) => i % step === 0);
+  }
+  return out;
+}
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+function page(title: string, body: string): string {
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} · Cairn</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0c10;color:#e8eaed;
+font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.card{max-width:34rem;padding:2.5rem;background:#12151c;border:1px solid #232833;border-radius:14px;text-align:center}
+h1{margin:0 0 1rem;font-size:1.35rem;letter-spacing:-.01em}
+code{background:#1c212b;padding:.15em .4em;border-radius:4px;font-size:.9em}
+a{color:#7dd3a0;text-decoration:none;font-weight:600}a:hover{text-decoration:underline}
+</style></head><body><div class="card"><h1>${title}</h1><div>${body}</div></div></body></html>`;
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@cairn/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "sync": "tsx --env-file-if-exists=../../.env src/cli.ts"
+  },
+  "dependencies": {
+    "@cairn/coach": "*",
+    "@cairn/core": "*",
+    "@cairn/db": "*",
+    "@cairn/physiology": "*",
+    "@cairn/strava": "*",
+    "@fastify/cors": "^11.3.0",
+    "fastify": "^5.12.1"
+  }
+}
