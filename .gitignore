@@ -9,3 +9,6 @@ data/*.sqlite*
 .DS_Store
 .vitest/
 *.tsbuildinfo
+
+# Captures de réponses Strava : données de localisation personnelles.
+.cairn-capture/

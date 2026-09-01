@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { readOAuthConfig, refreshAccessToken, type StravaOAuthConfig } from './oauth.js';
 import type {
   StravaAthlete, StravaGear, StravaStreamSet, StravaSubscription,
@@ -110,13 +112,32 @@ export class StravaClient {
     const url = new URL(`${API}${path}`);
     for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, String(v));
 
+    // Capture et rejeu : entièrement inertes tant qu'aucune des deux variables
+    // n'est définie — pas même le calcul de la clé.
+    const captureDir = process.env.CAIRN_CAPTURE_DIR;
+    const replayDir = process.env.CAIRN_REPLAY_DIR;
+    const key = captureDir || replayDir ? captureKey('GET', path, url.searchParams) : '';
+    if (replayDir) {
+      const file = join(replayDir, key);
+      if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8')) as T;
+      // Fichier absent : on retombe sur le réseau, ce qui permet de compléter
+      // un jeu de captures partiel sans le rejouer en entier.
+    }
+
     let lastError: unknown;
     for (let attempt = 0; attempt < 4; attempt++) {
       const token = await this.accessToken();
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       this.trackHeaders(res);
 
-      if (res.ok) return (await res.json()) as T;
+      if (res.ok) {
+        const data = (await res.json()) as T;
+        if (captureDir) {
+          mkdirSync(captureDir, { recursive: true });
+          writeFileSync(join(captureDir, key), JSON.stringify(data, null, 2));
+        }
+        return data;
+      }
 
       if (res.status === 429) {
         // Le quota court terme se réinitialise au quart d'heure suivant.
@@ -243,3 +264,14 @@ export class StravaClient {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Nom de fichier d'une réponse : méthode, chemin, puis paramètres triés — donc
+ * stable quel que soit l'ordre dans lequel l'appelant les a passés. Tout
+ * caractère hostile à un système de fichiers devient `_`, ce qui garde les
+ * captures lisibles et inspectables à la main.
+ */
+function captureKey(method: string, path: string, params: URLSearchParams): string {
+  const sorted = [...params].map(([k, v]) => `${k}=${v}`).sort();
+  return `${[method, path, ...sorted].join(' ').replace(/[^A-Za-z0-9=._-]+/g, '_')}.json`;
+}
