@@ -334,3 +334,89 @@ describe('Cycle de charge 3:1', () => {
     }
   });
 });
+
+describe('Remplacement du contenu d\'une séance', () => {
+  const blocks = (over: Record<string, unknown>[] = []) => [
+    { label: 'Échauffement progressif', zone: 'Z2', durationS: 1500 },
+    ...over,
+  ];
+
+  it('déduit des zones les cibles omises et l\'allure de la vitesse', () => {
+    const [b] = lib.parseSessionBlocks(blocks(), model);
+    const z2 = model.vt1;
+    expect(b!.hrRange).toEqual([Math.round(0.91 * z2.hr), z2.hr]);
+    expect(b!.speedRangeMs![1]).toBeCloseTo(z2.speedMs, 6);
+    // L'allure est dérivée de la vitesse, dans l'ordre lisible (plus rapide d'abord).
+    expect(b!.paceRange![0] < b!.paceRange![1]).toBe(true);
+  });
+
+  it('accepte une cible qui sort de la bande de zone, jusqu\'à la FC maximale', () => {
+    // Le défaut corrigé : un test maximal exige une FC moyenne ≥ SV2, que le
+    // plafond de Z4 (1,023 × SV2) interdit d'exprimer. La borne est la
+    // physiologie de l'athlète, pas la bande de zone.
+    const [b] = lib.parseSessionBlocks(
+      [{ label: 'Contre-la-montre 20 min', zone: 'Z4', durationS: 1200, hrRange: [model.vt2.hr, model.hrMax] }],
+      model,
+    );
+    expect(b!.hrRange).toEqual([model.vt2.hr, model.hrMax]);
+    expect(b!.hrRange![1]).toBeGreaterThan(Math.round(1.023 * model.vt2.hr));
+
+    expect(() =>
+      lib.parseSessionBlocks(
+        [{ label: 'Impossible', zone: 'Z5', durationS: 600, hrRange: [180, model.hrMax + 5] }],
+        model,
+      ),
+    ).toThrow(/hors bornes/);
+  });
+
+  it('refuse une allure saisie à la main, un champ inconnu, un bloc sans étendue', () => {
+    const bad = (b: Record<string, unknown>) => () => lib.parseSessionBlocks([b], model);
+    expect(bad({ label: 'x', zone: 'Z3', durationS: 600, paceRange: ['4:00', '4:30'] })).toThrow(/déduite/);
+    expect(bad({ label: 'x', zone: 'Z3', durationS: 600, tempoMax: 12 })).toThrow(/champ inconnu/);
+    expect(bad({ label: 'x', zone: 'Z3' })).toThrow(/durationS ou distanceM/);
+    expect(bad({ label: '  ', zone: 'Z3', durationS: 600 })).toThrow(/vide/);
+    expect(bad({ label: 'x', zone: 'Z9', durationS: 600 })).toThrow(/zone attendue/);
+    expect(bad({ label: 'x', zone: 'Z3', durationS: 600, hrRange: [170, 150] })).toThrow(/borne basse/);
+    expect(() => lib.parseSessionBlocks([], model)).toThrow(/au moins un bloc/);
+  });
+
+  it('fait suivre les totaux de la séance au contenu remplacé', () => {
+    const replaced = lib.parseSessionBlocks(
+      [
+        { label: 'Échauffement progressif', zone: 'Z2', durationS: 1500 },
+        { label: 'Contre-la-montre 20 min', zone: 'Z4', durationS: 1200, hrRange: [model.vt2.hr, model.hrMax] },
+        { label: 'Retour au calme', zone: 'Z1', durationS: 600 },
+      ],
+      model,
+    );
+    const totals = lib.sessionTotals(model, replaced);
+    expect(totals.durationS).toBe(3300);
+    // Vingt minutes au-dessus du seuil coûtent plus qu'un tempo de même durée :
+    // la charge se déduit du contenu, elle ne reste pas sur celle d'avant.
+    const tempo = lib.sessionTotals(
+      model,
+      lib.parseSessionBlocks(
+        [
+          { label: 'Échauffement progressif', zone: 'Z2', durationS: 1500 },
+          { label: 'Tempo continu', zone: 'Z3', durationS: 1200 },
+          { label: 'Retour au calme', zone: 'Z1', durationS: 600 },
+        ],
+        model,
+      ),
+    );
+    expect(totals.load).toBeGreaterThan(tempo.load);
+    expect(totals.durationS).toBe(tempo.durationS);
+  });
+
+  it('somme le dénivelé des répétitions', () => {
+    const totals = lib.sessionTotals(
+      model,
+      lib.parseSessionBlocks(
+        [{ label: 'Côte', zone: 'Z4', durationS: 180, repeat: 6, elevationGainM: 50, recovery: { durationS: 120, zone: 'Z1' } }],
+        model,
+      ),
+    );
+    expect(totals.elevationGainM).toBe(300);
+    expect(totals.durationS).toBe(6 * 300);
+  });
+});

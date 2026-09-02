@@ -108,24 +108,47 @@ function totalDuration(blocks: SessionBlock[]): number {
   }, 0);
 }
 
-function finalize(
-  c: Ctx,
-  base: Omit<SessionTemplate, 'durationS' | 'plannedLoad' | 'plannedMechanicalLoad'>,
-  elevationLossM = 0,
-): SessionTemplate {
-  const durationS = totalDuration(base.blocks);
-  // Distance estimée depuis la vitesse moyenne pondérée des blocs.
-  const distanceM = base.blocks.reduce((a, b) => {
+/** Distance estimée depuis la vitesse moyenne pondérée des blocs. */
+function totalDistance(blocks: SessionBlock[]): number {
+  return blocks.reduce((a, b) => {
     const reps = b.repeat ?? 1;
     const mid = b.speedRangeMs ? (b.speedRangeMs[0] + b.speedRangeMs[1]) / 2 : 2.8;
     const rec = b.recovery ? b.recovery.durationS * (b.recovery.active ? 2.4 : 0.5) : 0;
     return a + reps * ((b.durationS ?? 0) * mid + rec);
   }, 0);
+}
+
+/**
+ * Totaux d'une séance, déduits de ses blocs.
+ *
+ * Une séance dont les blocs sont remplacés doit voir sa durée et sa charge
+ * suivre : des totaux figés en face d'un contenu neuf, c'est la même
+ * contradiction, un cran plus haut. La charge mécanique n'en fait pas partie —
+ * elle dépend du dénivelé négatif, que les blocs ne portent pas.
+ */
+export function sessionTotals(
+  model: PhysiologyModel,
+  blocks: SessionBlock[],
+): { durationS: number; distanceM: number; elevationGainM: number; load: number } {
+  return {
+    durationS: totalDuration(blocks),
+    distanceM: totalDistance(blocks),
+    elevationGainM: blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0),
+    load: estimateLoad(model, blocks),
+  };
+}
+
+function finalize(
+  c: Ctx,
+  base: Omit<SessionTemplate, 'durationS' | 'plannedLoad' | 'plannedMechanicalLoad'>,
+  elevationLossM = 0,
+): SessionTemplate {
+  const { durationS, distanceM, load } = sessionTotals(c.model, base.blocks);
   return {
     ...base,
     durationS,
     plannedDistanceM: Math.round(distanceM),
-    plannedLoad: estimateLoad(c.model, base.blocks),
+    plannedLoad: load,
     plannedMechanicalLoad: estimateMechanical(elevationLossM, distanceM),
   };
 }

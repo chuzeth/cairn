@@ -1,11 +1,12 @@
-import type { CourseProfile, RaceGoal } from '@cairn/core';
+import type { CourseProfile, PlannedSession, RaceGoal, SessionBlock } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   describeZone, formatClock, formatDuration, formatPace, goalProbability,
   interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
 } from '@cairn/physiology';
 import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
-import { renderSession } from './sessionLibrary.js';
+import { parseSessionBlocks } from './sessionContent.js';
+import { renderSession, sessionTotals } from './sessionLibrary.js';
 import { currentCriticalSpeed, loadAthleteState, rebuildPhysiologyModel } from './state.js';
 
 /**
@@ -44,6 +45,58 @@ const obj = (
 const str = (description: string, extra: Record<string, unknown> = {}) => ({ type: 'string', description, ...extra });
 const num = (description: string, extra: Record<string, unknown> = {}) => ({ type: 'number', description, ...extra });
 const bool = (description: string) => ({ type: 'boolean', description });
+
+const ZONES = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
+
+const pair = (description: string) => ({
+  type: 'array',
+  items: { type: 'number' },
+  minItems: 2,
+  maxItems: 2,
+  description,
+});
+
+/**
+ * Un bloc de séance, tel que le coach peut l'écrire.
+ *
+ * Même structure que celle produite par le planificateur. Ce qui est omis est
+ * déduit de la zone ; `paceRange` n'y figure pas parce qu'il se déduit de
+ * `speedRangeMs` — un affichage qui pourrait contredire ses propres nombres
+ * n'est pas une prescription.
+ */
+const BLOCK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['label', 'zone'],
+  properties: {
+    label: str('Intitulé du bloc, ex. « Contre-la-montre 20 min ».'),
+    zone: str('Zone dominante du bloc.', { enum: ZONES }),
+    durationS: num('Durée du bloc, en secondes. Requis, sauf si distanceM est fourni.'),
+    distanceM: num('Étendue du bloc en mètres, à la place d\'une durée.'),
+    repeat: num('Nombre de répétitions du bloc (défaut 1).'),
+    elevationGainM: num('Dénivelé positif du bloc, en mètres.'),
+    hrRange: pair(
+      "Fourchette de FC cible [min, max]. Omise, celle de la zone s'applique. À renseigner dès que la prescription sort de la bande — un test maximal vise au-delà du plafond de Z4.",
+    ),
+    speedRangeMs: pair(
+      "Fourchette de vitesse cible à plat [min, max], en m/s. Omise, celle de la zone s'applique. L'allure en min/km en est déduite et ne se saisit pas.",
+    ),
+    vamTargetMh: num('Vitesse ascensionnelle cible, en m/h, pour un bloc en côte.'),
+    cadenceTargetSpm: num('Cadence cible, en pas par minute.'),
+    recovery: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['durationS', 'zone'],
+      description: 'Récupération suivant chaque répétition.',
+      properties: {
+        durationS: num('Durée de la récupération, en secondes.'),
+        zone: str('Zone de la récupération.', { enum: ZONES }),
+        active: bool('Trottinée (défaut) ou à l\'arrêt.'),
+      },
+    },
+    notes: str("Consigne d'exécution, affichée sous le bloc."),
+  },
+};
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -166,14 +219,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'modify_session',
     description:
-      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge ou remplacement complet. Toute modification est journalisée avec sa justification.",
+      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge, ou remplacement du contenu prescrit. C'est le contenu que l'athlète exécute — un titre changé sans ses blocs ne change rien à la séance qu'il fera. Toute modification est journalisée avec sa justification.",
     input_schema: obj(
       {
         session_id: str('Identifiant de la séance.'),
         new_date: str('Nouvelle date, YYYY-MM-DD.'),
         status: str('Nouveau statut.', { enum: ['planned', 'completed', 'partial', 'missed', 'moved', 'cancelled'] }),
-        scale_load: num("Facteur multiplicatif de la charge et de la durée, ex. 0.7 pour réduire de 30 %."),
+        scale_load: num("Facteur multiplicatif de la charge et de la durée, ex. 0.7 pour réduire de 30 %. Exclusif de blocks."),
         title: str('Nouveau titre.'),
+        intent: str("Nouvelle intention physiologique — le « pourquoi » de la séance, affiché sous le titre."),
+        blocks: {
+          type: 'array',
+          minItems: 1,
+          description:
+            "Remplace intégralement le contenu prescrit. Durée, charge, distance et dénivelé de la séance sont recalculés depuis ces blocs, par la formule du planificateur. Exclusif de scale_load, qui multiplie le contenu existant au lieu de le remplacer.",
+          items: BLOCK_SCHEMA,
+        },
         rationale: str('Justification de la modification. Obligatoire.'),
       },
       ['session_id', 'rationale'],
@@ -698,22 +759,46 @@ export async function executeTool(
       if (status) patch.status = status;
       const title = arg<string>(input, 'title');
       if (title) patch.title = title;
+      const intent = arg<string>(input, 'intent');
+      if (intent) patch.intent = intent;
 
       const scale = arg<number>(input, 'scale_load');
-      if (scale && scale > 0) {
+      const rawBlocks = input.blocks;
+      if (rawBlocks !== undefined && scale !== undefined) {
+        throw new Error(
+          'blocks et scale_load sont exclusifs : scale_load multiplie le contenu existant, blocks le remplace.',
+        );
+      }
+
+      let target: PlannedSession | undefined;
+      if (rawBlocks !== undefined || (scale && scale > 0)) {
         const from = daysAgo(60);
         const to = iso(new Date(Date.now() + 400 * dayMs));
         const all = await db.listPlannedSessions(athleteId, from, to);
-        const target = all.find((s) => s.id === sessionId);
-        if (target) {
-          patch.plannedLoad = Math.round(target.plannedLoad * scale);
-          patch.plannedDurationS = Math.round(target.plannedDurationS * scale);
-          patch.plannedMechanicalLoad = Math.round(target.plannedMechanicalLoad * scale);
-          patch.blocks = target.blocks.map((b) => ({
-            ...b,
-            durationS: b.durationS ? Math.round(b.durationS * scale) : b.durationS,
-          }));
-        }
+        target = all.find((s) => s.id === sessionId);
+        if (!target) throw new Error(`Séance ${sessionId} introuvable.`);
+      }
+
+      let blocks: SessionBlock[] | undefined;
+      if (rawBlocks !== undefined) {
+        const { model } = await loadAthleteState(athleteId);
+        blocks = parseSessionBlocks(rawBlocks, model);
+        const totals = sessionTotals(model, blocks);
+        patch.blocks = blocks;
+        patch.plannedDurationS = totals.durationS;
+        patch.plannedLoad = Math.round(totals.load);
+        patch.plannedDistanceM = Math.round(totals.distanceM);
+        patch.plannedElevationGainM = Math.round(totals.elevationGainM);
+      }
+
+      if (target && scale && scale > 0) {
+        patch.plannedLoad = Math.round(target.plannedLoad * scale);
+        patch.plannedDurationS = Math.round(target.plannedDurationS * scale);
+        patch.plannedMechanicalLoad = Math.round(target.plannedMechanicalLoad * scale);
+        patch.blocks = target.blocks.map((b) => ({
+          ...b,
+          durationS: b.durationS ? Math.round(b.durationS * scale) : b.durationS,
+        }));
       }
 
       await db.updateSession(sessionId, patch as never);
@@ -726,7 +811,19 @@ export async function executeTool(
           changes: [{ date: newDate ?? '', before: sessionId, after: JSON.stringify(patch), reason: rationale }],
         });
       }
-      return { summary: `Séance ${sessionId} modifiée`, content: { session_id: sessionId, modifications: patch } };
+      return {
+        summary: blocks
+          ? `Séance ${sessionId} modifiée — contenu remplacé (${blocks.length} bloc(s))`
+          : `Séance ${sessionId} modifiée`,
+        content: {
+          session_id: sessionId,
+          modifications: patch,
+          // Ce que l'athlète lira : le contenu prescrit, pas le titre.
+          ...(blocks && target
+            ? { apercu: renderSession({ title: (title ?? target.title), intent: intent ?? target.intent, blocks }) }
+            : {}),
+        },
+      };
     }
 
     case 'get_check_ins': {

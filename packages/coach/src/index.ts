@@ -1,3 +1,4 @@
+export * from './sessionContent.js';
 export * from './sessionLibrary.js';
 export * from './periodization.js';
 export * from './planner.js';
