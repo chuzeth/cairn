@@ -171,24 +171,87 @@ export function csPriorFromThresholds(vt2SpeedMs: number, vmaMs: number): {
   return { criticalSpeedMs: cs, dPrimeM: dPrime };
 }
 
+export interface MaximalEffortSupport {
+  /** Part de l'ajustement adossée à une preuve d'effort maximal, 0–1. */
+  support: number;
+  /** Durée cumulée des points prouvés, testés, et de ceux qu'on ne peut pas tester. */
+  provenS: number;
+  testedS: number;
+  untestableS: number;
+}
+
 /**
- * Fusion bayésienne simple entre l'ajustement terrain et le prior laboratoire,
- * pondérée par la qualité de l'ajustement. Le laboratoire garde du poids tant
- * que le terrain n'a pas produit d'efforts maximaux exploitables.
+ * Preuve d'effort maximal.
+ *
+ * Le r² ne mesure pas l'intention : une sortie en aisance est régulière, donc
+ * parfaitement ajustée. La signature d'un effort réellement conduit à la vitesse
+ * critique est cardiaque — il se déroule au voisinage du seuil 2, donc à une FC
+ * moyenne au moins égale à la FC du SV2 sur toute sa durée, ce qu'aucun footing
+ * ne produit jamais.
+ *
+ * On mesure donc la part de l'ajustement portée par de tels points, pondérée par
+ * la durée : c'est le bout long de la courbe qui fixe l'asymptote, donc c'est là
+ * que la preuve compte. Un point sans FC n'est ni prouvé ni réfuté : il sort du
+ * calcul, et si aucun point n'est testable le critère se tait plutôt que de
+ * conclure (`support` = 1).
+ */
+export function maximalEffortSupport(
+  fit: CriticalSpeedFit,
+  hrAtBest: Record<string, number>,
+  thresholdHr: number,
+): MaximalEffortSupport {
+  let provenS = 0;
+  let testedS = 0;
+  let untestableS = 0;
+
+  for (const p of fit.points) {
+    const hr = hrAtBest[String(p.durationS)];
+    if (hr == null || !Number.isFinite(hr) || hr <= 0 || !(thresholdHr > 0)) {
+      untestableS += p.durationS;
+      continue;
+    }
+    testedS += p.durationS;
+    if (hr >= thresholdHr) provenS += p.durationS;
+  }
+
+  return {
+    support: testedS > 0 ? provenS / testedS : 1,
+    provenS,
+    testedS,
+    untestableS,
+  };
+}
+
+/**
+ * Fusion bayésienne simple entre l'ajustement terrain et le prior laboratoire.
+ *
+ * Le poids du terrain est le produit de deux choses distinctes : la qualité de
+ * l'ajustement — sa régularité — et la preuve que les efforts ajustés étaient
+ * maximaux. Sans la seconde, la première ne mesure que la constance de l'allure,
+ * et le laboratoire doit garder la main.
  */
 export function blendCriticalSpeed(
   fit: CriticalSpeedFit,
   prior: { criticalSpeedMs: number; dPrimeM: number },
-): { criticalSpeedMs: number; dPrimeM: number; weightField: number } {
-  const w =
+  maximalEffortSupport = 1,
+): {
+  criticalSpeedMs: number;
+  dPrimeM: number;
+  weightField: number;
+  maximalEffortSupport: number;
+} {
+  const quality =
     fit.quality === 'strong' ? 0.85 : fit.quality === 'usable' ? 0.6 : fit.quality === 'weak' ? 0.25 : 0;
+  const support = clamp(Number.isFinite(maximalEffortSupport) ? maximalEffortSupport : 1, 0, 1);
+  const w = quality * support;
   if (w === 0 || fit.criticalSpeedMs <= 0) {
-    return { ...prior, weightField: 0 };
+    return { ...prior, weightField: 0, maximalEffortSupport: support };
   }
   return {
     criticalSpeedMs: fit.criticalSpeedMs * w + prior.criticalSpeedMs * (1 - w),
     dPrimeM: fit.dPrimeM * w + prior.dPrimeM * (1 - w),
     weightField: w,
+    maximalEffortSupport: support,
   };
 }
 

@@ -436,9 +436,16 @@ export async function executeTool(
             d_prime_m: cs.dPrime,
             qualite_ajustement: cs.quality,
             r2: cs.r2,
+            // Le r² dit si la courbe est régulière ; celui-ci dit si elle a été
+            // produite en effort maximal. Sans lui, une sortie en aisance
+            // s'ajuste parfaitement et fait passer une allure de footing pour
+            // une limite physiologique.
+            preuve_effort_maximal: Math.round(cs.maximalEffortSupport * 100) / 100,
+            duree_testee_s: cs.maximalEffortTestedS,
+            duree_non_testable_s: cs.maximalEffortUntestableS,
           },
           note:
-            "La courbe est l'enveloppe des 90 derniers jours, pondérée par la fraîcheur. Un trou sur une durée signifie qu'aucun effort maximal n'y a été produit récemment — pas nécessairement une faiblesse.",
+            "La courbe est l'enveloppe des 90 derniers jours, pondérée par la fraîcheur. Un trou sur une durée signifie qu'aucun effort maximal n'y a été produit récemment — pas nécessairement une faiblesse. `preuve_effort_maximal` est la part de l'ajustement portée par des efforts dont la FC a atteint le seuil 2 : c'est elle, et non le r², qui pondère le terrain face au laboratoire.",
         },
       };
     }

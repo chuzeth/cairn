@@ -57,6 +57,57 @@ export function meanMaximal(
 }
 
 /**
+ * Signal associé, moyenné sur la fenêtre qui a produit chaque maximum.
+ *
+ * Une courbe maximale dit *ce qui a été tenu*, jamais *à quel prix*. En passant
+ * la fréquence cardiaque comme signal associé, on récupère pour chaque durée la
+ * contrepartie cardiaque du point retenu — ce qui permet ensuite de distinguer
+ * un effort maximal d'une sortie en aisance particulièrement régulière.
+ */
+export function companionAtMeanMaximal(
+  values: readonly number[],
+  companion: readonly (number | null | undefined)[],
+  durations: readonly number[] = MMP_DURATIONS,
+): MmpCurve {
+  const n = values.length;
+  const out: MmpCurve = {};
+  if (n === 0) return out;
+
+  const prefix = new Float64Array(n + 1);
+  const cSum = new Float64Array(n + 1);
+  const cCount = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    const v = values[i] as number;
+    prefix[i + 1] = (prefix[i] as number) + (Number.isFinite(v) ? v : 0);
+    const c = companion[i];
+    const ok = c != null && Number.isFinite(c);
+    cSum[i + 1] = (cSum[i] as number) + (ok ? (c as number) : 0);
+    cCount[i + 1] = (cCount[i] as number) + (ok ? 1 : 0);
+  }
+
+  for (const d of durations) {
+    const w = Math.round(d);
+    if (w <= 0 || w > n) continue;
+    let best = -Infinity;
+    let at = -1;
+    for (let i = 0; i + w <= n; i++) {
+      const sum = (prefix[i + w] as number) - (prefix[i] as number);
+      if (sum > best) {
+        best = sum;
+        at = i;
+      }
+    }
+    if (at < 0) continue;
+    const count = (cCount[at + w] as number) - (cCount[at] as number);
+    // Une moyenne calculée sur quelques échantillons ne qualifie pas un effort :
+    // sans couverture large, on préfère ne rien dire.
+    if (count < w * 0.8) continue;
+    out[String(w)] = ((cSum[at + w] as number) - (cSum[at] as number)) / count;
+  }
+  return out;
+}
+
+/**
  * Meilleur temps sur des distances de référence, à partir du flux de distance
  * cumulée (réelle ou corrigée de la pente). Deux pointeurs, O(n).
  */
@@ -108,16 +159,34 @@ export function decayedEnvelope(
   entries: readonly { curve: MmpCurve; ageDays: number }[],
   halfLifeDays = 60,
 ): MmpCurve {
-  const out: MmpCurve = {};
-  for (const { curve, ageDays } of entries) {
-    const w = Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
-    for (const [k, v] of Object.entries(curve)) {
+  return decayedEnvelopeWithCompanion(entries, halfLifeDays).curve;
+}
+
+/**
+ * Même enveloppe, en conservant pour chaque durée la valeur du signal associé
+ * (`companion`) de l'activité qui a fourni le point retenu. Sans cela,
+ * l'enveloppe perd la trace de *comment* chaque point a été produit — et un
+ * ajustement ne peut plus distinguer une mesure d'une régularité.
+ */
+export function decayedEnvelopeWithCompanion(
+  entries: readonly { curve: MmpCurve; companion?: MmpCurve; ageDays: number }[],
+  halfLifeDays = 60,
+): { curve: MmpCurve; companion: MmpCurve } {
+  const curve: MmpCurve = {};
+  const companion: MmpCurve = {};
+  for (const entry of entries) {
+    const w = Math.pow(0.5, Math.max(0, entry.ageDays) / halfLifeDays);
+    for (const [k, v] of Object.entries(entry.curve)) {
       const adjusted = v * (0.85 + 0.15 * w); // pénalise doucement les vieilles perfs
-      const prev = out[k];
-      if (prev === undefined || adjusted > prev) out[k] = adjusted;
+      const prev = curve[k];
+      if (prev !== undefined && adjusted <= prev) continue;
+      curve[k] = adjusted;
+      const c = entry.companion?.[k];
+      if (c === undefined) delete companion[k];
+      else companion[k] = c;
     }
   }
-  return out;
+  return { curve, companion };
 }
 
 /** Rend la courbe monotone décroissante : une durée plus longue ne peut pas être plus rapide. */

@@ -1,5 +1,7 @@
 import type { LabTest, ParameterProvenance, PhysiologyModel } from '@cairn/core';
-import { blendCriticalSpeed, csPriorFromThresholds, fitCriticalSpeed } from './criticalSpeed.js';
+import {
+  blendCriticalSpeed, csPriorFromThresholds, fitCriticalSpeed, maximalEffortSupport,
+} from './criticalSpeed.js';
 import { interpolateCurve, type MmpCurve } from './mmp.js';
 import { clamp, quantile } from './units.js';
 
@@ -19,6 +21,12 @@ import { clamp, quantile } from './units.js';
 export interface FieldEvidence {
   /** Courbe vitesse-durée corrigée de la pente, enveloppe des 90 derniers jours. */
   gradedSpeedCurve: MmpCurve;
+  /**
+   * FC moyenne de l'effort qui a produit chaque point de `gradedSpeedCurve`.
+   * C'est elle qui permet de savoir si la courbe atteste d'une limite ou d'une
+   * aisance. Une durée absente est un point non testable, pas un point réfuté.
+   */
+  gradedSpeedCurveHr?: MmpCurve;
   /** FC maximales observées par activité, 12 derniers mois. */
   observedMaxHrs: number[];
   /** FC de repos matinales déclarées ou déduites. */
@@ -28,7 +36,13 @@ export interface FieldEvidence {
   /** Couples (vitesse graduée, FC) sur efforts stables, pour recaler les seuils. */
   hrSpeedPairs: { gradedSpeedMs: number; hr: number }[];
   /** Durabilité mesurée. */
-  durability: { pctPerHour: number; pctPer1000mVert: number; confidence: number };
+  durability: {
+    pctPerHour: number;
+    pctPer1000mVert: number;
+    confidence: number;
+    /** Vrai quand la valeur vient d'une mesure et non d'un repli. Absent ⇒ repli. */
+    measured?: { perHour: boolean; perVert: boolean };
+  };
   /** Courbe VAM, m/h par durée. */
   vamCurve: Record<string, number>;
   /** Nombre de jours de données exploitables sur la fenêtre. */
@@ -177,7 +191,11 @@ export function buildPhysiologyModel(
   // ── Vitesse critique ───────────────────────────────────────────────────────
   const fit = fitCriticalSpeed(field.gradedSpeedCurve);
   const prior = csPriorFromThresholds(lab.vt2.speedMs, lab.vmaMs);
-  const blended = blendCriticalSpeed(fit, prior);
+  // La preuve d'effort maximal se juge à la FC du seuil 2 du laboratoire : elle
+  // est disponible avant toute ré-estimation de seuil — la FC seuil terrain,
+  // elle, dépendrait de la vitesse critique qu'on cherche à établir.
+  const support = maximalEffortSupport(fit, field.gradedSpeedCurveHr ?? {}, lab.vt2.hr);
+  const blended = blendCriticalSpeed(fit, prior, support.support);
   provenance.criticalSpeedMs =
     blended.weightField > 0.7 ? 'field' : blended.weightField > 0.2 ? 'blended' : 'lab';
   provenance.dPrimeM = provenance.criticalSpeedMs;
@@ -220,7 +238,15 @@ export function buildPhysiologyModel(
   provenance['vt1.hr'] = 'blended';
 
   // ── Durabilité ─────────────────────────────────────────────────────────────
-  provenance.durability = field.durability.confidence > 0.4 ? 'field' : 'default';
+  // Les deux indices se qualifient séparément : le terrain peut mesurer la perte
+  // horaire sans rien établir sur le dénivelé. Une valeur issue du repli — parce
+  // qu'aucune séance ne l'a produite, ou parce que l'agrégat a atteint sa borne
+  // de plausibilité — est annoncée comme telle.
+  const durabilityMeasured = field.durability.measured ?? { perHour: false, perVert: false };
+  const durabilityProvenance = (measured: boolean): ParameterProvenance =>
+    measured && field.durability.confidence > 0.4 ? 'field' : 'default';
+  provenance.durabilityPctPerHour = durabilityProvenance(durabilityMeasured.perHour);
+  provenance.durabilityPctPer1000mVert = durabilityProvenance(durabilityMeasured.perVert);
 
   // ── Confiance globale ──────────────────────────────────────────────────────
   const dataScore = clamp(field.dataDays / 90, 0, 1);
@@ -261,7 +287,12 @@ export function modelFromLabOnly(lab: LabTest, asOf: string): PhysiologyModel {
       restingHrs: [],
       bodyMasses: [],
       hrSpeedPairs: [],
-      durability: { pctPerHour: 3.0, pctPer1000mVert: 4.0, confidence: 0.15 },
+      durability: {
+        pctPerHour: 3.0,
+        pctPer1000mVert: 4.0,
+        confidence: 0.15,
+        measured: { perHour: false, perVert: false },
+      },
       vamCurve: {},
       dataDays: 0,
     },

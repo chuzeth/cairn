@@ -323,6 +323,12 @@ export interface ActivityAnalysis {
 
   /** Courbe vitesse-durée de cette séance : durée (s) → meilleure vitesse graduée. */
   meanMaximalSpeed: Record<string, number>;
+  /**
+   * FC moyenne sur la fenêtre qui a produit chaque point de `meanMaximalSpeed`.
+   * Sans elle, la courbe ne distingue pas un effort maximal d'une sortie facile.
+   * Absent sur les analyses produites avant l'introduction du champ.
+   */
+  meanMaximalSpeedHr?: Record<string, number>;
   /** Courbe VAM : durée (s) → meilleure vitesse ascensionnelle (m/h). */
   meanMaximalVam: Record<string, number>;
 

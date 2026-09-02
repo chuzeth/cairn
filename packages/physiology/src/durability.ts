@@ -165,20 +165,65 @@ export function analyzeDurability(
 }
 
 /**
+ * Bornes de plausibilité de l'agrégat, et valeurs de repli issues de la
+ * littérature pour un coureur entraîné.
+ *
+ * Ces bornes sont un garde-fou, pas une échelle : un agrégat qui les atteint
+ * signale que la régression n'a pas convergé sur un signal exploitable. Le
+ * ramener à la borne produirait un nombre d'apparence mesurée qui contaminerait
+ * la prédiction de course — on lui préfère explicitement le repli.
+ */
+const PER_HOUR_BOUNDS: readonly [number, number] = [0, 15];
+const PER_VERT_BOUNDS: readonly [number, number] = [0, 20];
+const DEFAULT_PCT_PER_HOUR = 3.0;
+const DEFAULT_PCT_PER_1000M_VERT = 4.0;
+
+export interface DurabilityAggregate {
+  pctPer1000mVert: number;
+  pctPerHour: number;
+  confidence: number;
+  n: number;
+  /** Vrai quand la valeur retenue vient d'une mesure, faux quand elle vient du repli. */
+  measured: { perHour: boolean; perVert: boolean };
+  /** Agrégat brut avant repli — `null` si aucune séance ne l'a produit. */
+  raw: { perHour: number | null; perVert: number | null };
+}
+
+/**
+ * Retient l'agrégat brut s'il est strictement à l'intérieur des bornes ; sinon
+ * bascule sur le repli en le disant.
+ */
+function resolveAggregate(
+  raw: number | null,
+  bounds: readonly [number, number],
+  fallback: number,
+): { value: number; measured: boolean } {
+  if (raw == null || !Number.isFinite(raw)) return { value: fallback, measured: false };
+  if (raw <= bounds[0] || raw >= bounds[1]) return { value: fallback, measured: false };
+  return { value: raw, measured: true };
+}
+
+/**
  * Agrégation sur l'historique. On pondère par la qualité de l'échantillon, la
  * durée couverte et la fraîcheur, et on écarte les valeurs aberrantes (une
  * séance par 34 °C ne dit rien de la durabilité intrinsèque).
  */
 export function aggregateDurability(
   entries: readonly { result: DurabilityResult; ageDays: number; durationS: number }[],
-): { pctPer1000mVert: number; pctPerHour: number; confidence: number; n: number } {
+): DurabilityAggregate {
   const usable = entries.filter(
     (e) => e.result.sampleQuality !== 'insufficient' && e.result.pctPerHour != null,
   );
 
   if (usable.length === 0) {
-    // Valeurs par défaut issues de la littérature pour un coureur entraîné.
-    return { pctPer1000mVert: 4.0, pctPerHour: 3.0, confidence: 0.15, n: 0 };
+    return {
+      pctPer1000mVert: DEFAULT_PCT_PER_1000M_VERT,
+      pctPerHour: DEFAULT_PCT_PER_HOUR,
+      confidence: 0.15,
+      n: 0,
+      measured: { perHour: false, perVert: false },
+      raw: { perHour: null, perVert: null },
+    };
   }
 
   const weightOf = (e: (typeof usable)[number]) =>
@@ -211,11 +256,19 @@ export function aggregateDurability(
   const totalWeight = usable.reduce((a, e) => a + weightOf(e), 0);
   const confidence = clamp(totalWeight / 8, 0.15, 0.95);
 
+  const hour = resolveAggregate(perHour, PER_HOUR_BOUNDS, DEFAULT_PCT_PER_HOUR);
+  const vert = resolveAggregate(perVert, PER_VERT_BOUNDS, DEFAULT_PCT_PER_1000M_VERT);
+
   return {
-    pctPerHour: clamp(perHour ?? 3.0, 0, 15),
-    pctPer1000mVert: clamp(perVert ?? 4.0, 0, 20),
-    confidence: Math.round(confidence * 100) / 100,
+    pctPerHour: hour.value,
+    pctPer1000mVert: vert.value,
+    // La confiance décrit ce qu'on a mesuré : elle tombe au plancher si les deux
+    // valeurs retenues sont des replis.
+    confidence:
+      hour.measured || vert.measured ? Math.round(confidence * 100) / 100 : 0.15,
     n: usable.length,
+    measured: { perHour: hour.measured, perVert: vert.measured },
+    raw: { perHour, perVert },
   };
 }
 

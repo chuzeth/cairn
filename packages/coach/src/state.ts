@@ -5,8 +5,8 @@ import type {
 import * as db from '@cairn/db';
 import {
   aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
-  computeReadiness, decayedEnvelope, fitCriticalSpeed, interpretAcwr, interpretTsb,
-  modelFromLabOnly, monotonize, type FieldEvidence, type MmpCurve,
+  computeReadiness, decayedEnvelopeWithCompanion, fitCriticalSpeed, interpretAcwr, interpretTsb,
+  maximalEffortSupport, modelFromLabOnly, monotonize, type FieldEvidence, type MmpCurve,
 } from '@cairn/physiology';
 
 /**
@@ -19,6 +19,9 @@ import {
  */
 
 const dayMs = 86_400_000;
+
+/** Entrée d'enveloppe : la courbe d'une séance et la FC qui l'a accompagnée. */
+type CurveEntry = { curve: MmpCurve; companion: MmpCurve | undefined; ageDays: number };
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
 
@@ -46,6 +49,8 @@ export interface AthleteState {
   recentActivities: Activity[];
   /** Courbe vitesse-durée corrigée de la pente, enveloppe 90 jours. */
   speedCurve: MmpCurve;
+  /** FC moyenne de l'effort qui a produit chaque point de `speedCurve`. */
+  speedCurveHr: MmpCurve;
   vamCurve: Record<string, number>;
   weeklyTotals: { weekStart: string; load: number; mechanical: number; durationS: number; vertM: number }[];
 }
@@ -80,11 +85,12 @@ export async function rebuildPhysiologyModel(
       const an = analyses.get(a.id);
       if (!an) return null;
       const ageDays = (now - new Date(a.startDate).getTime()) / dayMs;
-      return { curve: an.meanMaximalSpeed, ageDays };
+      return { curve: an.meanMaximalSpeed, companion: an.meanMaximalSpeedHr, ageDays };
     })
-    .filter((x): x is { curve: MmpCurve; ageDays: number } => x != null);
+    .filter((x): x is CurveEntry => x != null);
 
-  const speedCurve = monotonize(decayedEnvelope(curveEntries, 60));
+  const envelope = decayedEnvelopeWithCompanion(curveEntries, 60);
+  const speedCurve = monotonize(envelope.curve);
 
   // ── Courbe VAM ─────────────────────────────────────────────────────────────
   const vamCurve: Record<string, number> = {};
@@ -143,6 +149,7 @@ export async function rebuildPhysiologyModel(
 
   const evidence: FieldEvidence = {
     gradedSpeedCurve: speedCurve,
+    gradedSpeedCurveHr: envelope.companion,
     observedMaxHrs,
     restingHrs,
     bodyMasses,
@@ -227,17 +234,16 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const recentActivities = await db.listActivities(athleteId, { from: daysAgo(45), limit: 60 });
 
   const analyses = await db.getAnalyses(recentActivities.map((a) => a.id));
-  const speedCurve = monotonize(
-    decayedEnvelope(
-      recentActivities
-        .map((a) => {
-          const an = analyses.get(a.id);
-          return an ? { curve: an.meanMaximalSpeed, ageDays: 0 } : null;
-        })
-        .filter((x): x is { curve: MmpCurve; ageDays: number } => x != null),
-      60,
-    ),
+  const envelope = decayedEnvelopeWithCompanion(
+    recentActivities
+      .map((a) => {
+        const an = analyses.get(a.id);
+        return an ? { curve: an.meanMaximalSpeed, companion: an.meanMaximalSpeedHr, ageDays: 0 } : null;
+      })
+      .filter((x): x is CurveEntry => x != null),
+    60,
   );
+  const speedCurve = monotonize(envelope.curve);
 
   const vamCurve: Record<string, number> = {};
   for (const a of recentActivities) {
@@ -273,6 +279,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     upcomingRaces,
     recentActivities,
     speedCurve,
+    speedCurveHr: envelope.companion,
     vamCurve,
     weeklyTotals: computeWeeklyTotals(recentActivities, analyses),
   };
@@ -309,12 +316,17 @@ function computeWeeklyTotals(
 /** Vitesse critique ajustée depuis la courbe courante — utilisée par les outils. */
 export function currentCriticalSpeed(state: AthleteState) {
   const fit = fitCriticalSpeed(state.speedCurve);
+  const labVt2Hr = state.profile.labTests[0]?.vt2.hr ?? 0;
+  const support = maximalEffortSupport(fit, state.speedCurveHr, labVt2Hr);
   return {
     modelled: state.model.criticalSpeedMs,
     fieldFit: fit.criticalSpeedMs,
     dPrime: state.model.dPrimeM,
     quality: fit.quality,
     r2: fit.r2,
+    maximalEffortSupport: support.support,
+    maximalEffortTestedS: support.testedS,
+    maximalEffortUntestableS: support.untestableS,
   };
 }
 

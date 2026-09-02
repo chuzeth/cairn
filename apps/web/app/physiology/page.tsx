@@ -129,8 +129,14 @@ export default function PhysiologyPage() {
 
         <Card title="Durabilité et descente" hint="Les deux qualités qui décident d'un trail, et que la VO2max ne dit pas.">
           <div className="grid grid-2" style={{ marginBottom: 14 }}>
-            <Metric label="Perte de rendement" value={m.durabilityPctPerHour.toFixed(1)} unit="%/h" tone={m.durabilityPctPerHour < 3 ? 'good' : 'watch'} />
-            <Metric label="Par 1 000 m D+" value={m.durabilityPctPer1000mVert.toFixed(1)} unit="%" />
+            <div>
+              <Metric label="Perte de rendement" value={m.durabilityPctPerHour.toFixed(1)} unit="%/h" tone={m.durabilityPctPerHour < 3 ? 'good' : 'watch'} />
+              <Badge tone={PROVENANCE_TONE[m.provenance.durabilityPctPerHour ?? 'default']}>{PROVENANCE_LABEL[m.provenance.durabilityPctPerHour ?? 'default']}</Badge>
+            </div>
+            <div>
+              <Metric label="Par 1 000 m D+" value={m.durabilityPctPer1000mVert.toFixed(1)} unit="%" />
+              <Badge tone={PROVENANCE_TONE[m.provenance.durabilityPctPer1000mVert ?? 'default']}>{PROVENANCE_LABEL[m.provenance.durabilityPctPer1000mVert ?? 'default']}</Badge>
+            </div>
           </div>
           <div className="grid grid-2">
             <Metric label="Aisance en descente" value={(m.descentSkill ?? 1).toFixed(2)} note="1,00 = bon trailer de référence" tone={(m.descentSkill ?? 1) >= 1 ? 'good' : 'watch'} />

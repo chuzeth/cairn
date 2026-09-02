@@ -8,7 +8,8 @@ import {
   polarizationIndex, mechanicalLoad, heatStressFactor, altitudeVo2Factor,
   durabilityAdjustedCs, detectIntervals, assessSeries, computeAcwr,
   descentSpeedCeiling, walkRunTransitionSpeed, speedForMetabolicPower,
-  technicalityCostMultiplier,
+  technicalityCostMultiplier, aggregateDurability, blendCriticalSpeed,
+  csPriorFromThresholds, maximalEffortSupport, type DurabilityResult,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -193,6 +194,53 @@ describe('Vitesse critique', () => {
     expect(fitCriticalSpeed({ '300': 4.5 }).quality).toBe('insufficient');
   });
 
+  it("n'accorde le poids d'une mesure qu'aux ajustements portés par un effort maximal", () => {
+    // Une courbe irréprochable — r² > 0,999, qualité « strong » —, mais produite
+    // en aisance : le point long, celui qui fixe l'asymptote, a été couru 20 bpm
+    // sous le seuil 2. C'est le cas que le r² seul ne sait pas voir.
+    const CS = 3.6;
+    const DP = 260;
+    const durations = [120, 180, 300, 420, 600, 900, 1200];
+    const curve: Record<string, number> = {};
+    for (const t of durations) curve[String(t)] = CS + DP / t;
+    const fit = fitCriticalSpeed(curve);
+    expect(fit.quality).toBe('strong');
+
+    const labVt2Hr = LAB_TEST_2025_07_24.vt2.hr;
+    const prior = csPriorFromThresholds(LAB_TEST_2025_07_24.vt2.speedMs, LAB_TEST_2025_07_24.vmaMs);
+
+    // Cas 1 — tous les points au seuil : le terrain mesure, il garde tout son poids.
+    const maximal = Object.fromEntries(durations.map((t) => [String(t), labVt2Hr + 6]));
+    const proven = maximalEffortSupport(fit, maximal, labVt2Hr);
+    expect(proven.support).toBe(1);
+    expect(blendCriticalSpeed(fit, prior, proven.support).weightField).toBeCloseTo(0.85, 6);
+
+    // Cas 2 — seul le point long est sous-maximal. Il pèse un tiers de la fenêtre
+    // en durée : le poids du terrain doit reculer d'autant, et la CS retenue
+    // remonter vers le laboratoire.
+    const easyLongEffort = { ...maximal, '1200': labVt2Hr - 20 };
+    const partial = maximalEffortSupport(fit, easyLongEffort, labVt2Hr);
+    expect(partial.support).toBeCloseTo(2520 / 3720, 6);
+    expect(partial.untestableS).toBe(0);
+
+    const strict = blendCriticalSpeed(fit, prior, partial.support);
+    const naive = blendCriticalSpeed(fit, prior);
+    expect(strict.weightField).toBeLessThan(naive.weightField);
+    expect(strict.criticalSpeedMs).toBeGreaterThan(naive.criticalSpeedMs);
+
+    // Cas 3 — aucun effort au seuil : la courbe n'atteste que d'une régularité,
+    // le laboratoire reprend la main entièrement.
+    const easy = Object.fromEntries(durations.map((t) => [String(t), labVt2Hr - 20]));
+    const unproven = blendCriticalSpeed(fit, prior, maximalEffortSupport(fit, easy, labVt2Hr).support);
+    expect(unproven.weightField).toBe(0);
+    expect(unproven.criticalSpeedMs).toBeCloseTo(prior.criticalSpeedMs, 6);
+
+    // Cas 4 — sans FC, le critère se tait plutôt que de conclure.
+    const silent = maximalEffortSupport(fit, {}, labVt2Hr);
+    expect(silent.support).toBe(1);
+    expect(silent.untestableS).toBe(3720);
+  });
+
   it('vide puis recharge la réserve anaérobie', () => {
     const cs = 4.5;
     const dp = 200;
@@ -225,6 +273,56 @@ describe('Environnement', () => {
 });
 
 describe('Durabilité', () => {
+  const durabilityEntry = (
+    pctPerHour: number,
+    pctPer1000mVert: number | null,
+  ): { result: DurabilityResult; ageDays: number; durationS: number } => ({
+    result: {
+      pctPerHour,
+      pctPer1000mVert,
+      baselineEf: 0.03,
+      windows: [],
+      sampleQuality: 'good',
+      r2Time: 0.8,
+    },
+    ageDays: 10,
+    durationS: 5400,
+  });
+
+  it("ne présente pas comme mesurée une valeur qui atteint sa borne de plausibilité", () => {
+    // Des pentes verticales très dispersées, dont l'agrégat dépasse la borne :
+    // la régression n'a rien identifié. Ramené à 20 %/1 000 m, ce non-résultat
+    // coûterait plus de 10 % dans la prédiction de course, avec l'apparence
+    // d'une mesure.
+    const saturated = aggregateDurability([
+      durabilityEntry(6.5, 23.4),
+      durabilityEntry(6.4, 25.7),
+      durabilityEntry(6.6, 29.0),
+    ]);
+    expect(saturated.raw.perVert).toBeGreaterThanOrEqual(20);
+    expect(saturated.measured.perVert).toBe(false);
+    expect(saturated.pctPer1000mVert).toBe(4.0);
+    // La perte horaire, elle, reste dans ses bornes : elle est mesurée.
+    expect(saturated.measured.perHour).toBe(true);
+    expect(saturated.pctPerHour).toBeCloseTo(6.5, 6);
+
+    // Un agrégat intérieur aux bornes passe intact, et se déclare mesuré.
+    const measured = aggregateDurability([
+      durabilityEntry(3.2, 5.1),
+      durabilityEntry(3.4, 5.4),
+      durabilityEntry(3.0, 4.8),
+    ]);
+    expect(measured.measured).toEqual({ perHour: true, perVert: true });
+    expect(measured.pctPer1000mVert).toBeCloseTo(5.1, 6);
+
+    // Aucune séance n'ayant produit de pente verticale, la valeur est un repli
+    // annoncé comme tel — pas un zéro déguisé en mesure.
+    const absent = aggregateDurability([durabilityEntry(3.2, null), durabilityEntry(3.4, null)]);
+    expect(absent.raw.perVert).toBeNull();
+    expect(absent.measured.perVert).toBe(false);
+    expect(absent.pctPer1000mVert).toBe(4.0);
+  });
+
   it('dégrade la vitesse critique avec le temps et le dénivelé', () => {
     const cs = 4.6;
     const m = { pctPerHour: 3, pctPer1000mVert: 4 };

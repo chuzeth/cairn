@@ -8,7 +8,7 @@ import { environmentalFactor } from './environment.js';
 import { elevationChange, gradeAdjustedSpeed } from './grade.js';
 import { assessSeries, detectIntervals, inferSessionShape } from './intervals.js';
 import { computeTrainingLoad, energyExpenditure, fuelingTargets, type LoadSample } from './load.js';
-import { meanMaximal } from './mmp.js';
+import { companionAtMeanMaximal, meanMaximal } from './mmp.js';
 import { cumulativeVertical } from './streams.js';
 import { buildZones, computeZoneDistribution } from './zones.js';
 import { analyzeDescent, gradeProfile, vamCurve, verticalityIndex } from './vertical.js';
@@ -84,6 +84,13 @@ export function analyzeActivity(
   const mms = meanMaximal(gapSeries, relevantDurations);
   const roundedMms: Record<string, number> = {};
   for (const [k, v] of Object.entries(mms)) roundedMms[k] = Math.round(v * 1000) / 1000;
+
+  // Contrepartie cardiaque de chaque point : c'est elle qui dira plus tard si ce
+  // point atteste d'une limite ou d'une aisance.
+  const hrAtMms: Record<string, number> = {};
+  for (const [k, v] of Object.entries(companionAtMeanMaximal(gapSeries, idx.map((i) => hr[i] ?? null), relevantDurations))) {
+    hrAtMms[k] = Math.round(v * 10) / 10;
+  }
 
   const verticalSamples = idx.map((i) => ({
     dt: 1,
@@ -165,6 +172,7 @@ export function analyzeActivity(
     zones: zoneDist,
     decoupling,
     meanMaximalSpeed: roundedMms,
+    meanMaximalSpeedHr: hrAtMms,
     meanMaximalVam: vamMms,
     gradeProfile: gradeProfile(verticalSamples),
     intervals,
