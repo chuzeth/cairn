@@ -266,4 +266,6 @@ export interface SessionRow {
   plannedElevationGainM?: number; plannedDistanceM?: number;
   priority: 'key' | 'support' | 'optional';
   status: string; rationale?: string;
+  /** Activité qui a rattaché la séance — celle qui l'a réalisée ou remplacée. */
+  completedActivityId?: string;
 }

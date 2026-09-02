@@ -224,7 +224,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       {
         session_id: str('Identifiant de la séance.'),
         new_date: str('Nouvelle date, YYYY-MM-DD.'),
-        status: str('Nouveau statut.', { enum: ['planned', 'completed', 'partial', 'missed', 'moved', 'cancelled'] }),
+        status: str(
+          "Nouveau statut. « completed » : la séance prescrite a eu lieu ; « replaced » : autre chose a été fait ce jour-là.",
+          { enum: ['planned', 'completed', 'partial', 'missed', 'moved', 'cancelled', 'replaced'] },
+        ),
         scale_load: num("Facteur multiplicatif de la charge et de la durée, ex. 0.7 pour réduire de 30 %. Exclusif de blocks."),
         title: str('Nouveau titre.'),
         intent: str("Nouvelle intention physiologique — le « pourquoi » de la séance, affiché sous le titre."),
@@ -548,6 +551,7 @@ export async function executeTool(
             denivele_prevu_m: s.plannedElevationGainM ?? 0,
             priorite: s.priority,
             statut: s.status,
+            activite_rattachee: s.completedActivityId ?? null,
             justification_placement: s.rationale,
             ...(detailed ? { detail: renderSession(s) } : {}),
           })),

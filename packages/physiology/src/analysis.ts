@@ -13,7 +13,8 @@ import { cumulativeVertical } from './streams.js';
 import { buildZones, computeZoneDistribution } from './zones.js';
 import { analyzeDescent, gradeProfile, vamCurve, verticalityIndex } from './vertical.js';
 import { wPrimeBalance } from './criticalSpeed.js';
-import { mean, movingAverage } from './units.js';
+import { matchPlannedSession, sessionOutcome } from './sessionMatch.js';
+import { formatDuration, mean, movingAverage } from './units.js';
 
 /**
  * Orchestrateur d'analyse.
@@ -28,7 +29,11 @@ import { mean, movingAverage } from './units.js';
 export interface AnalyzeOptions {
   sex?: 'M' | 'F';
   gpsQuality?: 'good' | 'poor' | 'none';
-  plannedSession?: PlannedSession;
+  /**
+   * Séances prescrites le jour de l'activité. C'est le rattachement, et non la
+   * date, qui décide laquelle — au plus une — cette activité concerne.
+   */
+  plannedSessions?: PlannedSession[];
   hotSessionsLast14Days?: number;
 }
 
@@ -203,9 +208,13 @@ export function analyzeActivity(
     avgCadence: mean(streams.cadence ?? []) ?? null,
   });
 
-  if (opts.plannedSession) {
-    analysis.compliance = assessCompliance(opts.plannedSession, analysis, durationS);
-  }
+  const match = matchPlannedSession(opts.plannedSessions ?? [], {
+    activityId: activity.id,
+    sportType: activity.sportType,
+    durationS,
+    load: load.metabolic,
+  });
+  if (match) analysis.compliance = assessCompliance(match, analysis, durationS);
 
   return analysis;
 }
@@ -359,6 +368,14 @@ function assessCompliance(
     if (actual != null && targetMid > 0) intensityDev = ((actual - targetMid) / targetMid) * 100;
   }
 
+  // Deux questions distinctes, deux jeux de seuils : l'issue dit si c'est bien
+  // la séance prescrite qui a eu lieu, le verdict note comment elle a été menée.
+  const outcome = sessionOutcome({
+    loadPct: loadDev,
+    durationPct: durDev,
+    intensityPct: intensityDev,
+  });
+
   let verdict: SessionCompliance['verdict'];
   let detail: string;
 
@@ -382,11 +399,19 @@ function assessCompliance(
     detail = 'Écarts mineurs, séance globalement conforme.';
   }
 
+  if (outcome === 'replaced') {
+    detail =
+      `Ce n'est pas la séance prescrite : ${formatDuration(actualDurationS)} pour ` +
+      `${formatDuration(planned.plannedDurationS)} et ${Math.round(analysis.load.metabolic)} points de charge ` +
+      `pour ${Math.round(planned.plannedLoad)} prévus. ${detail}`;
+  }
+
   return {
     plannedSessionId: planned.id,
     loadDeviationPct: Math.round(loadDev * 10) / 10,
     durationDeviationPct: Math.round(durDev * 10) / 10,
     intensityDeviationPct: intensityDev != null ? Math.round(intensityDev * 10) / 10 : null,
+    outcome,
     verdict,
     detail,
   };

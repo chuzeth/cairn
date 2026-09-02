@@ -145,11 +145,12 @@ export default function PlanPage() {
                               </div>
                             )}
                             {s.status === 'completed' && <span className="tiny" style={{ color: 'var(--good)' }}>✓ faite</span>}
+                            {s.status === 'replaced' && <span className="tiny" style={{ color: 'var(--warn)' }}>remplacée</span>}
                             {s.status === 'missed' && <span className="tiny" style={{ color: 'var(--warn)' }}>manquée</span>}
                           </div>
                         </button>
                       ))}
-                      {completed && !daily.some((s) => s.status === 'completed') && (
+                      {completed && !daily.some((s) => s.completedActivityId === completed.id) && (
                         <Link href={`/activities/${completed.id}`} className="tiny" style={{ color: 'var(--metabolic)' }}>
                           ↗ séance faite
                         </Link>

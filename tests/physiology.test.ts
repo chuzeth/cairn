@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LAB_TEST_2025_07_24, PIERRE } from '@cairn/core';
+import { LAB_TEST_2025_07_24, PIERRE, type PlannedSession } from '@cairn/core';
 import {
   buildZones, computePmc, densifyDailyLoads, fitCriticalSpeed, formatClock,
   fractionalUtilization, gradeAdjustedSpeed, kmhToMs, locomotionCost, meanMaximal,
@@ -11,6 +11,7 @@ import {
   technicalityCostMultiplier, aggregateDurability, blendCriticalSpeed,
   csPriorFromThresholds, maximalEffortSupport, type DurabilityResult,
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
+  matchPlannedSession, sessionOutcome, type RealizedEffort,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -596,5 +597,83 @@ describe('Profil athlète', () => {
     expect(LAB_TEST_2025_07_24.vo2maxRel).toBe(64.6);
     expect(msToKmh(LAB_TEST_2025_07_24.vmaMs)).toBeCloseTo(20, 6);
     expect(LAB_TEST_2025_07_24.cadenceMeanSpm).toBe(168);
+  });
+});
+
+describe('Rattachement d\'une activité à la séance prescrite', () => {
+  const session = (over: Partial<PlannedSession> = {}): PlannedSession => ({
+    id: 'ses_recup', athleteId: 'pierre', date: '2026-09-02', type: 'recovery',
+    title: 'Décrassage 40 min', intent: 'Faciliter le retour veineux.', blocks: [],
+    plannedLoad: 7, plannedMechanicalLoad: 2, plannedDurationS: 2400,
+    priority: 'optional', status: 'planned', ...over,
+  });
+  // La sortie réellement courue le 02/09 : 103 min, 134 points de charge.
+  const sortie = (over: Partial<RealizedEffort> = {}): RealizedEffort => ({
+    activityId: 'strava-20007158487', sportType: 'TrailRun', durationS: 6201, load: 134, ...over,
+  });
+
+  const longue = session({
+    id: 'ses_longue', type: 'long_run', title: 'Sortie longue 1.6 h',
+    plannedLoad: 92, plannedDurationS: 5904, priority: 'key',
+  });
+
+  it('retient la séance la plus proche de ce qui a été fait, pas la première du jour', () => {
+    expect(matchPlannedSession([session(), longue], sortie())?.id).toBe('ses_longue');
+    // L'ordre d'entrée en base ne doit rien y changer.
+    expect(matchPlannedSession([longue, session()], sortie())?.id).toBe('ses_longue');
+    // Et un décrassage réellement couru reste rattaché au décrassage.
+    expect(matchPlannedSession([session(), longue], sortie({ durationS: 2300, load: 8 }))?.id).toBe('ses_recup');
+  });
+
+  it('reprend une séance passée en « manquée » quand l\'activité arrive après les règles', () => {
+    const cotes = session({
+      id: 'ses_cotes', type: 'hill_repeats', title: 'Côtes — 8 × 90 s à 10 %',
+      plannedLoad: 37, plannedDurationS: 3360, priority: 'key', status: 'missed',
+      rationale: 'Séance non réalisée : statut passé à « manquée ».',
+    });
+    const courue = sortie({ activityId: 'strava-20007144020', durationS: 1333, load: 35 });
+    expect(matchPlannedSession([cotes], courue)?.id).toBe('ses_cotes');
+  });
+
+  it('refuse une séance dont la place est tenue par une autre activité', () => {
+    const prise = session({ status: 'completed', completedActivityId: 'strava-autre' });
+    expect(matchPlannedSession([prise], sortie())).toBeNull();
+    // La ré-analyse de la même activité, elle, retrouve son rattachement.
+    expect(matchPlannedSession([prise], sortie({ activityId: 'strava-autre' }))?.id).toBe('ses_recup');
+  });
+
+  it('refuse une séance annulée ou déplacée', () => {
+    expect(matchPlannedSession([session({ status: 'cancelled' })], sortie())).toBeNull();
+    expect(matchPlannedSession([session({ status: 'moved' })], sortie())).toBeNull();
+  });
+
+  it('refuse de croiser les disciplines', () => {
+    expect(matchPlannedSession([session()], sortie({ sportType: 'Swim' }))).toBeNull();
+    expect(matchPlannedSession([session({ type: 'strength' })], sortie())).toBeNull();
+    expect(matchPlannedSession([session({ type: 'cross_training' })], sortie({ sportType: 'Ride' }))?.id)
+      .toBe('ses_recup');
+  });
+
+  it('ne rattache rien quand le jour ne prescrit rien', () => {
+    expect(matchPlannedSession([], sortie())).toBeNull();
+  });
+});
+
+describe('Séance réalisée ou remplacée', () => {
+  it('refuse d\'enregistrer une conformité quand l\'écart est matériel', () => {
+    // 02/09 : 103 min et 134 points là où 40 min et 7 points étaient prescrits.
+    expect(sessionOutcome({ loadPct: 1814, durationPct: 158, intensityPct: null })).toBe('replaced');
+    // 01/09 : charge conforme par coïncidence, mais 22 min pour 56 min de côtes.
+    expect(sessionOutcome({ loadPct: -5.4, durationPct: -60.3, intensityPct: null })).toBe('replaced');
+  });
+
+  it('laisse « réalisée » une séance simplement mal exécutée', () => {
+    expect(sessionOutcome({ loadPct: 22, durationPct: 12, intensityPct: 6 })).toBe('fulfilled');
+    expect(sessionOutcome({ loadPct: -35, durationPct: -18, intensityPct: null })).toBe('fulfilled');
+  });
+
+  it('compte le stimulus manqué comme une substitution, à volume tenu', () => {
+    expect(sessionOutcome({ loadPct: 5, durationPct: 3, intensityPct: -20 })).toBe('replaced');
+    expect(sessionOutcome({ loadPct: 5, durationPct: 3, intensityPct: -10 })).toBe('fulfilled');
   });
 });

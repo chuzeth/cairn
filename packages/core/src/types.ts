@@ -405,6 +405,11 @@ export interface SessionCompliance {
   durationDeviationPct: number;
   /** Écart d'intensité sur les blocs clefs, %. */
   intensityDeviationPct: number | null;
+  /**
+   * La séance prescrite a-t-elle eu lieu, ou l'activité s'y est-elle substituée ?
+   * `verdict` note l'exécution ; celui-ci dit de quelle séance on parle.
+   */
+  outcome: 'fulfilled' | 'replaced';
   verdict: 'on_target' | 'under' | 'over' | 'wrong_stimulus' | 'missed';
   detail: string;
 }
@@ -579,7 +584,13 @@ export interface PlannedSession {
   plannedElevationGainM?: number;
   /** Priorité : une séance `key` ne doit pas être déplacée à la légère. */
   priority: 'key' | 'support' | 'optional';
-  status: 'planned' | 'completed' | 'partial' | 'missed' | 'moved' | 'cancelled';
+  /**
+   * `completed` : la séance prescrite a eu lieu. `replaced` : une activité a bien
+   * été courue ce jour-là, mais elle s'écarte matériellement de ce qui était
+   * prescrit — le stimulus prévu n'a pas été délivré. Confondre les deux fait
+   * lire au coach une conformité là où le plan a été quitté.
+   */
+  status: 'planned' | 'completed' | 'partial' | 'missed' | 'moved' | 'cancelled' | 'replaced';
   completedActivityId?: string;
   /** Justification produite par le coach lors de la (re)planification. */
   rationale?: string;

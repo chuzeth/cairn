@@ -369,24 +369,33 @@ export async function analyzeAndStore(
   const stored = await db.getStreams(activityId);
   if (!stored) return null;
 
-  const planned = await db.listPlannedSessions(
-    athleteId,
-    activity.startDateLocal.slice(0, 10),
-    activity.startDateLocal.slice(0, 10),
-  );
-  // On rattache la séance prévue du jour dont le type est le plus proche.
-  const match = planned.find((p) => p.status === 'planned' || p.status === 'completed');
+  const day = activity.startDateLocal.slice(0, 10);
+  // Le rattachement choisit parmi les séances du jour, ou n'en choisit aucune.
+  const planned = await db.listPlannedSessions(athleteId, day, day);
 
   const analysis = analyzeActivity(activity, stored.streams, model, {
     sex: 'M',
     gpsQuality: stored.gpsQuality as 'good' | 'poor' | 'none',
-    plannedSession: match,
+    plannedSessions: planned,
   });
 
   await db.saveAnalysis(athleteId, activity.startDateLocal, analysis);
 
-  if (match && match.status === 'planned') {
-    await db.updateSession(match.id, { status: 'completed', completedActivityId: activityId });
+  const compliance = analysis.compliance;
+  if (compliance) {
+    const target = planned.find((p) => p.id === compliance.plannedSessionId);
+    const status = compliance.outcome === 'fulfilled' ? 'completed' : 'replaced';
+    // Le statut est recalculé à chaque analyse, sans garde sur l'état précédent :
+    // une séance passée en « manquée » par les règles doit pouvoir être reprise
+    // par l'activité qui arrive après elles.
+    await db.updateSession(compliance.plannedSessionId, {
+      status,
+      completedActivityId: activityId,
+      // La justification du planificateur reste en place tant qu'elle dit vrai.
+      // Elle est remplacée quand ce qui s'est passé la dément : une séance
+      // remplacée, ou une « non réalisée » que l'activité vient contredire.
+      ...(status === 'replaced' || target?.status === 'missed' ? { rationale: compliance.detail } : {}),
+    });
   }
   return analysis;
 }

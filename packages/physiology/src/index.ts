@@ -14,4 +14,5 @@ export * from './thresholds.js';
 export * from './prediction.js';
 export * from './readiness.js';
 export * from './streams.js';
+export * from './sessionMatch.js';
 export * from './analysis.js';
