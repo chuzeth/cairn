@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cairn": {
+      "command": "npx",
+      "args": ["tsx", "/Users/pchuze/Documents/Trail Running/packages/mcp/src/index.ts"]
+    }
+  }
+}
