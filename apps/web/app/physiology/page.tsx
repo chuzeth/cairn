@@ -72,6 +72,17 @@ export default function PhysiologyPage() {
           <p className="page-sub">
             Modèle du {m.asOf} · confiance {Math.round(m.confidence * 100)} % ·
             {' '}chaque paramètre indique s'il vient du laboratoire ou du terrain
+            {/* L'âge de la dernière preuve d'effort maximal explique à lui seul
+                l'essentiel de la confiance : sans effort au seuil récent, la
+                vitesse critique repose sur une extrapolation de footings. */}
+            {m.criticalSpeedEvidence && (
+              <>
+                <br />
+                {m.criticalSpeedEvidence.lastProofAgeDays == null
+                  ? "Aucun effort maximal identifié dans la courbe : la vitesse critique n'est pas mesurée."
+                  : `Dernier effort maximal il y a ${m.criticalSpeedEvidence.lastProofAgeDays} j — la vitesse critique s'appuie dessus à ${Math.round(m.criticalSpeedEvidence.support * 100)} %.`}
+              </>
+            )}
           </p>
         </div>
         <button className="btn" onClick={rebuild} disabled={rebuilding}>

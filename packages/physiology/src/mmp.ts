@@ -164,16 +164,18 @@ export function decayedEnvelope(
 
 /**
  * Même enveloppe, en conservant pour chaque durée la valeur du signal associé
- * (`companion`) de l'activité qui a fourni le point retenu. Sans cela,
- * l'enveloppe perd la trace de *comment* chaque point a été produit — et un
- * ajustement ne peut plus distinguer une mesure d'une régularité.
+ * (`companion`) de l'activité qui a fourni le point retenu, et l'âge de cette
+ * activité. Sans cela, l'enveloppe perd la trace de *comment* et *quand* chaque
+ * point a été produit — et un ajustement ne peut plus distinguer une mesure
+ * d'une régularité, ni une preuve fraîche d'une preuve périmée.
  */
 export function decayedEnvelopeWithCompanion(
   entries: readonly { curve: MmpCurve; companion?: MmpCurve; ageDays: number }[],
   halfLifeDays = 60,
-): { curve: MmpCurve; companion: MmpCurve } {
+): { curve: MmpCurve; companion: MmpCurve; ageDays: MmpCurve } {
   const curve: MmpCurve = {};
   const companion: MmpCurve = {};
+  const ageDays: MmpCurve = {};
   for (const entry of entries) {
     const w = Math.pow(0.5, Math.max(0, entry.ageDays) / halfLifeDays);
     for (const [k, v] of Object.entries(entry.curve)) {
@@ -181,12 +183,13 @@ export function decayedEnvelopeWithCompanion(
       const prev = curve[k];
       if (prev !== undefined && adjusted <= prev) continue;
       curve[k] = adjusted;
+      ageDays[k] = Math.max(0, entry.ageDays);
       const c = entry.companion?.[k];
       if (c === undefined) delete companion[k];
       else companion[k] = c;
     }
   }
-  return { curve, companion };
+  return { curve, companion, ageDays };
 }
 
 /** Rend la courbe monotone décroissante : une durée plus longue ne peut pas être plus rapide. */

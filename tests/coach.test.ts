@@ -274,8 +274,18 @@ describe('Règles d\'ajustement automatique', () => {
     const state = baseState({
       readiness: { date: '2026-09-01', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
     });
-    const adj = evaluateAdjustments(state, [session({ date: '2026-09-01', type: 'threshold', plannedLoad: 80, plannedMechanicalLoad: 5 })]);
-    expect(adj.some((a) => a.rule === 'readiness_red')).toBe(true);
+    const tomorrow = session({ date: '2026-09-02', type: 'threshold', plannedLoad: 80, plannedMechanicalLoad: 5 });
+    expect(evaluateAdjustments(state, [tomorrow]).some((a) => a.rule === 'readiness_red')).toBe(true);
+
+    // Le verdict se lit dans l'état, pas dans l'horloge : la même séance, jugée
+    // depuis un état daté d'une semaine plus tôt, n'est plus « le lendemain ».
+    // Sans cette garantie la règle change d'avis en franchissant minuit, et le
+    // test ci-dessus pourrit tout seul.
+    const earlier = baseState({
+      today: { date: '2026-08-26', ctl: 50, atl: 55, tsb: -5, mechanicalTsb: 0, acwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
+      readiness: { date: '2026-08-26', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
+    });
+    expect(evaluateAdjustments(earlier, [tomorrow]).some((a) => a.rule === 'readiness_red')).toBe(false);
   });
 
   it('n\'applique qu\'une règle par séance', () => {

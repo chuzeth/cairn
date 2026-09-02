@@ -27,6 +27,12 @@ export interface FieldEvidence {
    * aisance. Une durée absente est un point non testable, pas un point réfuté.
    */
   gradedSpeedCurveHr?: MmpCurve;
+  /**
+   * Âge, en jours, de l'effort qui a produit chaque point de `gradedSpeedCurve`.
+   * Une preuve d'effort maximal s'escompte avec son âge : sans cette date, elle
+   * compterait à plein jusqu'au jour où elle disparaît d'un coup.
+   */
+  gradedSpeedCurveAgeDays?: MmpCurve;
   /** FC maximales observées par activité, 12 derniers mois. */
   observedMaxHrs: number[];
   /** FC de repos matinales déclarées ou déduites. */
@@ -194,10 +200,17 @@ export function buildPhysiologyModel(
   // La preuve d'effort maximal se juge à la FC du seuil 2 du laboratoire : elle
   // est disponible avant toute ré-estimation de seuil — la FC seuil terrain,
   // elle, dépendrait de la vitesse critique qu'on cherche à établir.
-  const support = maximalEffortSupport(fit, field.gradedSpeedCurveHr ?? {}, lab.vt2.hr);
-  const blended = blendCriticalSpeed(fit, prior, support.support);
+  const support = maximalEffortSupport(
+    fit,
+    field.gradedSpeedCurveHr ?? {},
+    lab.vt2.hr,
+    field.gradedSpeedCurveAgeDays ?? {},
+  );
+  const blended = blendCriticalSpeed(fit, prior, support.support, labW);
+  // La provenance suit la part réellement empruntée au laboratoire : quand celui-ci
+  // a vieilli, le nombre reste majoritairement du terrain même sans preuve fraîche.
   provenance.criticalSpeedMs =
-    blended.weightField > 0.7 ? 'field' : blended.weightField > 0.2 ? 'blended' : 'lab';
+    blended.weightLab > 0.7 ? 'lab' : blended.weightLab > 0.2 ? 'blended' : 'field';
   provenance.dPrimeM = provenance.criticalSpeedMs;
 
   // ── VMA & VO2max ───────────────────────────────────────────────────────────
@@ -249,8 +262,13 @@ export function buildPhysiologyModel(
   provenance.durabilityPctPer1000mVert = durabilityProvenance(durabilityMeasured.perVert);
 
   // ── Confiance globale ──────────────────────────────────────────────────────
+  // La qualité de l'ajustement n'entre qu'à hauteur de ce qu'une preuve d'effort
+  // maximal soutient — et cette preuve s'escompte avec son âge. La confiance
+  // décroît donc d'elle-même à mesure que le dernier effort maximal s'éloigne,
+  // au lieu de rester haute sur la seule régularité des footings.
   const dataScore = clamp(field.dataDays / 90, 0, 1);
-  const fitScore = fit.quality === 'strong' ? 1 : fit.quality === 'usable' ? 0.7 : 0.35;
+  const fitScore =
+    (fit.quality === 'strong' ? 1 : fit.quality === 'usable' ? 0.7 : 0.35) * support.support;
   const confidence = clamp(0.35 + 0.35 * dataScore + 0.2 * fitScore + 0.1 * labW, 0.2, 0.97);
 
   return {
@@ -268,6 +286,12 @@ export function buildPhysiologyModel(
     durabilityPctPer1000mVert: field.durability.pctPer1000mVert,
     durabilityPctPerHour: field.durability.pctPerHour,
     vamCurve: field.vamCurve,
+    criticalSpeedEvidence: {
+      support: Math.round(support.support * 1000) / 1000,
+      lastProofAgeDays:
+        support.lastProofAgeDays == null ? null : Math.round(support.lastProofAgeDays),
+      weightLab: Math.round(blended.weightLab * 1000) / 1000,
+    },
     confidence: Math.round(confidence * 100) / 100,
     provenance,
   };

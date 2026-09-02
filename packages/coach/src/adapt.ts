@@ -34,7 +34,7 @@ export interface Adjustment {
 
 const dayMs = 86_400_000;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
-const daysUntil = (date: string) => Math.round((new Date(`${date}T00:00:00Z`).getTime() - Date.now()) / dayMs);
+const midnight = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 
 /** Séances à forte contrainte excentrique. */
 const ECCENTRIC_TYPES = new Set(['downhill', 'long_trail', 'long_run', 'race_pace']);
@@ -44,7 +44,12 @@ export function evaluateAdjustments(
   upcoming: PlannedSession[],
 ): Adjustment[] {
   const out: Adjustment[] = [];
-  const today = iso(new Date());
+  // Le jour de référence vient de l'état évalué, jamais de l'horloge. Sans cela
+  // les règles changent de verdict à minuit sur un état identique — ce que la
+  // promesse d'auditabilité ci-dessus interdit, et ce qu'aucun test ne peut
+  // fixer dans le temps.
+  const today = state.today.date;
+  const daysUntil = (date: string) => Math.round((midnight(date) - midnight(today)) / dayMs);
   const seen = new Set<string>();
 
   const push = (adj: Adjustment) => {

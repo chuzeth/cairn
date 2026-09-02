@@ -25,6 +25,20 @@ type CurveEntry = { curve: MmpCurve; companion: MmpCurve | undefined; ageDays: n
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
 
+/**
+ * Fenêtre d'observation de la courbe vitesse-durée.
+ *
+ * Une année entière, très au-delà de la demi-vie de fraîcheur (60 j) et de celle
+ * d'une preuve d'effort maximal (90 j) : la pertinence d'une performance doit
+ * s'éteindre par décroissance continue, jamais parce qu'une requête s'arrête à
+ * une date. Une coupure posée là où une séance pèse encore fait sauter la
+ * vitesse critique d'un jour à l'autre, sans qu'aucune donnée n'ait changé.
+ */
+const CURVE_WINDOW_DAYS = 365;
+
+/** Fenêtre de comptage du volume de données, qui mesure la densité *récente*. */
+const DATA_DENSITY_WINDOW_DAYS = 120;
+
 export interface AthleteState {
   profile: AthleteProfile;
   model: PhysiologyModel;
@@ -62,19 +76,24 @@ export interface AthleteState {
  */
 export async function rebuildPhysiologyModel(
   athleteId: string,
-  opts: { persist?: boolean } = {},
+  opts: { persist?: boolean; asOf?: string } = {},
 ): Promise<PhysiologyModel> {
   const profile = await db.getAthlete(athleteId);
   if (!profile) throw new Error(`Athlète inconnu : ${athleteId}`);
   const lab = profile.labTests[0];
   if (!lab) throw new Error(`Aucun test de laboratoire enregistré pour ${athleteId}.`);
 
-  const since = daysAgo(120);
-  const activities = await db.listActivities(athleteId, { from: since, limit: 400 });
-  const analyses = await db.getAnalyses(activities.map((a) => a.id));
-  const checkIns = await db.listCheckIns(athleteId, daysAgo(180));
+  // `asOf` permet de rejouer le modèle à une date donnée — indispensable pour
+  // vérifier qu'il évolue continûment plutôt que par sauts.
+  const now = opts.asOf ? new Date(`${opts.asOf}T12:00:00Z`).getTime() : Date.now();
+  const at = (n: number) => iso(new Date(now - n * dayMs));
 
-  const now = Date.now();
+  const activities = (
+    await db.listActivities(athleteId, { from: at(CURVE_WINDOW_DAYS), limit: 400 })
+  ).filter((a) => new Date(a.startDate).getTime() <= now);
+  const analyses = await db.getAnalyses(activities.map((a) => a.id));
+  const checkIns = await db.listCheckIns(athleteId, at(180));
+
   const runLike = activities.filter((a) =>
     ['Run', 'TrailRun', 'VirtualRun', 'Hike'].includes(a.sportType),
   );
@@ -91,6 +110,7 @@ export async function rebuildPhysiologyModel(
 
   const envelope = decayedEnvelopeWithCompanion(curveEntries, 60);
   const speedCurve = monotonize(envelope.curve);
+  const asOf = iso(new Date(now));
 
   // ── Courbe VAM ─────────────────────────────────────────────────────────────
   const vamCurve: Record<string, number> = {};
@@ -145,11 +165,19 @@ export async function rebuildPhysiologyModel(
 
   const durability = aggregateDurability(durabilityEntries);
 
-  const dataDays = new Set(activities.map((a) => a.startDateLocal.slice(0, 10))).size;
+  // La densité de données reste mesurée sur la fenêtre récente : élargir
+  // l'observation de la courbe ne doit pas faire passer une année clairsemée
+  // pour un trimestre dense.
+  const densitySince = at(DATA_DENSITY_WINDOW_DAYS);
+  const dataDays = new Set(
+    activities.filter((a) => a.startDateLocal.slice(0, 10) >= densitySince)
+      .map((a) => a.startDateLocal.slice(0, 10)),
+  ).size;
 
   const evidence: FieldEvidence = {
     gradedSpeedCurve: speedCurve,
     gradedSpeedCurveHr: envelope.companion,
+    gradedSpeedCurveAgeDays: envelope.ageDays,
     observedMaxHrs,
     restingHrs,
     bodyMasses,
@@ -159,7 +187,7 @@ export async function rebuildPhysiologyModel(
     dataDays,
   };
 
-  const model = buildPhysiologyModel(lab, evidence, new Date().toISOString().slice(0, 10));
+  const model = buildPhysiologyModel(lab, evidence, asOf);
 
   // ── Aisance en descente, apprise depuis le terrain ─────────────────────────
   model.descentSkill = estimateDescentSkill(runLike, analyses);

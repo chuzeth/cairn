@@ -132,6 +132,20 @@ export interface PhysiologyModel {
    */
   descentSkill?: number;
 
+  /**
+   * État de la preuve qui soutient la vitesse critique. Sans elle, un athlète ne
+   * peut pas savoir si son chiffre repose sur un effort maximal récent ou sur
+   * trois mois de footings réguliers — les deux produisent le même r².
+   */
+  criticalSpeedEvidence?: {
+    /** Part de l'ajustement adossée à une preuve d'effort maximal, âge compris. */
+    support: number;
+    /** Âge de la preuve la plus récente, en jours. `null` si aucune. */
+    lastProofAgeDays: number | null;
+    /** Part du chiffre effectivement empruntée au test de laboratoire. */
+    weightLab: number;
+  };
+
   /** Confiance dans le modèle (0–1), pondérée par la fraîcheur et le volume de données. */
   confidence: number;
   /** Provenance de chaque paramètre : 'lab' | 'field' | 'blended' | 'default'. */

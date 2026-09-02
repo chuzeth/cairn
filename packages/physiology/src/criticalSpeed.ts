@@ -171,13 +171,25 @@ export function csPriorFromThresholds(vt2SpeedMs: number, vmaMs: number): {
   return { criticalSpeedMs: cs, dPrimeM: dPrime };
 }
 
+/**
+ * Demi-vie d'une preuve d'effort maximal, en jours.
+ *
+ * Plus courte que celle d'un test de laboratoire (270 j) — la forme bouge —, plus
+ * longue que la pondération de fraîcheur de l'enveloppe (60 j) : un maximum
+ * démontré reste une information sur ce que la physiologie de l'athlète sait
+ * produire, même quand la performance elle-même n'est plus d'actualité.
+ */
+export const PROOF_HALF_LIFE_DAYS = 90;
+
 export interface MaximalEffortSupport {
-  /** Part de l'ajustement adossée à une preuve d'effort maximal, 0–1. */
+  /** Part de l'ajustement adossée à une preuve d'effort maximal, 0–1, âge compris. */
   support: number;
-  /** Durée cumulée des points prouvés, testés, et de ceux qu'on ne peut pas tester. */
+  /** Durée cumulée des points prouvés, pondérée par l'âge de chaque preuve. */
   provenS: number;
   testedS: number;
   untestableS: number;
+  /** Âge de la preuve la plus récente, en jours. `null` si aucun point n'est prouvé. */
+  lastProofAgeDays: number | null;
 }
 
 /**
@@ -194,15 +206,24 @@ export interface MaximalEffortSupport {
  * que la preuve compte. Un point sans FC n'est ni prouvé ni réfuté : il sort du
  * calcul, et si aucun point n'est testable le critère se tait plutôt que de
  * conclure (`support` = 1).
+ *
+ * Une preuve a une durée de vie : ce que l'athlète tenait au seuil il y a trois
+ * mois atteste moins bien de sa capacité d'aujourd'hui que sa séance de la
+ * semaine dernière. Chaque preuve est donc escomptée exponentiellement selon son
+ * âge, ce qui fait décroître `support` de façon continue au lieu de s'effondrer
+ * le jour où la séance qui la portait sort de la fenêtre d'observation.
  */
 export function maximalEffortSupport(
   fit: CriticalSpeedFit,
   hrAtBest: Record<string, number>,
   thresholdHr: number,
+  ageDaysAtBest: Record<string, number> = {},
+  halfLifeDays = PROOF_HALF_LIFE_DAYS,
 ): MaximalEffortSupport {
   let provenS = 0;
   let testedS = 0;
   let untestableS = 0;
+  let lastProofAgeDays: number | null = null;
 
   for (const p of fit.points) {
     const hr = hrAtBest[String(p.durationS)];
@@ -211,7 +232,11 @@ export function maximalEffortSupport(
       continue;
     }
     testedS += p.durationS;
-    if (hr >= thresholdHr) provenS += p.durationS;
+    if (hr < thresholdHr) continue;
+
+    const age = Math.max(0, ageDaysAtBest[String(p.durationS)] ?? 0);
+    provenS += p.durationS * Math.pow(0.5, age / halfLifeDays);
+    if (lastProofAgeDays == null || age < lastProofAgeDays) lastProofAgeDays = age;
   }
 
   return {
@@ -219,6 +244,7 @@ export function maximalEffortSupport(
     provenS,
     testedS,
     untestableS,
+    lastProofAgeDays,
   };
 }
 
@@ -227,30 +253,46 @@ export function maximalEffortSupport(
  *
  * Le poids du terrain est le produit de deux choses distinctes : la qualité de
  * l'ajustement — sa régularité — et la preuve que les efforts ajustés étaient
- * maximaux. Sans la seconde, la première ne mesure que la constance de l'allure,
- * et le laboratoire doit garder la main.
+ * maximaux. Sans la seconde, la première ne mesure que la constance de l'allure.
+ *
+ * Mais le laboratoire ne récupère pas pour autant tout ce que le terrain ne
+ * prouve pas : il vieillit lui aussi, et `labWeight` chiffre déjà cette
+ * obsolescence. Il ne réclame donc du reliquat que la part que sa fraîcheur lui
+ * laisse ; le solde retombe sur l'ajustement terrain, qui même non prouvé reste
+ * un plancher — l'athlète a réellement tenu ces allures. Sans cette règle, un
+ * test d'effort de treize mois reprend la main entière dès que la dernière preuve
+ * de terrain s'efface, et impose une vitesse critique que rien d'observé ne
+ * soutient.
  */
 export function blendCriticalSpeed(
   fit: CriticalSpeedFit,
   prior: { criticalSpeedMs: number; dPrimeM: number },
   maximalEffortSupport = 1,
+  labWeight = 1,
 ): {
   criticalSpeedMs: number;
   dPrimeM: number;
   weightField: number;
+  weightLab: number;
   maximalEffortSupport: number;
 } {
   const quality =
     fit.quality === 'strong' ? 0.85 : fit.quality === 'usable' ? 0.6 : fit.quality === 'weak' ? 0.25 : 0;
   const support = clamp(Number.isFinite(maximalEffortSupport) ? maximalEffortSupport : 1, 0, 1);
-  const w = quality * support;
-  if (w === 0 || fit.criticalSpeedMs <= 0) {
-    return { ...prior, weightField: 0, maximalEffortSupport: support };
+  const wField = quality * support;
+
+  // Sans ajustement exploitable, il n'y a pas de plancher terrain sur lequel
+  // retomber : le laboratoire est tout ce qu'on a.
+  if (fit.criticalSpeedMs <= 0) {
+    return { ...prior, weightField: 0, weightLab: 1, maximalEffortSupport: support };
   }
+
+  const wLab = (1 - wField) * clamp(Number.isFinite(labWeight) ? labWeight : 1, 0, 1);
   return {
-    criticalSpeedMs: fit.criticalSpeedMs * w + prior.criticalSpeedMs * (1 - w),
-    dPrimeM: fit.dPrimeM * w + prior.dPrimeM * (1 - w),
-    weightField: w,
+    criticalSpeedMs: fit.criticalSpeedMs * (1 - wLab) + prior.criticalSpeedMs * wLab,
+    dPrimeM: fit.dPrimeM * (1 - wLab) + prior.dPrimeM * wLab,
+    weightField: wField,
+    weightLab: wLab,
     maximalEffortSupport: support,
   };
 }

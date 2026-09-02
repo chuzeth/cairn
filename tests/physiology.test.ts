@@ -10,6 +10,7 @@ import {
   descentSpeedCeiling, walkRunTransitionSpeed, speedForMetabolicPower,
   technicalityCostMultiplier, aggregateDurability, blendCriticalSpeed,
   csPriorFromThresholds, maximalEffortSupport, type DurabilityResult,
+  buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -239,6 +240,78 @@ describe('Vitesse critique', () => {
     const silent = maximalEffortSupport(fit, {}, labVt2Hr);
     expect(silent.support).toBe(1);
     expect(silent.untestableS).toBe(3720);
+  });
+
+  it("fait vieillir la preuve d'effort maximal au lieu de la faire disparaître d'un coup", () => {
+    // Une courbe portée par un seul effort maximal, qu'on fait vieillir jour après
+    // jour. Le défaut corrigé ici : la séance sortait de la fenêtre d'observation
+    // à date fixe, et la vitesse critique sautait d'un quart en vingt-quatre
+    // heures — sans qu'aucune donnée n'ait changé.
+    const durations = [120, 180, 300, 420, 600, 900, 1200];
+    const CS = 3.6;
+    const DP = 260;
+    const curve: Record<string, number> = {};
+    const hr: Record<string, number> = {};
+    for (const t of durations) {
+      curve[String(t)] = CS + DP / t;
+      hr[String(t)] = LAB_TEST_2025_07_24.vt2.hr + 12;
+    }
+
+    const BASE = Date.parse('2026-09-02T00:00:00Z');
+    const PROOF_AGE_AT_BASE = 40;
+    const modelAtDay = (k: number) => {
+      const asOf = new Date(BASE + k * 86_400_000).toISOString().slice(0, 10);
+      const evidence: FieldEvidence = {
+        gradedSpeedCurve: curve,
+        gradedSpeedCurveHr: hr,
+        gradedSpeedCurveAgeDays: Object.fromEntries(
+          durations.map((t) => [String(t), PROOF_AGE_AT_BASE + k]),
+        ),
+        observedMaxHrs: [],
+        restingHrs: [],
+        bodyMasses: [],
+        hrSpeedPairs: [],
+        durability: { pctPerHour: 3, pctPer1000mVert: 4, confidence: 0.5 },
+        vamCurve: {},
+        dataDays: 60,
+      };
+      return buildPhysiologyModel(LAB_TEST_2025_07_24, evidence, asOf);
+    };
+
+    const days = Array.from({ length: 261 }, (_, k) => modelAtDay(k));
+
+    // Continuité : d'un jour au suivant, la vitesse critique ne bouge jamais de
+    // plus d'un centième de km/h. L'ancienne coupure dure valait 3,4 km/h.
+    const steps = days.slice(1).map((m, i) => Math.abs(m.criticalSpeedMs - days[i]!.criticalSpeedMs));
+    expect(Math.max(...steps) * 3.6).toBeLessThan(0.01);
+
+    // Le passage du 120ᵉ jour de preuve — l'ancienne falaise — n'a rien de
+    // particulier.
+    const atBoundary = Math.abs(days[81]!.criticalSpeedMs - days[80]!.criticalSpeedMs);
+    expect(atBoundary * 3.6).toBeLessThan(0.01);
+
+    // La preuve s'escompte : à une demi-vie d'écart, elle ne pèse plus que moitié.
+    const fresh = days[0]!.criticalSpeedEvidence!;
+    const halved = days[PROOF_HALF_LIFE_DAYS]!.criticalSpeedEvidence!;
+    expect(fresh.lastProofAgeDays).toBe(PROOF_AGE_AT_BASE);
+    // `support` est arrondi au millième dans le modèle : on tolère cet arrondi.
+    expect(Math.abs(halved.support - fresh.support / 2)).toBeLessThanOrEqual(0.001);
+
+    // La confiance suit l'âge de la preuve au lieu de rester muette.
+    const confidences = days.map((m) => m.confidence);
+    expect(confidences[confidences.length - 1]!).toBeLessThan(confidences[0]!);
+    expect(days.slice(1).every((m, i) => m.confidence <= days[i]!.confidence)).toBe(true);
+
+    // Le laboratoire ne récupère que ce que sa fraîcheur lui laisse : la preuve
+    // éteinte, la CS reste tirée par le terrain, loin du prior de 17,1 km/h.
+    const last = days[days.length - 1]!;
+    const prior = csPriorFromThresholds(LAB_TEST_2025_07_24.vt2.speedMs, LAB_TEST_2025_07_24.vmaMs);
+    expect(last.criticalSpeedEvidence!.support).toBeLessThan(0.1);
+    expect(last.criticalSpeedMs).toBeLessThan(prior.criticalSpeedMs * 0.85);
+    expect(last.criticalSpeedMs).toBeGreaterThan(CS);
+    expect(last.criticalSpeedEvidence!.weightLab).toBeLessThan(
+      labWeight(LAB_TEST_2025_07_24.date, last.asOf),
+    );
   });
 
   it('vide puis recharge la réserve anaérobie', () => {

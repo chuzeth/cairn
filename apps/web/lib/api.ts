@@ -184,6 +184,7 @@ export interface StateResponse {
     vt1Kmh: number; vt2Kmh: number;
     durabilityPctPerHour: number; durabilityPctPer1000mVert: number;
     descentSkill?: number; confidence: number;
+    criticalSpeedEvidence?: { support: number; lastProofAgeDays: number | null; weightLab: number };
     provenance: Record<string, string>;
     vamCurve: Record<string, number>;
   };
