@@ -1,3 +1,5 @@
+import { DEFAULT_POLL_INTERVAL_MS } from './poller.js';
+
 /** Configuration d'exécution, lue une fois et validée au démarrage. */
 export const env = {
   port: Number(process.env.API_PORT ?? 4000),
@@ -7,7 +9,22 @@ export const env = {
   webhookVerifyToken: process.env.STRAVA_WEBHOOK_VERIFY_TOKEN ?? 'cairn-verify-me',
   /** Athlète unique de cette instance — l'application est mono-utilisateur par conception. */
   athleteId: process.env.CAIRN_ATHLETE_ID ?? 'pierre',
+  /** Cadence de la relève Strava, en millisecondes. `0` la désactive. */
+  pollIntervalMs: pollIntervalMs(),
 };
+
+/**
+ * Cadence de la relève, en minutes, avec repli sur le quart d'heure — le
+ * raisonnement sur le quota est dans `poller.ts`. Une valeur illisible vaut
+ * absence de valeur : mieux vaut la cadence par défaut qu'une relève muette.
+ */
+function pollIntervalMs(): number {
+  const raw = process.env.CAIRN_POLL_INTERVAL_MIN;
+  if (raw == null || raw.trim() === '') return DEFAULT_POLL_INTERVAL_MS;
+  const minutes = Number(raw);
+  if (!Number.isFinite(minutes) || minutes < 0) return DEFAULT_POLL_INTERVAL_MS;
+  return Math.round(minutes * 60_000);
+}
 
 /**
  * Une variable laissée à sa valeur d'exemple est *plus* trompeuse qu'une variable

@@ -170,6 +170,12 @@ export interface BackfillProgress {
   errors: { stravaId: number; message: string }[];
   rateLimited: boolean;
   message: string;
+  /**
+   * Message de l'erreur qui a interrompu l'import, le cas échéant. Sans lui,
+   * un import avorté est indiscernable d'un import qui n'a rien trouvé — et la
+   * relève périodique déclarerait un succès.
+   */
+  interrupted?: string;
 }
 
 /**
@@ -194,6 +200,7 @@ export async function backfill(
   const max = opts.maxActivities ?? 40;
 
   await db.updateSyncState(athleteId, { status: 'syncing', message: 'Import en cours…' });
+  const ingestedIds: string[] = [];
 
   try {
     for await (const summary of client.iterateActivities(since)) {
@@ -215,12 +222,13 @@ export async function backfill(
       }
 
       try {
-        await ingestActivity(athleteId, summary.id, {
+        const result = await ingestActivity(athleteId, summary.id, {
           withInsight: opts.withInsights ?? false,
           // Ré-estimer le modèle à chaque activité d'un backfill serait
           // quadratique : on le fait une fois à la fin.
           rebuildModel: false,
         });
+        ingestedIds.push(result.activityId);
         progress.ingested++;
       } catch (e) {
         if (e instanceof StravaRateLimitError) {
@@ -237,8 +245,12 @@ export async function backfill(
     // le modèle consolidé.
     if (progress.ingested > 0) {
       const model = await rebuildPhysiologyModel(athleteId);
+      // Les séances qui viennent d'entrer ont été analysées avec le modèle
+      // précédent. Elles ne sont pas « périmées » au sens du moteur — même
+      // version — mais elles ont été jugées à l'aune d'un modèle qu'elles
+      // viennent elles-mêmes de déplacer : c'est le second passage.
       const stale = await db.findStaleAnalyses(athleteId, 400);
-      for (const id of stale) await analyzeAndStore(athleteId, id, model);
+      for (const id of new Set([...ingestedIds, ...stale])) await analyzeAndStore(athleteId, id, model);
     }
 
     progress.message = progress.rateLimited
@@ -252,6 +264,7 @@ export async function backfill(
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    progress.interrupted = message;
     progress.message = `Import interrompu : ${message}`;
     await db.updateSyncState(athleteId, { status: 'error', message });
   }

@@ -12,6 +12,7 @@ import {
 import type { ActivityStreams } from '@cairn/core';
 import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
 import { env, missingConfig } from './env.js';
+import { activityPollerStatus } from './poller.js';
 import { backfill, ingestActivity, processPendingWebhooks, stravaClientFor } from './sync.js';
 
 const dayMs = 86_400_000;
@@ -45,6 +46,10 @@ export async function buildServer() {
       stravaConnected: tokens != null,
       missingConfig: missingConfig(),
       sync: sync ?? null,
+      // `sync` dit ce que le dernier import a fait ; `poll` dit si l'horloge
+      // qui les déclenche tourne encore. Sans le second, une relève morte
+      // ressemble à une relève sans rien à faire.
+      poll: activityPollerStatus(),
       hasActivities: activityCount > 0,
     };
   });
