@@ -19,6 +19,23 @@ const dayMs = 86_400_000;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
 
+/**
+ * Lecture d'une valeur déclarée.
+ *
+ * Une réponse absente reste absente — `readiness` sait la traiter comme telle
+ * et le dira. Une réponse hors bornes physiologiques est écartée plutôt que
+ * ramenée de force : une FC de repos à 300 n'est pas une FC de repos.
+ */
+const numeric = (v: unknown, min: number, max: number): number | undefined => {
+  if (v == null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= min && n <= max ? n : undefined;
+};
+const scale = (v: unknown): number | undefined => {
+  const n = numeric(v, 1, 5);
+  return n == null ? undefined : Math.round(n);
+};
+
 export async function buildServer() {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
@@ -251,6 +268,7 @@ export async function buildServer() {
         })),
         today: s.today,
         readiness: s.readiness,
+        checkIn: s.todayCheckIn ?? null,
         weeklyTotals: s.weeklyTotals,
         upcomingRaces: s.upcomingRaces.map((r) => ({
           ...r,
@@ -396,19 +414,45 @@ export async function buildServer() {
   app.post('/api/checkin', async (req, reply) => {
     try {
       const body = req.body as Record<string, unknown>;
+      const date = typeof body.date === 'string' ? body.date : iso(new Date());
+      const note = typeof body.notes === 'string' ? body.notes.trim().slice(0, 2000) : undefined;
+
+      const fields = {
+        sleepHours: numeric(body.sleepHours, 0, 24),
+        sleepQuality: scale(body.sleepQuality),
+        soreness: scale(body.soreness),
+        stress: scale(body.stress),
+        motivation: scale(body.motivation),
+        restingHr: numeric(body.restingHr, 25, 120),
+        hrvRmssd: numeric(body.hrvRmssd, 1, 400),
+        bodyMassKg: numeric(body.bodyMassKg, 30, 200),
+      };
+
+      const answered = Object.values(fields).some((v) => v != null) || (note ?? '') !== '';
+      if (!answered) {
+        return reply.code(400).send({ error: 'Point du jour vide : aucune réponse à enregistrer.' });
+      }
+
+      // Un point du jour se complète : deux envois successifs s'ajoutent, le
+      // second n'efface pas ce que le premier avait déclaré.
+      const existing = (await db.listCheckIns(A, date)).find((c) => c.date === date);
+      const defined = <T,>(next: T | undefined, prev: T | undefined) => next ?? prev;
       await db.upsertCheckIn({
         athleteId: A,
-        date: (body.date as string) ?? iso(new Date()),
-        sleepHours: body.sleepHours as number | undefined,
-        sleepQuality: body.sleepQuality as number | undefined,
-        soreness: body.soreness as number | undefined,
-        stress: body.stress as number | undefined,
-        motivation: body.motivation as number | undefined,
-        restingHr: body.restingHr as number | undefined,
-        hrvRmssd: body.hrvRmssd as number | undefined,
-        bodyMassKg: body.bodyMassKg as number | undefined,
-        notes: body.notes as string | undefined,
+        date,
+        sleepHours: defined(fields.sleepHours, existing?.sleepHours),
+        sleepQuality: defined(fields.sleepQuality, existing?.sleepQuality),
+        soreness: defined(fields.soreness, existing?.soreness),
+        stress: defined(fields.stress, existing?.stress),
+        motivation: defined(fields.motivation, existing?.motivation),
+        restingHr: defined(fields.restingHr, existing?.restingHr),
+        hrvRmssd: defined(fields.hrvRmssd, existing?.hrvRmssd),
+        bodyMassKg: defined(fields.bodyMassKg, existing?.bodyMassKg),
+        // Une note absente du corps se conserve ; une note vidée s'efface —
+        // sans quoi on ne pourrait pas revenir sur ce qu'on a écrit.
+        notes: note === undefined ? existing?.notes : note || undefined,
       });
+
       // Un relevé peut changer la disponibilité du jour : on réévalue tout de suite.
       const state = await loadAthleteState(A);
       const upcoming = await db.listPlannedSessions(A, iso(new Date()), iso(new Date(Date.now() + 14 * dayMs)));
@@ -416,6 +460,7 @@ export async function buildServer() {
       const applied = await applyAdjustments(A, adjustments, 'readiness');
       return {
         readiness: state.readiness,
+        checkIn: state.todayCheckIn ?? null,
         adjustments: applied,
         adjustmentSummary: applied > 0 ? describeAdjustments(adjustments) : null,
       };

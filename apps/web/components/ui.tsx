@@ -1,5 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
+import type { Readiness, ReadinessSource } from '@/lib/api';
 
 export function Card({
   title, hint, action, children, style,
@@ -117,6 +118,63 @@ export function Legend({ items }: { items: { color: string; label: string }[] })
           {i.label}
         </span>
       ))}
+    </div>
+  );
+}
+
+/** Provenance d'une composante de disponibilité, dite en trois mots. */
+export const READINESS_SOURCE_LABEL: Record<ReadinessSource, string> = {
+  load: 'charge mesurée',
+  declared: 'déclaré',
+  partial: 'partiel',
+  hrv: 'rMSSD',
+  'resting-hr': 'FC repos',
+  default: 'par défaut',
+};
+
+const BASIS_ROWS = [
+  ['tsbMetabolic', 'Fraîcheur métabolique'],
+  ['tsbMechanical', 'Fraîcheur mécanique'],
+  ['subjective', 'Ressenti déclaré'],
+  ['autonomic', 'Système autonome'],
+] as const;
+
+/**
+ * Les quatre composantes de la disponibilité, chacune avec sa provenance.
+ *
+ * Une barre hachurée signale une valeur par défaut : elle occupe la place
+ * d'une mesure sans en être une. `before` affiche en plus ce qui a bougé.
+ */
+export function ReadinessBasis({ readiness, before }: { readiness: Readiness; before?: Readiness }) {
+  return (
+    <div className="basis">
+      {BASIS_ROWS.map(([key, label]) => {
+        const value = readiness.components[key] ?? 0;
+        const source = readiness.sources[key];
+        const assumed = source === 'default';
+        const delta = before ? value - (before.components[key] ?? 0) : 0;
+        const changedSource = before && before.sources[key] !== source;
+        return (
+          <div className="basis-row" key={key}>
+            <span className="basis-name">{label}</span>
+            <span className="basis-src" data-assumed={assumed}>
+              {changedSource && <s className="faint">{READINESS_SOURCE_LABEL[before.sources[key]]}</s>}
+              {READINESS_SOURCE_LABEL[source]}
+            </span>
+            <div className="basis-meter">
+              <div className="basis-fill" data-assumed={assumed} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+            </div>
+            <span className="basis-num mono">
+              {Math.round(value)}
+              {delta !== 0 && (
+                <span className="delta" data-dir={delta > 0 ? 'up' : 'down'} style={{ marginLeft: 5 }}>
+                  {delta > 0 ? '+' : ''}{Math.round(delta)}
+                </span>
+              )}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -198,14 +198,47 @@ export interface StateResponse {
     acwr: number; rampRate: number; monotony: number;
     tsbLabel: string; acwrLabel: string; acwrRisk: string;
   };
-  readiness: {
-    score: number; verdict: 'green' | 'amber' | 'red'; recommendation: string;
-    components: Record<string, number>;
-  };
+  readiness: Readiness;
+  checkIn: CheckIn | null;
   weeklyTotals: { weekStart: string; load: number; mechanical: number; durationS: number; vertM: number }[];
   upcomingRaces: RaceRow[];
   hasPlan: boolean;
   labTest: Record<string, unknown> | null;
+}
+
+/** Provenance d'une composante de disponibilité — miroir de `ReadinessSource`. */
+export type ReadinessSource = 'load' | 'declared' | 'partial' | 'hrv' | 'resting-hr' | 'default';
+
+export interface Readiness {
+  date?: string;
+  score: number;
+  verdict: 'green' | 'amber' | 'red';
+  recommendation: string;
+  components: Record<string, number>;
+  sources: Record<'tsbMetabolic' | 'tsbMechanical' | 'subjective' | 'autonomic', ReadinessSource>;
+  /** Part du score (0–1) qui repose sur des valeurs par défaut. */
+  assumedShare: number;
+}
+
+export interface CheckIn {
+  date: string;
+  sleepHours?: number;
+  sleepQuality?: number;
+  soreness?: number;
+  stress?: number;
+  motivation?: number;
+  restingHr?: number;
+  hrvRmssd?: number;
+  bodyMassKg?: number;
+  notes?: string;
+}
+
+export interface CheckInResult {
+  readiness: Readiness;
+  checkIn: CheckIn | null;
+  /** Nombre de séances réajustées par les règles de charge après ce relevé. */
+  adjustments: number;
+  adjustmentSummary: string | null;
 }
 
 export interface RaceRow {

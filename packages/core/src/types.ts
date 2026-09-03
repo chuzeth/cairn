@@ -465,6 +465,21 @@ export interface DailyCheckIn {
   notes?: string;
 }
 
+/**
+ * Ce sur quoi repose une composante de la disponibilité.
+ *
+ * `default` n'est pas une mesure : c'est la valeur retenue faute de relevé.
+ * La distinguer est la seule façon d'empêcher qu'un score à moitié inventé
+ * se lise comme un score mesuré.
+ */
+export type ReadinessSource =
+  | 'load'
+  | 'declared'
+  | 'partial'
+  | 'hrv'
+  | 'resting-hr'
+  | 'default';
+
 export interface ReadinessScore {
   date: string;
   /** Score global 0–100. */
@@ -477,6 +492,15 @@ export interface ReadinessScore {
     autonomic: number;
     acwrPenalty: number;
   };
+  /** Provenance de chaque composante. */
+  sources: {
+    tsbMetabolic: ReadinessSource;
+    tsbMechanical: ReadinessSource;
+    subjective: ReadinessSource;
+    autonomic: ReadinessSource;
+  };
+  /** Part du score (0–1) produite par des valeurs par défaut, faute de relevé. */
+  assumedShare: number;
   verdict: 'green' | 'amber' | 'red';
   recommendation: string;
 }

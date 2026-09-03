@@ -1,5 +1,16 @@
+import type { ReadinessSource } from '@cairn/core';
 import type { AthleteState } from './state.js';
 import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
+
+/** Provenance d'une composante de disponibilité, dite en clair. */
+const SOURCE_FR: Record<ReadinessSource, string> = {
+  load: 'calculé sur la charge mesurée',
+  declared: 'déclaré ce matin',
+  partial: 'déclaré en partie',
+  hrv: 'rMSSD relevé',
+  'resting-hr': 'FC de repos relevée',
+  default: 'valeur par défaut, rien de relevé',
+};
 
 /**
  * Prompts.
@@ -96,7 +107,37 @@ export function buildContextSnapshot(state: AthleteState): string {
   );
   lines.push(`ACWR ${today.acwr.toFixed(2)} (${today.acwrRisk}) · progression CTL ${today.rampRate > 0 ? '+' : ''}${today.rampRate.toFixed(1)}/sem · monotonie ${today.monotony.toFixed(2)}`);
   lines.push(`Disponibilité ${readiness.score}/100 (${readiness.verdict}) — ${readiness.recommendation}`);
+  if (readiness.assumedShare > 0.02) {
+    lines.push(
+      `Ce score n'est mesuré qu'en partie : ${Math.round(readiness.assumedShare * 100)} % de son poids vient de ` +
+        `valeurs par défaut (ressenti — ${SOURCE_FR[readiness.sources.subjective]} ; système autonome — ` +
+        `${SOURCE_FR[readiness.sources.autonomic]}). Ne le présente pas comme une mesure, et dis ce qui manque.`,
+    );
+  }
   lines.push('');
+
+  const checkIn = state.todayCheckIn;
+  if (checkIn) {
+    const declared: string[] = [];
+    if (checkIn.sleepHours != null) declared.push(`sommeil ${checkIn.sleepHours} h`);
+    if (checkIn.sleepQuality != null) declared.push(`qualité du sommeil ${checkIn.sleepQuality}/5`);
+    if (checkIn.soreness != null) declared.push(`courbatures ${checkIn.soreness}/5`);
+    if (checkIn.stress != null) declared.push(`stress ${checkIn.stress}/5`);
+    if (checkIn.motivation != null) declared.push(`motivation ${checkIn.motivation}/5`);
+    if (checkIn.restingHr != null) declared.push(`FC de repos ${checkIn.restingHr} bpm`);
+    if (checkIn.hrvRmssd != null) declared.push(`rMSSD ${checkIn.hrvRmssd} ms`);
+    if (checkIn.bodyMassKg != null) declared.push(`masse ${checkIn.bodyMassKg} kg`);
+    lines.push('## Point du jour');
+    lines.push(declared.length ? declared.join(' · ') : 'Aucune échelle renseignée.');
+    if (checkIn.notes) {
+      // Ce texte n'entre dans aucun calcul. C'est souvent ce qu'il dit qui
+      // compte le plus : un questionnaire ne le capte pas, un entraîneur si.
+      lines.push('');
+      lines.push(`Il a écrit, mot pour mot : « ${checkIn.notes} »`);
+      lines.push("Aucune échelle ne mesure cela. Tiens-en compte explicitement dans ta réponse.");
+    }
+    lines.push('');
+  }
 
   if (state.upcomingRaces.length) {
     lines.push('## Courses à venir');

@@ -127,7 +127,8 @@ button { font-family: inherit; font-size: inherit; }
 @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .grid-3 { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; }
+  .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; padding: 8px 10px; gap: 2px; }
+  .nav-link { white-space: nowrap; font-size: 13px; padding: 8px 9px; }
   .brand { display: none; }
   .main { padding: 20px 16px 48px; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
@@ -263,6 +264,97 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   transition: border-color 120ms, color 120ms;
 }
 .suggestion:hover { border-color: var(--accent); color: var(--text); }
+
+/* ── Provenance de la disponibilité ───────────────────────────────────────── */
+
+/* Une composante par ligne : son nom, d'où elle vient, ce qu'elle vaut. Une
+   barre hachurée n'est pas une mesure — c'est la valeur retenue faute de mieux. */
+.basis { display: grid; gap: 10px; margin-top: 14px; }
+.basis-row { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; align-items: baseline; }
+.basis-name { font-size: 12px; color: var(--text-dim); }
+.basis-src { font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); text-align: right; }
+.basis-src[data-assumed="true"] { color: var(--watch); }
+.basis-src s { margin-right: 6px; opacity: 0.6; }
+.basis-meter { height: 5px; border-radius: 3px; background: var(--bg-inset); overflow: hidden; align-self: center; }
+.basis-fill { height: 100%; background: var(--accent); opacity: 0.75; transition: width 400ms ease; }
+.basis-fill[data-assumed="true"] {
+  opacity: 1;
+  background: repeating-linear-gradient(115deg,
+    color-mix(in srgb, var(--watch) 45%, transparent) 0 3px,
+    transparent 3px 7px);
+}
+.basis-num { font-size: 11.5px; color: var(--text-dim); text-align: right; }
+
+/* ── Point du jour ────────────────────────────────────────────────────────── */
+
+/* La seule page pensée d'abord pour le pouce : cibles de 46 px, une question
+   par ligne, aucun défilement horizontal, envoi atteignable sans remonter. */
+.checkin { max-width: 560px; }
+.checkin-lede { font-size: 13px; color: var(--text-dim); margin: 0 0 16px; }
+
+.q {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  padding: 12px 13px 13px;
+  margin-bottom: 10px;
+}
+.q-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.q-title { font-size: 13.5px; font-weight: 600; }
+.q-aside { font-size: 11px; color: var(--text-faint); }
+
+.q-options { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+.q-option {
+  min-height: 46px;
+  border: 1px solid var(--border-strong); background: var(--bg-inset); color: var(--text-dim);
+  border-radius: var(--radius-sm); font-size: 14px; font-weight: 550; cursor: pointer;
+  padding: 0 2px;
+  transition: background 120ms, border-color 120ms, color 120ms;
+  /* Au pouce, une frappe doit choisir une réponse, pas sélectionner un libellé. */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.q-option:hover { border-color: #37404f; color: var(--text); }
+.q-option[data-on="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-inset));
+  border-color: var(--accent); color: var(--text);
+}
+.q-anchors { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+
+.q-extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.extra { display: block; margin: 0; text-transform: none; letter-spacing: 0; }
+.extra-label { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 4px; text-transform: none; letter-spacing: 0; }
+.extra input { min-height: 44px; }
+.checkin-more { width: 100%; }
+
+.checkin-send { margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.checkin-send .btn { min-height: 48px; flex: 1 1 180px; }
+.checkin-send p { flex-basis: 100%; margin: 0; }
+
+.result-scores { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.result-was { display: flex; align-items: center; gap: 6px; opacity: 0.65; }
+.result-arrow { color: var(--text-faint); font-size: 17px; }
+.result-verdict { min-width: 0; flex: 1 1 200px; }
+
+.note-quote {
+  margin: 0; padding: 10px 13px;
+  border-left: 2px solid var(--accent); background: var(--bg-inset);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 14px; color: var(--text);
+}
+
+@media (max-width: 520px) {
+  .q-extras { grid-template-columns: 1fr 1fr; }
+  /* L'envoi reste sous le pouce : répondre à une seule question et envoyer ne
+     doit pas demander de redescendre la page. */
+  .checkin-send {
+    position: sticky; bottom: 0; z-index: 5;
+    margin: 18px -16px 0; padding: 11px 16px calc(11px + env(safe-area-inset-bottom));
+    background: var(--bg); border-top: 1px solid var(--border);
+  }
+  .checkin-send p { font-size: 11px; }
+}
 
 /* ── Divers ───────────────────────────────────────────────────────────────── */
 

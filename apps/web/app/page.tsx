@@ -5,7 +5,7 @@ import {
   duration, frDate, get, post, signed, shortDate,
   type ActivityRow, type InsightRow, type PmcResponse, type SessionRow, type StateResponse,
 } from '@/lib/api';
-import { Badge, Card, ErrorBox, Loading, Metric, ThreeZoneBar } from '@/components/ui';
+import { Badge, Card, ErrorBox, Loading, Metric, ReadinessBasis, ThreeZoneBar } from '@/components/ui';
 import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
 
 interface Health {
@@ -66,6 +66,17 @@ export default function Dashboard() {
 
   const tsbTone = today.tsb > 5 ? 'good' : today.tsb > -15 ? undefined : today.tsb > -28 ? 'watch' : 'warn';
   const mechTone = today.mechanicalTsb > 0 ? 'good' : today.mechanicalTsb > -18 ? undefined : 'warn';
+
+  // Ce qui manque au score, nommé. Un cercle qui ne dit pas sur quoi il repose
+  // laisse croire qu'une valeur par défaut est une mesure.
+  const readiness = state.readiness;
+  const assumedPct = Math.round(readiness.assumedShare * 100);
+  const missing = [
+    readiness.sources.subjective === 'default'
+      ? 'ton ressenti'
+      : readiness.sources.subjective === 'partial' ? 'une partie de ton ressenti' : null,
+    readiness.sources.autonomic === 'default' ? 'ton système autonome' : null,
+  ].filter(Boolean) as string[];
 
   return (
     <>
@@ -179,33 +190,36 @@ export default function Dashboard() {
 
         <Card title="Disponibilité du jour">
           <div className="row" style={{ gap: 16, alignItems: 'center' }}>
-            <Gauge value={state.readiness.score} label="sur 100" tone={state.readiness.verdict} />
+            <Gauge value={readiness.score} label="sur 100" tone={readiness.verdict} assumed={readiness.assumedShare} />
             <div style={{ minWidth: 0 }}>
-              <Badge tone={state.readiness.verdict === 'green' ? 'good' : state.readiness.verdict === 'amber' ? 'watch' : 'warn'}>
+              <Badge tone={readiness.verdict === 'green' ? 'good' : readiness.verdict === 'amber' ? 'watch' : 'warn'}>
                 <span className="dot" />
-                {state.readiness.verdict === 'green' ? 'Feu vert' : state.readiness.verdict === 'amber' ? 'Vigilance' : 'Signal rouge'}
+                {readiness.verdict === 'green' ? 'Feu vert' : readiness.verdict === 'amber' ? 'Vigilance' : 'Signal rouge'}
               </Badge>
-              <p className="small muted" style={{ marginTop: 8, marginBottom: 0 }}>{state.readiness.recommendation}</p>
+              <p className="small muted" style={{ marginTop: 8, marginBottom: 0 }}>{readiness.recommendation}</p>
             </div>
           </div>
-          <div style={{ marginTop: 14, display: 'grid', gap: 6 }}>
-            {[
-              ['Fraîcheur métabolique', state.readiness.components.tsbMetabolic],
-              ['Fraîcheur mécanique', state.readiness.components.tsbMechanical],
-              ['Ressenti déclaré', state.readiness.components.subjective],
-              ['Système autonome', state.readiness.components.autonomic],
-            ].map(([label, v]) => (
-              <div key={label as string} className="row" style={{ gap: 8 }}>
-                <span className="tiny faint" style={{ width: 130, flex: 'none' }}>{label}</span>
-                <div style={{ flex: 1, height: 5, background: 'var(--bg-inset)', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: `${v as number}%`, height: '100%', background: 'var(--accent)', opacity: 0.75 }} />
-                </div>
-                <span className="tiny mono muted" style={{ width: 26, textAlign: 'right' }}>{Math.round(v as number)}</span>
-              </div>
-            ))}
-          </div>
-          <Link href="/coach" className="btn" style={{ width: '100%', marginTop: 14 }} data-variant="ghost">
-            Faire mon point du jour →
+
+          <ReadinessBasis readiness={readiness} />
+
+          {missing.length > 0 && (
+            <p className="tiny" style={{ color: 'var(--watch)', margin: '12px 0 0' }}>
+              {assumedPct} % de ce score n&apos;est pas mesuré : il manque {missing.join(' et ')}.
+              Le point du jour comble ce manque.
+            </p>
+          )}
+
+          {state.checkIn?.notes && (
+            <blockquote className="note-quote" style={{ marginTop: 12, fontSize: 13 }}>{state.checkIn.notes}</blockquote>
+          )}
+
+          <Link
+            href="/point"
+            className="btn"
+            style={{ width: '100%', marginTop: 14 }}
+            data-variant={missing.length > 0 ? 'primary' : 'ghost'}
+          >
+            {state.checkIn ? 'Compléter mon point du jour →' : 'Faire mon point du jour →'}
           </Link>
         </Card>
       </div>

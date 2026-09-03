@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LAB_TEST_2025_07_24, PIERRE, type PlannedSession } from '@cairn/core';
+import { LAB_TEST_2025_07_24, PIERRE, type DailyCheckIn, type PlannedSession, type PmcSeries } from '@cairn/core';
 import {
   buildZones, computePmc, densifyDailyLoads, fitCriticalSpeed, formatClock,
   fractionalUtilization, gradeAdjustedSpeed, kmhToMs, locomotionCost, meanMaximal,
@@ -11,7 +11,7 @@ import {
   technicalityCostMultiplier, aggregateDurability, blendCriticalSpeed,
   csPriorFromThresholds, maximalEffortSupport, type DurabilityResult,
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
-  matchPlannedSession, sessionOutcome, type RealizedEffort,
+  matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -675,5 +675,64 @@ describe('Séance réalisée ou remplacée', () => {
   it('compte le stimulus manqué comme une substitution, à volume tenu', () => {
     expect(sessionOutcome({ loadPct: 5, durationPct: 3, intensityPct: -20 })).toBe('replaced');
     expect(sessionOutcome({ loadPct: 5, durationPct: 3, intensityPct: -10 })).toBe('fulfilled');
+  });
+});
+
+describe('Provenance de la disponibilité', () => {
+  const pmc = (over: Partial<PmcSeries> = {}): PmcSeries => ({
+    metabolic: [{ date: '2026-09-02', ctl: 50, atl: 50, tsb: 0, load: 50 }],
+    mechanical: [{ date: '2026-09-02', ctl: 30, atl: 30, tsb: 0, load: 30 }],
+    acwr: [{ date: '2026-09-02', value: 1.0 }],
+    monotony: [], strain: [], rampRate: [],
+    ...over,
+  });
+  const at = (checkIns: DailyCheckIn[] = [], series = pmc()) =>
+    computeReadiness({ date: '2026-09-02', pmc: series, checkIns });
+  const checkIn = (over: Partial<DailyCheckIn> = {}): DailyCheckIn => ({
+    date: '2026-09-02', athleteId: 'pierre', ...over,
+  });
+
+  it('déclare supposée la moitié du score quand rien n\'est relevé', () => {
+    const r = at();
+    expect(r.sources.subjective).toBe('default');
+    expect(r.sources.autonomic).toBe('default');
+    expect(r.sources.tsbMetabolic).toBe('load');
+    // 0,32 de ressenti + 0,20 de système autonome : la majorité du reste.
+    expect(r.assumedShare).toBeCloseTo(0.52, 6);
+  });
+
+  it('ne suppose plus rien quand le point du jour est complet', () => {
+    const r = at([checkIn({ sleepHours: 7.5, sleepQuality: 4, soreness: 2, stress: 2, motivation: 4, hrvRmssd: 62 })]);
+    expect(r.sources.subjective).toBe('declared');
+    expect(r.sources.autonomic).toBe('hrv');
+    expect(r.assumedShare).toBe(0);
+  });
+
+  it('accepte une réponse partielle et n\'en suppose que le reste', () => {
+    // Seul le sommeil est déclaré : les quatre autres questions pèsent 0,75 du
+    // ressenti, soit 0,24 du score, auxquels s'ajoute le système autonome.
+    const r = at([checkIn({ sleepHours: 8.5 })]);
+    expect(r.sources.subjective).toBe('partial');
+    expect(r.assumedShare).toBeCloseTo(0.44, 6);
+    expect(r.components.subjective).not.toBe(at().components.subjective);
+  });
+
+  it('distingue le rMSSD de la FC de repos, et les deux d\'une absence', () => {
+    expect(at([checkIn({ restingHr: 46 })]).sources.autonomic).toBe('resting-hr');
+    expect(at([checkIn({ hrvRmssd: 55, restingHr: 46 })]).sources.autonomic).toBe('hrv');
+    expect(at([checkIn({ motivation: 5 })]).sources.autonomic).toBe('default');
+  });
+
+  it('ne compte pour relevé qu\'un point du jour daté du jour', () => {
+    const r = at([checkIn({ date: '2026-09-01', sleepHours: 7.5, sleepQuality: 4, soreness: 1, stress: 1, motivation: 5 })]);
+    expect(r.sources.subjective).toBe('default');
+    expect(r.assumedShare).toBeCloseTo(0.52, 6);
+  });
+
+  it('avoue un score entièrement supposé quand la charge manque aussi', () => {
+    const r = at([], pmc({ metabolic: [], mechanical: [], acwr: [] }));
+    expect(r.sources.tsbMetabolic).toBe('default');
+    expect(r.sources.tsbMechanical).toBe('default');
+    expect(r.assumedShare).toBe(1);
   });
 });

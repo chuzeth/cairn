@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 
 const LINKS = [
   { href: '/', label: 'Tableau de bord', icon: 'grid' },
+  { href: '/point', label: 'Point du jour', icon: 'sun' },
   { href: '/coach', label: 'Coach', icon: 'chat' },
   { href: '/plan', label: 'Plan', icon: 'calendar' },
   { href: '/activities', label: 'Séances', icon: 'activity' },
@@ -15,6 +16,7 @@ function Icon({ name }: { name: string }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   const paths: Record<string, React.ReactNode> = {
     grid: <><rect x="3" y="3" width="7" height="7" rx="1.5" {...common} /><rect x="14" y="3" width="7" height="7" rx="1.5" {...common} /><rect x="3" y="14" width="7" height="7" rx="1.5" {...common} /><rect x="14" y="14" width="7" height="7" rx="1.5" {...common} /></>,
+    sun: <><circle cx="12" cy="12" r="4" {...common} /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" {...common} /></>,
     chat: <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-4-.9L3 21l1.9-4.6A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z" {...common} />,
     calendar: <><rect x="3" y="4.5" width="18" height="16.5" rx="2" {...common} /><path d="M3 9.5h18M8 2.5v4M16 2.5v4" {...common} /></>,
     activity: <path d="M3 12h4l3-8 4 16 3-8h4" {...common} />,

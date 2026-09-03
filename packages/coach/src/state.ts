@@ -1,5 +1,5 @@
 import type {
-  Activity, ActivityAnalysis, AthleteProfile, PhysiologyModel,
+  Activity, ActivityAnalysis, AthleteProfile, DailyCheckIn, PhysiologyModel,
   PmcSeries, RaceGoal, ReadinessScore, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import * as db from '@cairn/db';
@@ -58,6 +58,8 @@ export interface AthleteState {
     acwrRisk: 'low' | 'moderate' | 'high';
   };
   readiness: ReadinessScore;
+  /** Le point du jour, s'il a été fait. Sa note libre n'est pas notée : elle est lue. */
+  todayCheckIn?: DailyCheckIn;
   plan: { plan: TrainingPlan; weeks: TrainingWeek[] } | null;
   upcomingRaces: RaceGoal[];
   recentActivities: Activity[];
@@ -303,6 +305,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
       acwrRisk: acwrInterp.risk,
     },
     readiness,
+    todayCheckIn: checkIns.find((c) => c.date === today),
     plan,
     upcomingRaces,
     recentActivities,

@@ -277,23 +277,51 @@ export function DurationCurve({
 }
 
 /** Jauge circulaire de disponibilité. */
-export function Gauge({ value, max = 100, label, tone }: { value: number; max?: number; label?: string; tone: 'green' | 'amber' | 'red' }) {
+/**
+ * Jauge de disponibilité.
+ *
+ * `assumed` est la part du score (0–1) produite par des valeurs par défaut
+ * faute de relevé. Elle se lit sur l'anneau lui-même : le trait plein est ce
+ * qui est mesuré, le trait creux ce qui est supposé. Un cercle uniformément
+ * plein affirmerait une mesure là où il n'y en a pas.
+ */
+export function Gauge({
+  value, max = 100, label, tone, assumed = 0, size = 116,
+}: { value: number; max?: number; label?: string; tone: 'green' | 'amber' | 'red'; assumed?: number; size?: number }) {
   const r = 46;
   const c = 2 * Math.PI * r;
   const frac = Math.max(0, Math.min(1, value / max));
+  const share = Math.max(0, Math.min(1, assumed));
+  const solid = c * frac * (1 - share);
+  const hollow = c * frac * share;
   const color = tone === 'green' ? 'var(--good)' : tone === 'amber' ? 'var(--watch)' : 'var(--warn)';
+  const pct = Math.round(share * 100);
   return (
-    <svg viewBox="0 0 120 120" style={{ width: 116, height: 116, flex: 'none' }}>
+    <svg viewBox="0 0 120 120" style={{ width: size, height: size, flex: 'none' }}>
       <circle cx="60" cy="60" r={r} fill="none" stroke="var(--bg-inset)" strokeWidth="9" />
       <circle
         cx="60" cy="60" r={r} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
-        strokeDasharray={`${c * frac} ${c}`} transform="rotate(-90 60 60)"
+        strokeDasharray={`${solid} ${c}`} transform="rotate(-90 60 60)"
         style={{ transition: 'stroke-dasharray 500ms ease' }}
       />
-      <text x="60" y="58" textAnchor="middle" fontSize="27" fontWeight="600" fill="var(--text)" style={{ fontVariantNumeric: 'tabular-nums' }}>
+      {hollow > 0.5 && (
+        <circle
+          cx="60" cy="60" r={r} fill="none" stroke={color} strokeWidth="9" opacity="0.28"
+          strokeDasharray={`${hollow} ${c}`} strokeDashoffset={-solid} transform="rotate(-90 60 60)"
+          style={{ transition: 'stroke-dasharray 500ms ease' }}
+        />
+      )}
+      <text x="60" y={pct > 0 ? 55 : 58} textAnchor="middle" fontSize="27" fontWeight="600" fill="var(--text)" style={{ fontVariantNumeric: 'tabular-nums' }}>
         {Math.round(value)}
       </text>
-      {label && <text x="60" y="76" textAnchor="middle" fontSize="10" fill="var(--text-faint)">{label}</text>}
+      {label && <text x="60" y={pct > 0 ? 71 : 76} textAnchor="middle" fontSize="10" fill="var(--text-faint)">{label}</text>}
+      {/* La légende reste dans la clairière centrale : plus large, elle passerait
+          sous l'anneau et deviendrait illisible. */}
+      {pct > 0 && (
+        <text x="60" y="84" textAnchor="middle" fontSize="9" fill="var(--watch)" opacity="0.92">
+          {pct} % supposé
+        </text>
+      )}
     </svg>
   );
 }
