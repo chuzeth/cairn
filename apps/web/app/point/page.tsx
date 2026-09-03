@@ -5,7 +5,7 @@ import {
   frDate, get, markdown, post, todayIso,
   type CheckIn, type CheckInResult, type Readiness, type StateResponse,
 } from '@/lib/api';
-import { Badge, Card, ErrorBox, Loading, ReadinessBasis } from '@/components/ui';
+import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, unweighed } from '@/components/ui';
 import { Gauge } from '@/components/charts';
 
 /**
@@ -28,14 +28,27 @@ const SLEEP: Option[] = [
   { value: 9.5, label: '9 h +' },
 ];
 
-const SCALE: Option[] = [1, 2, 3, 4, 5].map((v) => ({ value: v, label: String(v) }));
+/**
+ * Une échelle 1–5, toujours rangée du pire au meilleur de gauche à droite.
+ *
+ * Certains champs comptent à l'envers — `soreness` vaut 5 quand ça fait mal.
+ * Laisser cette inversion remonter jusqu'aux boutons, c'est demander à l'athlète
+ * de changer de sens d'une rangée à l'autre : la faute de saisie qui suit est
+ * indiscernable d'une vraie mauvaise journée, et elle empoisonne la ligne de
+ * base. Le sens de lecture est donc constant, et c'est la valeur enregistrée
+ * qui s'adapte. Les libellés remplacent les chiffres pour la même raison : « 4 »
+ * ne veut rien dire sans le sens de l'échelle, « légères » se passe du sens.
+ */
+const scale = (labels: readonly [string, string, string, string, string], highIsWorst = false): Option[] =>
+  labels.map((label, i) => ({ value: highIsWorst ? 5 - i : i + 1, label }));
 
 const QUESTIONS = [
-  { key: 'sleepHours', title: 'Sommeil', options: SLEEP, anchors: null },
-  { key: 'sleepQuality', title: 'Qualité du sommeil', options: SCALE, anchors: ['haché', 'réparateur'] },
-  { key: 'soreness', title: 'Courbatures', options: SCALE, anchors: ['aucune', 'sévères'] },
-  { key: 'stress', title: 'Stress', options: SCALE, anchors: ['serein', 'sous pression'] },
-  { key: 'motivation', title: 'Motivation', options: SCALE, anchors: ['à plat', 'mordant'] },
+  { key: 'fatigue', title: 'Fatigue', options: scale(['vidé', 'lourd', 'moyen', 'en forme', 'frais'], true) },
+  { key: 'sleepHours', title: 'Sommeil', options: SLEEP },
+  { key: 'sleepQuality', title: 'Qualité du sommeil', options: scale(['haché', 'léger', 'correct', 'bon', 'profond']) },
+  { key: 'soreness', title: 'Courbatures', options: scale(['sévères', 'fortes', 'nettes', 'légères', 'aucune'], true) },
+  { key: 'stress', title: 'Stress', options: scale(['sous l’eau', 'tendu', 'moyen', 'calme', 'serein'], true) },
+  { key: 'motivation', title: 'Motivation', options: scale(['à plat', 'mou', 'moyen', 'motivé', 'mordant']) },
 ] as const;
 
 type AnswerKey = (typeof QUESTIONS)[number]['key'];
@@ -148,10 +161,12 @@ export default function CheckInPage() {
         </div>
       </div>
 
-      {before && before.assumedShare > 0.02 && (
+      {before && unweighed(before).length > 0 && (
         <p className="checkin-lede">
-          Sans ton point du jour, {Math.round(before.assumedShare * 100)} % de ta disponibilité repose sur des
-          valeurs par défaut. Chaque réponse en remplace une.
+          Sans ton point du jour, ta disponibilité ne regarde pas{' '}
+          {unweighed(before).map((k) => MISSING_LABEL[k]).join(' ni ')} : faute de relevé,{' '}
+          {unweighed(before).length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une
+          moyenne. Tes réponses {unweighed(before).length > 1 ? 'leur rendent leur' : 'lui rend son'} poids.
         </p>
       )}
 
@@ -175,12 +190,6 @@ export default function CheckInPage() {
               </button>
             ))}
           </div>
-          {q.anchors && (
-            <div className="q-anchors">
-              <span>{q.anchors[0]}</span>
-              <span>{q.anchors[1]}</span>
-            </div>
-          )}
         </div>
       ))}
 
@@ -248,6 +257,7 @@ function answersOf(c: CheckIn): Answers {
   if (h != null) {
     a.sleepHours = SLEEP.reduce((best, o) => (Math.abs(o.value - h) < Math.abs(best.value - h) ? o : best)).value;
   }
+  if (c.fatigue != null) a.fatigue = c.fatigue;
   if (c.sleepQuality != null) a.sleepQuality = c.sleepQuality;
   if (c.soreness != null) a.soreness = c.soreness;
   if (c.stress != null) a.stress = c.stress;
@@ -270,8 +280,11 @@ function Result({
   const r = result.readiness;
   const note = result.checkIn?.notes;
   const delta = before ? r.score - before.score : 0;
-  const assumedBefore = before ? Math.round(before.assumedShare * 100) : null;
-  const assumedNow = Math.round(r.assumedShare * 100);
+  // Ce que le point vient de changer n'est pas seulement le score : c'est le
+  // poids que le ressenti a le droit de prendre dedans.
+  const weightBefore = before ? Math.round(before.weights.subjective * 100) : null;
+  const weightNow = Math.round(r.weights.subjective * 100);
+  const stillBlind = unweighed(r);
   const verdictLabel = r.verdict === 'green' ? 'Feu vert' : r.verdict === 'amber' ? 'Vigilance' : 'Signal rouge';
 
   return (
@@ -308,12 +321,12 @@ function Result({
 
         <ReadinessBasis readiness={r} before={before ?? undefined} />
 
-        <p className="tiny" style={{ marginTop: 14, marginBottom: 0, color: assumedNow > 0 ? 'var(--watch)' : 'var(--good)' }}>
-          {assumedBefore != null && assumedBefore !== assumedNow
-            ? `Part supposée du score : ${assumedBefore} % → ${assumedNow} %.`
-            : assumedNow > 0
-              ? `${assumedNow} % du score repose encore sur des valeurs par défaut.`
-              : 'Plus aucune valeur par défaut : le score entier repose sur des mesures et sur ce que tu as déclaré.'}
+        <p className="tiny" style={{ marginTop: 14, marginBottom: 0, color: stillBlind.length > 0 ? 'var(--watch)' : 'var(--good)' }}>
+          {weightBefore != null && weightBefore !== weightNow
+            ? `Ton ressenti pesait ${weightBefore} % de ta disponibilité ; il en pèse ${weightNow} %.`
+            : `Ton ressenti pèse ${weightNow} % de ta disponibilité.`}
+          {stillBlind.length > 0 &&
+            ` Il manque encore ${stillBlind.map((k) => MISSING_LABEL[k]).join(' et ')} : ce que personne n’a relevé ne pèse rien.`}
         </p>
       </Card>
 

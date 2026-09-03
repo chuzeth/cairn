@@ -24,24 +24,80 @@ export interface ReadinessInput {
 const pointAt = <T extends { date: string }>(series: readonly T[], date: string): T | undefined =>
   series.find((p) => p.date === date) ?? series[series.length - 1];
 
-/** Poids des quatre composantes dans le score final. */
+/**
+ * Poids nominaux des quatre composantes.
+ *
+ * Ils ne s'appliquent qu'à ce qui a une source. Une composante muette est
+ * retirée du calcul et son poids se répartit sur les autres au prorata :
+ * réserver un cinquième du score à un signal absent revient à diluer les
+ * signaux présents d'autant.
+ */
 const WEIGHT = { tsbMetabolic: 0.26, tsbMechanical: 0.22, subjective: 0.32, autonomic: 0.2 } as const;
+type Component = keyof typeof WEIGHT;
+const COMPONENTS = Object.keys(WEIGHT) as Component[];
 
-/** Poids des cinq réponses dans la composante subjective — ils somment à 1. */
+/**
+ * Poids des six réponses dans la composante subjective — ils somment à 1.
+ *
+ * L'échelle de Hooper suit fatigue, sommeil, courbatures, stress et humeur.
+ * La fatigue perçue y est l'item qui répond le plus vite à la charge : elle
+ * pèse le plus lourd. La même règle qu'au-dessus s'applique en dessous — une
+ * question sans réponse ne pèse pas.
+ */
 const SUBJECTIVE_WEIGHT = {
-  sleepHours: 0.25,
-  sleepQuality: 0.2,
-  soreness: 0.25,
-  stress: 0.15,
-  motivation: 0.15,
+  fatigue: 0.25,
+  sleepHours: 0.18,
+  sleepQuality: 0.15,
+  soreness: 0.18,
+  stress: 0.12,
+  motivation: 0.12,
 } as const;
+type Item = keyof typeof SUBJECTIVE_WEIGHT;
+const ITEMS = Object.keys(SUBJECTIVE_WEIGHT) as Item[];
 
-/** Valeur retenue quand rien n'est déclaré : ni bonne, ni mauvaise, ni mesurée. */
+/** Valeur retenue quand *rien* n'est relevé : ni bonne, ni mauvaise, ni mesurée. */
 const NEUTRAL = 60;
+
+/**
+ * Chaque réponse ramenée sur 0–100, dans le sens « plus haut, mieux ».
+ *
+ * C'est la seule échelle absolue du fichier, et elle ne sert qu'à défaut de
+ * ligne de base personnelle.
+ */
+const NORMALIZE: Record<Item, (c: DailyCheckIn) => number | null> = {
+  fatigue: (c) => (c.fatigue != null ? ((5 - c.fatigue) / 4) * 100 : null),
+  sleepHours: (c) => (c.sleepHours != null ? clamp((c.sleepHours - 5) / 3, 0, 1) * 100 : null),
+  sleepQuality: (c) => (c.sleepQuality != null ? ((c.sleepQuality - 1) / 4) * 100 : null),
+  soreness: (c) => (c.soreness != null ? ((5 - c.soreness) / 4) * 100 : null),
+  stress: (c) => (c.stress != null ? ((5 - c.stress) / 4) * 100 : null),
+  motivation: (c) => (c.motivation != null ? ((c.motivation - 1) / 4) * 100 : null),
+};
+
+/**
+ * Ligne de base du ressenti.
+ *
+ * Le rMSSD se lit contre sa propre moyenne ; une échelle 1–5 doit se lire
+ * pareil. Six heures et demie de sommeil ne sont un déficit que pour qui dort
+ * huit heures. Sous BASELINE_MIN déclarations d'une question, sa moyenne n'est
+ * que du bruit et l'échelle absolue reste seule ; à BASELINE_FULL elle la
+ * remplace entièrement ; entre les deux les deux lectures se mélangent, pour
+ * qu'aucune journée ne fasse basculer le score d'un coup.
+ */
+const BASELINE_WINDOW = 30;
+const BASELINE_MIN = 7;
+const BASELINE_FULL = 28;
+/** Un cran d'écart (25 points) sous sa propre norme vaut 50 → 20 : un signal, pas un frisson. */
+const BASELINE_GAIN = 1.2;
 
 export function computeReadiness(input: ReadinessInput): ReadinessScore {
   const { date, pmc, checkIns } = input;
   const today = checkIns.find((c) => c.date === date);
+  // Strictement avant aujourd'hui : une moyenne qui contient le jour qu'elle
+  // sert à juger atténue l'écart qu'on cherche à voir.
+  const history = checkIns
+    .filter((c) => c.date < date)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-BASELINE_WINDOW);
 
   const metabolic = pointAt(pmc.metabolic, date);
   const mechanical = pointAt(pmc.mechanical, date);
@@ -60,23 +116,31 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
   const tsbMechanical = clamp(50 + tsbMech * 2.0, 0, 100);
 
   // ── Composante subjective ─────────────────────────────────────────────────
-  // Une réponse partielle vaut mieux qu'aucune : chaque question absente
-  // retombe sur la valeur neutre, et son poids est compté comme supposé.
-  const answers: { key: keyof typeof SUBJECTIVE_WEIGHT; value: number | null }[] = [
-    { key: 'sleepHours', value: today?.sleepHours != null ? clamp((today.sleepHours - 5) / 3, 0, 1) * 100 : null },
-    { key: 'sleepQuality', value: today?.sleepQuality != null ? ((today.sleepQuality - 1) / 4) * 100 : null },
-    { key: 'soreness', value: today?.soreness != null ? ((5 - today.soreness) / 4) * 100 : null },
-    { key: 'stress', value: today?.stress != null ? ((5 - today.stress) / 4) * 100 : null },
-    { key: 'motivation', value: today?.motivation != null ? ((today.motivation - 1) / 4) * 100 : null },
-  ];
+  // Chaque réponse est lue contre la norme de l'athlète dès qu'il en a une, et
+  // les questions restées vides ne pèsent pas : leur poids revient aux autres.
+  let subjectiveSum = 0;
+  let subjectiveWeight = 0;
+  let answered = 0;
+  let baselined = 0;
+  for (const item of ITEMS) {
+    const absolute = today ? NORMALIZE[item](today) : null;
+    if (absolute == null) continue;
+    answered++;
 
-  let subjective = 0;
-  let subjectiveAssumed = 0;
-  for (const { key, value } of answers) {
-    const w = SUBJECTIVE_WEIGHT[key];
-    subjective += (value ?? NEUTRAL) * w;
-    if (value == null) subjectiveAssumed += w;
+    const past = history.map(NORMALIZE[item]).filter((v): v is number => v != null);
+    const trust = clamp((past.length - BASELINE_MIN) / (BASELINE_FULL - BASELINE_MIN), 0, 1);
+    let value = absolute;
+    if (trust > 0) {
+      const norm = mean(past) ?? absolute;
+      const relative = clamp(50 + (absolute - norm) * BASELINE_GAIN, 0, 100);
+      value = absolute + (relative - absolute) * trust;
+      baselined++;
+    }
+
+    subjectiveSum += value * SUBJECTIVE_WEIGHT[item];
+    subjectiveWeight += SUBJECTIVE_WEIGHT[item];
   }
+  const subjective = subjectiveWeight > 0 ? subjectiveSum / subjectiveWeight : NEUTRAL;
 
   // ── Composante autonome (HRV / FC de repos) ───────────────────────────────
   let autonomic = NEUTRAL;
@@ -106,12 +170,26 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
   const acwrPenalty =
     acwrValue > 1.5 ? -18 : acwrValue > 1.3 ? -8 : acwrValue > 0 && acwrValue < 0.7 ? -4 : 0;
 
+  // ── Poids effectifs ───────────────────────────────────────────────────────
+  // Ce que personne n'a mesuré ne vote pas. Faute de la moindre source, on garde
+  // les poids nominaux sur des valeurs neutres — et on l'avoue par assumedShare.
+  const value: Record<Component, number> = { tsbMetabolic, tsbMechanical, subjective, autonomic };
+  const sourced: Record<Component, boolean> = {
+    tsbMetabolic: metabolic != null,
+    tsbMechanical: mechanical != null,
+    subjective: answered > 0,
+    autonomic: autonomicSource !== 'default',
+  };
+  const sourcedWeight = COMPONENTS.reduce((s, k) => s + (sourced[k] ? WEIGHT[k] : 0), 0);
+  const weights = roundToPercent(
+    COMPONENTS.reduce((acc, k) => {
+      acc[k] = sourcedWeight > 0 ? (sourced[k] ? WEIGHT[k] / sourcedWeight : 0) : WEIGHT[k];
+      return acc;
+    }, {} as Record<Component, number>),
+  );
+
   const score = clamp(
-    tsbMetabolic * WEIGHT.tsbMetabolic +
-      tsbMechanical * WEIGHT.tsbMechanical +
-      subjective * WEIGHT.subjective +
-      autonomic * WEIGHT.autonomic +
-      acwrPenalty,
+    COMPONENTS.reduce((s, k) => s + value[k] * weights[k], 0) + acwrPenalty,
     0,
     100,
   );
@@ -123,14 +201,13 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
     tsbMetabolic: metabolic ? 'load' : 'default',
     tsbMechanical: mechanical ? 'load' : 'default',
     subjective:
-      subjectiveAssumed <= 1e-9 ? 'declared' : subjectiveAssumed >= 1 - 1e-9 ? 'default' : 'partial',
+      answered === 0 ? 'default'
+      : answered < ITEMS.length ? 'partial'
+      : baselined === answered ? 'baseline'
+      : 'declared',
     autonomic: autonomicSource,
   };
-  const assumedShare =
-    WEIGHT.tsbMetabolic * (metabolic ? 0 : 1) +
-    WEIGHT.tsbMechanical * (mechanical ? 0 : 1) +
-    WEIGHT.subjective * subjectiveAssumed +
-    WEIGHT.autonomic * (autonomicSource === 'default' ? 1 : 0);
+  const assumedShare = sourcedWeight > 0 ? 0 : 1;
 
   const verdict: ReadinessScore['verdict'] = score >= 68 ? 'green' : score >= 45 ? 'amber' : 'red';
 
@@ -145,23 +222,57 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
       acwrPenalty,
     },
     sources,
-    assumedShare: Math.round(assumedShare * 100) / 100,
+    weights,
+    assumedShare,
     verdict,
     recommendation: recommend(verdict, {
       tsbM,
       tsbMech,
       acwr: acwrValue,
+      fatigue: today?.fatigue,
       soreness: today?.soreness,
       sleep: today?.sleepHours,
     }),
   };
 }
 
+/**
+ * Arrondit des poids au pour cent en gardant leur somme à 1 (plus fort reste).
+ *
+ * Le score est calculé avec ces poids-là, pas avec les poids exacts : ce qui est
+ * affiché est ce qui a servi, et quatre pourcentages affichés font bien 100.
+ */
+function roundToPercent(w: Record<Component, number>): Record<Component, number> {
+  const parts = COMPONENTS.map((key) => {
+    const exact = w[key] * 100;
+    return { key, pct: Math.floor(exact), rest: exact - Math.floor(exact) };
+  });
+  let left =
+    Math.round(COMPONENTS.reduce((s, k) => s + w[k] * 100, 0)) -
+    parts.reduce((s, p) => s + p.pct, 0);
+  for (const p of [...parts].sort((a, b) => b.rest - a.rest)) {
+    if (left-- <= 0) break;
+    p.pct++;
+  }
+  return parts.reduce((acc, p) => {
+    acc[p.key] = p.pct / 100;
+    return acc;
+  }, {} as Record<Component, number>);
+}
+
 function recommend(
   verdict: ReadinessScore['verdict'],
-  ctx: { tsbM: number; tsbMech: number; acwr: number; soreness?: number; sleep?: number },
+  ctx: {
+    tsbM: number;
+    tsbMech: number;
+    acwr: number;
+    fatigue?: number;
+    soreness?: number;
+    sleep?: number;
+  },
 ): string {
   const reasons: string[] = [];
+  if (ctx.fatigue != null && ctx.fatigue >= 4) reasons.push('fatigue perçue élevée');
   if (ctx.tsbMech < -12) reasons.push('fatigue musculaire élevée (charge excentrique récente)');
   if (ctx.tsbM < -25) reasons.push('charge métabolique très supérieure à la récupération');
   if (ctx.acwr > 1.5) reasons.push(`pic de charge marqué (ACWR ${ctx.acwr.toFixed(2)})`);

@@ -1,4 +1,4 @@
-import type { PlannedSession } from '@cairn/core';
+import type { DeclaredAbsence, PlannedSession } from '@cairn/core';
 import * as db from '@cairn/db';
 import { formatDuration } from '@cairn/physiology';
 import type { AthleteState } from './state.js';
@@ -24,9 +24,11 @@ import type { AthleteState } from './state.js';
 export interface Adjustment {
   sessionId: string;
   date: string;
-  action: 'scale' | 'move' | 'swap' | 'mark_missed';
+  action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw';
   factor?: number;
   newDate?: string;
+  /** Absence déclarée à l'origine du retrait, sur `withdraw`. */
+  absenceId?: string;
   reason: string;
   /** Code de la règle déclenchée, pour l'auditabilité. */
   rule: string;
@@ -38,6 +40,65 @@ const midnight = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 
 /** Séances à forte contrainte excentrique. */
 const ECCENTRIC_TYPES = new Set(['downhill', 'long_trail', 'long_run', 'race_pace']);
+
+/** L'absence déclarée qui recouvre ce jour, s'il y en a une. Bornes incluses. */
+export function absenceCovering(
+  absences: DeclaredAbsence[],
+  date: string,
+): DeclaredAbsence | undefined {
+  return absences.find((a) => a.startDate <= date && date <= a.endDate);
+}
+
+const KIND_FR: Record<DeclaredAbsence['kind'], string> = {
+  chosen: 'coupure',
+  illness: 'maladie',
+  injury: 'blessure',
+  unavailable: 'indisponibilité',
+};
+
+/**
+ * Statuts qu'une absence peut retirer.
+ *
+ * `missed` en fait partie : une séance déjà marquée manquée sur une période
+ * ensuite déclarée absente a été comptée comme une faute qui n'a pas eu lieu.
+ * L'absence répare le registre au lieu de le laisser mentir. Ce qui a
+ * réellement eu lieu — `completed`, `partial`, `replaced` — n'est jamais
+ * touché : une séance faite pendant une coupure reste une séance faite.
+ */
+const WITHDRAWABLE = new Set(['planned', 'missed']);
+
+/**
+ * Ce qu'une absence déclarée impose au plan : retirer les séances qu'elle
+ * recouvre. Ni à faire, ni manquées.
+ *
+ * Une seule implémentation, appelée par l'ajustement automatique comme par
+ * l'outil du coach : le plan ne peut pas répondre deux choses différentes à la
+ * même absence selon la porte par laquelle elle est entrée.
+ */
+export function withdrawalsFor(
+  absence: DeclaredAbsence,
+  sessions: PlannedSession[],
+): Adjustment[] {
+  return sessions
+    .filter(
+      (s) =>
+        s.date >= absence.startDate &&
+        s.date <= absence.endDate &&
+        // Un jour de repos n'est pas une séance à retirer : il n'y avait rien à faire.
+        s.type !== 'rest' &&
+        WITHDRAWABLE.has(s.status),
+    )
+    .map((s) => ({
+      sessionId: s.id,
+      date: s.date,
+      action: 'withdraw' as const,
+      absenceId: absence.id,
+      rule: 'declared_absence',
+      reason:
+        `Séance retirée : ${KIND_FR[absence.kind]} déclarée du ${absence.startDate} au ${absence.endDate}. ` +
+        `Motif de l'athlète : « ${absence.reason} » Une absence annoncée n'est pas une séance manquée.`,
+    }));
+}
 
 export function evaluateAdjustments(
   state: AthleteState,
@@ -59,6 +120,15 @@ export function evaluateAdjustments(
     out.push(adj);
   };
 
+  // ── Règle 0 : périodes d'absence déclarées ────────────────────────────────
+  // Elle passe avant tout le reste, et notamment avant `missed_session` : une
+  // séance qu'une absence recouvre ne doit jamais être jugée par une autre
+  // règle, puisqu'elle n'était plus au programme.
+  const absences = state.absences;
+  for (const absence of absences) {
+    for (const adj of withdrawalsFor(absence, upcoming)) push(adj);
+  }
+
   // ── Règle 1 : séances passées jamais réalisées ────────────────────────────
   for (const s of upcoming) {
     if (s.date < today && s.status === 'planned' && s.type !== 'rest') {
@@ -72,7 +142,15 @@ export function evaluateAdjustments(
     }
   }
 
-  const future = upcoming.filter((s) => s.date >= today && s.status === 'planned' && s.type !== 'rest');
+  // Les jours d'absence sortent du plan pour toutes les règles suivantes : une
+  // séance retirée n'a pas à être allégée, ni à décaler celle qui la suit.
+  const future = upcoming.filter(
+    (s) =>
+      s.date >= today &&
+      s.status === 'planned' &&
+      s.type !== 'rest' &&
+      !absenceCovering(absences, s.date),
+  );
 
   // ── Règle 2 : fatigue musculaire excentrique ──────────────────────────────
   // La charge mécanique récupère plus lentement que la métabolique : on protège
@@ -173,13 +251,16 @@ export function evaluateAdjustments(
 export async function applyAdjustments(
   athleteId: string,
   adjustments: Adjustment[],
-  trigger: 'new_activity' | 'readiness' | 'missed_session' = 'new_activity',
+  trigger: 'new_activity' | 'readiness' | 'missed_session' | 'declared_absence' = 'new_activity',
 ): Promise<number> {
   if (adjustments.length === 0) return 0;
 
-  const from = iso(new Date(Date.now() - 30 * dayMs));
-  const to = iso(new Date(Date.now() + 400 * dayMs));
-  const all = await db.listPlannedSessions(athleteId, from, to);
+  // La fenêtre de relecture vient des ajustements eux-mêmes, pas de l'horloge :
+  // une absence déclarée après coup peut recouvrir des séances plus anciennes
+  // que n'importe quelle fenêtre fixe, et elles seraient silencieusement
+  // ignorées.
+  const dates = adjustments.map((a) => a.date).sort();
+  const all = await db.listPlannedSessions(athleteId, dates[0]!, dates[dates.length - 1]!);
   const byId = new Map(all.map((s) => [s.id, s]));
 
   for (const adj of adjustments) {
@@ -189,6 +270,14 @@ export async function applyAdjustments(
     switch (adj.action) {
       case 'mark_missed':
         await db.updateSession(adj.sessionId, { status: 'missed', rationale: adj.reason });
+        break;
+
+      case 'withdraw':
+        await db.updateSession(adj.sessionId, {
+          status: 'withdrawn',
+          absenceId: adj.absenceId ?? null,
+          rationale: adj.reason,
+        });
         break;
 
       case 'scale': {
@@ -233,7 +322,9 @@ export async function applyAdjustments(
             ? `charge × ${a.factor}`
             : a.action === 'move'
               ? `déplacée au ${a.newDate}`
-              : a.action,
+              : a.action === 'withdraw'
+                ? 'retirée (absence déclarée)'
+                : a.action,
         reason: a.reason,
       })),
     });
@@ -254,7 +345,9 @@ export function describeAdjustments(adjustments: Adjustment[]): string {
             ? `déplacée au ${a.newDate}`
             : a.action === 'mark_missed'
               ? 'marquée manquée'
-              : 'ajustée';
+              : a.action === 'withdraw'
+                ? 'retirée'
+                : 'ajustée';
       return `- **${a.date}** — séance ${what}. ${a.reason}`;
     })
     .join('\n');

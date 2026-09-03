@@ -447,6 +447,13 @@ export interface PmcSeries {
 export interface DailyCheckIn {
   date: string;
   athleteId: string;
+  /**
+   * Fatigue perçue, 1 (frais) – 5 (épuisé).
+   *
+   * L'item le plus sensible à la charge des cinq de l'échelle de Hooper : il
+   * bouge avant le sommeil et avant les courbatures.
+   */
+  fatigue?: number;
   /** Heures de sommeil. */
   sleepHours?: number;
   /** Qualité perçue du sommeil, 1–5. */
@@ -463,6 +470,18 @@ export interface DailyCheckIn {
   hrvRmssd?: number;
   bodyMassKg?: number;
   notes?: string;
+  /**
+   * Quand la note libre a cessé d'être en attente, et ce qui en a été fait.
+   *
+   * Une note n'entre dans aucun calcul : c'est justement pourquoi elle a besoin
+   * d'un état. Sans lui, une phrase comme « je coupe dix jours » reste dans sa
+   * colonne, lue une fois par le coach puis plus jamais par personne. Tant que
+   * `noteHandledAt` est vide, la note est en attente et l'application la
+   * montre.
+   */
+  noteHandledAt?: string;
+  /** Ce qui a été fait de la note, en une ligne. */
+  noteHandledAs?: string;
 }
 
 /**
@@ -471,11 +490,15 @@ export interface DailyCheckIn {
  * `default` n'est pas une mesure : c'est la valeur retenue faute de relevé.
  * La distinguer est la seule façon d'empêcher qu'un score à moitié inventé
  * se lise comme un score mesuré.
+ *
+ * `baseline` dit davantage que `declared` : la réponse n'est pas lue sur une
+ * échelle universelle mais contre la norme de l'athlète lui-même.
  */
 export type ReadinessSource =
   | 'load'
   | 'declared'
   | 'partial'
+  | 'baseline'
   | 'hrv'
   | 'resting-hr'
   | 'default';
@@ -499,7 +522,26 @@ export interface ReadinessScore {
     subjective: ReadinessSource;
     autonomic: ReadinessSource;
   };
-  /** Part du score (0–1) produite par des valeurs par défaut, faute de relevé. */
+  /**
+   * Poids réellement appliqué à chaque composante. Somme exacte : 1.
+   *
+   * Une composante sans source pèse 0 et son poids nominal va aux autres. Ces
+   * nombres, et non les poids nominaux, expliquent le score affiché.
+   */
+  weights: {
+    tsbMetabolic: number;
+    tsbMechanical: number;
+    subjective: number;
+    autonomic: number;
+  };
+  /**
+   * Part du score (0–1) produite par des valeurs par défaut, faute de relevé.
+   *
+   * La redistribution des poids la rend binaire : dès qu'une seule source
+   * existe, plus aucune valeur supposée n'entre dans le score. Ce qui manque
+   * ne pèse pas, au lieu de peser une moyenne inventée. Un score entièrement
+   * supposé (aucune charge, aucun relevé) vaut donc 1, tout le reste 0.
+   */
   assumedShare: number;
   verdict: 'green' | 'amber' | 'red';
   recommendation: string;
@@ -590,6 +632,18 @@ export interface SessionBlock {
   notes?: string;
 }
 
+/**
+ * Devenir d'une séance prescrite.
+ *
+ * `withdrawn` est le seul statut qui ne dit rien de l'athlète : la séance a été
+ * retirée du plan par une absence qu'il avait déclarée. La confondre avec
+ * `missed` — le stimulus prévu n'a pas été délivré, et personne ne l'avait
+ * annoncé — remplit le registre d'observance de fautes qui n'ont pas eu lieu.
+ */
+export type SessionStatus =
+  | 'planned' | 'completed' | 'partial' | 'missed'
+  | 'moved' | 'cancelled' | 'replaced' | 'withdrawn';
+
 export interface PlannedSession {
   id: string;
   athleteId: string;
@@ -614,8 +668,10 @@ export interface PlannedSession {
    * prescrit — le stimulus prévu n'a pas été délivré. Confondre les deux fait
    * lire au coach une conformité là où le plan a été quitté.
    */
-  status: 'planned' | 'completed' | 'partial' | 'missed' | 'moved' | 'cancelled' | 'replaced';
+  status: SessionStatus;
   completedActivityId?: string;
+  /** Absence déclarée qui a retiré la séance, quand `status` vaut `withdrawn`. */
+  absenceId?: string;
   /** Justification produite par le coach lors de la (re)planification. */
   rationale?: string;
 }
@@ -654,10 +710,69 @@ export interface TrainingPlan {
 
 export interface PlanRevision {
   at: string;
-  trigger: 'initial' | 'new_activity' | 'chat_request' | 'missed_session' | 'readiness' | 'goal_change';
+  trigger:
+    | 'initial' | 'new_activity' | 'chat_request' | 'missed_session'
+    | 'readiness' | 'goal_change' | 'declared_absence';
   summary: string;
   /** Diff lisible : ce qui a bougé et pourquoi. */
   changes: { date: string; before: string; after: string; reason: string }[];
+}
+
+/** Nature d'une absence, telle que l'athlète l'a présentée. */
+export type AbsenceKind =
+  /** Coupure voulue : repos choisi, assimilation, fin de cycle. */
+  | 'chosen'
+  | 'illness'
+  | 'injury'
+  /** Empêchement extérieur : travail, déplacement, famille. */
+  | 'unavailable';
+
+/**
+ * Qui a posé l'absence.
+ *
+ * `athlete` : il l'a annoncée lui-même, et elle lui appartient. `coach` : elle
+ * a été prescrite, et il reste à l'accepter. Rien ne prescrit d'absence
+ * aujourd'hui ; la distinction existe parce qu'une coupure choisie et une
+ * coupure imposée ne se discutent pas de la même façon.
+ */
+export type AbsenceSource = 'athlete' | 'coach';
+
+/**
+ * Une absence déclarée : une période datée pendant laquelle l'athlète ne
+ * s'entraînera pas, annoncée avant qu'elle n'ait lieu.
+ *
+ * C'est le fait qui manquait au système. Sans lui, dix jours d'arrêt annoncés
+ * n'existent que sous forme de séances non réalisées, et le plan les compte
+ * comme des fautes : le registre d'observance se remplit de faux et la règle
+ * `missed_session` se déclenche sur une décision que l'athlète avait prise et
+ * dite. Une absence déclarée et un entraînement manqué sont deux faits
+ * différents ; celui-ci retire les séances qu'il recouvre au lieu de les
+ * laisser échouer.
+ *
+ * Ce qu'elle ne fait pas : masquer la chute de charge. La perte de CTL est
+ * réelle et le modèle a raison de la mesurer. L'absence dit seulement pourquoi
+ * elle a lieu, pour qu'on ne la raconte pas comme un abandon.
+ */
+export interface DeclaredAbsence {
+  id: string;
+  athleteId: string;
+  /** Premier jour couvert, inclus. */
+  startDate: string;
+  /** Dernier jour couvert, inclus. */
+  endDate: string;
+  kind: AbsenceKind;
+  /**
+   * La raison telle que l'athlète l'a formulée, mot pour mot.
+   *
+   * Pas la reformulation du coach : c'est cette phrase-là qu'il relira dans six
+   * semaines pour savoir ce que la coupure valait.
+   */
+  reason: string;
+  source: AbsenceSource;
+  /** Horodatage de l'enregistrement. */
+  declaredAt: string;
+  /** Point du jour d'où la phrase provient, s'il y en a un. */
+  checkInDate?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

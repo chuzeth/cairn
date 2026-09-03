@@ -1,4 +1,4 @@
-import type { ReadinessSource } from '@cairn/core';
+import type { AbsenceKind, ReadinessSource } from '@cairn/core';
 import type { AthleteState } from './state.js';
 import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
 
@@ -7,10 +7,27 @@ const SOURCE_FR: Record<ReadinessSource, string> = {
   load: 'calculé sur la charge mesurée',
   declared: 'déclaré ce matin',
   partial: 'déclaré en partie',
+  baseline: 'déclaré ce matin, lu contre sa propre norme',
   hrv: 'rMSSD relevé',
   'resting-hr': 'FC de repos relevée',
   default: 'valeur par défaut, rien de relevé',
 };
+
+/** Nature d'une absence, en un mot. */
+const ABSENCE_KIND_FR: Record<AbsenceKind, string> = {
+  chosen: 'coupure choisie',
+  illness: 'maladie',
+  injury: 'blessure',
+  unavailable: 'empêchement',
+};
+
+/** Nom lisible des composantes, pour dire ce que le score regarde — et ce qu'il ignore. */
+const COMPONENT_FR = {
+  tsbMetabolic: 'sa charge métabolique',
+  tsbMechanical: 'sa charge mécanique',
+  subjective: 'son ressenti',
+  autonomic: 'son système autonome',
+} as const;
 
 /**
  * Prompts.
@@ -44,6 +61,8 @@ Tu travailles à ce troisième niveau.
 **Consulte avant de décider.** Avant toute recommandation d'entraînement, tu as lu l'état de forme (\`get_fitness_state\`) et le plan en cours (\`get_plan\`). Avant tout jugement sur une séance, tu as lu son analyse (\`get_activity_analysis\`). Avant toute affirmation sur une progression, tu as comparé les périodes (\`compare_periods\`). Ne raisonne jamais de mémoire sur des données que tu peux aller chercher.
 
 **Agis quand on te le demande.** Si Pierre annonce une inscription, enregistre la course (\`upsert_race\`) puis reconstruis le plan (\`rebuild_plan\`). S'il te dit qu'il ne peut plus s'entraîner le mardi, mets à jour ses contraintes puis reconstruis. N'annonce jamais une modification que tu n'as pas effectivement effectuée par un outil.
+
+**Une absence annoncée n'est pas une séance manquée.** Quand Pierre dit qu'il coupe, qu'il est malade, blessé ou en déplacement — même en passant, même dans la note de son point du jour — il te donne une période datée. Interprète-la, soumets-lui les dates que tu en as comprises (\`declare_absence\` avec \`preview\` te dit quelles séances elles recouvrent), attends sa confirmation, puis enregistre-la. Sans cet enregistrement, chaque séance de la période sera comptée manquée : le suivi d'observance se remplira de fautes qu'il n'a pas commises. Ne reconstruis pas le plan dans la foulée : ce qui suit la coupure se décide avec lui.
 
 **Une seule justification par décision, et elle est physiologique.** Pas « pour varier », pas « pour progresser ». « Parce que ton TSB mécanique est à −18 et que la charge excentrique de dimanche n'est pas résorbée » — voilà une justification.
 
@@ -107,18 +126,37 @@ export function buildContextSnapshot(state: AthleteState): string {
   );
   lines.push(`ACWR ${today.acwr.toFixed(2)} (${today.acwrRisk}) · progression CTL ${today.rampRate > 0 ? '+' : ''}${today.rampRate.toFixed(1)}/sem · monotonie ${today.monotony.toFixed(2)}`);
   lines.push(`Disponibilité ${readiness.score}/100 (${readiness.verdict}) — ${readiness.recommendation}`);
+  // Le score ne contient plus de valeur inventée : ce qui n'a pas de source ne
+  // pèse rien. Reste à dire ce qu'il ne regarde pas, et avec quel poids le reste.
+  const weighed = (Object.keys(COMPONENT_FR) as (keyof typeof COMPONENT_FR)[])
+    .map((k) => `${COMPONENT_FR[k]} ${Math.round(readiness.weights[k] * 100)} %`)
+    .join(' · ');
+  lines.push(`Poids appliqués : ${weighed}.`);
+  const blind = (Object.keys(COMPONENT_FR) as (keyof typeof COMPONENT_FR)[])
+    .filter((k) => readiness.weights[k] === 0)
+    .map((k) => COMPONENT_FR[k]);
   if (readiness.assumedShare > 0.02) {
     lines.push(
-      `Ce score n'est mesuré qu'en partie : ${Math.round(readiness.assumedShare * 100)} % de son poids vient de ` +
-        `valeurs par défaut (ressenti — ${SOURCE_FR[readiness.sources.subjective]} ; système autonome — ` +
-        `${SOURCE_FR[readiness.sources.autonomic]}). Ne le présente pas comme une mesure, et dis ce qui manque.`,
+      `Aucune source, nulle part : ce score entier est une valeur par défaut. Ne le présente ` +
+        `en aucun cas comme une mesure.`,
+    );
+  } else if (blind.length > 0) {
+    const plural = blind.length > 1;
+    lines.push(
+      `Ce score ne regarde pas ${blind.join(' ni ')} — faute de relevé, ${plural ? 'ils ne pèsent' : 'il ne pèse'} ` +
+        `rien plutôt que de peser une moyenne. Il est juste, mais étroit : dis-le, et dis ce qui manque.`,
     );
   }
+  lines.push(
+    `Ressenti : ${SOURCE_FR[readiness.sources.subjective]} ; système autonome : ` +
+      `${SOURCE_FR[readiness.sources.autonomic]}.`,
+  );
   lines.push('');
 
   const checkIn = state.todayCheckIn;
   if (checkIn) {
     const declared: string[] = [];
+    if (checkIn.fatigue != null) declared.push(`fatigue perçue ${checkIn.fatigue}/5`);
     if (checkIn.sleepHours != null) declared.push(`sommeil ${checkIn.sleepHours} h`);
     if (checkIn.sleepQuality != null) declared.push(`qualité du sommeil ${checkIn.sleepQuality}/5`);
     if (checkIn.soreness != null) declared.push(`courbatures ${checkIn.soreness}/5`);
@@ -135,7 +173,38 @@ export function buildContextSnapshot(state: AthleteState): string {
       lines.push('');
       lines.push(`Il a écrit, mot pour mot : « ${checkIn.notes} »`);
       lines.push("Aucune échelle ne mesure cela. Tiens-en compte explicitement dans ta réponse.");
+      if (!checkIn.noteHandledAt) {
+        lines.push(
+          "Rien n'a encore été fait de cette note. Si elle annonce une période sans entraînement, " +
+            "propose-lui les dates et enregistre-la — sinon le plan la comptera en séances manquées.",
+        );
+      }
     }
+    lines.push('');
+  }
+
+  // Les notes des jours précédents dont personne n'a rien fait. Une phrase
+  // écrite un matin ne cesse pas d'être vraie le lendemain matin.
+  const pending = state.pendingNotes.filter((n) => n.date !== today.date);
+  if (pending.length) {
+    lines.push('## Notes en attente');
+    for (const n of pending.slice(0, 5)) lines.push(`- ${n.date} : « ${n.notes} »`);
+    lines.push('');
+  }
+
+  if (state.absences.length) {
+    lines.push('## Absences déclarées');
+    for (const a of state.absences) {
+      const phase =
+        a.endDate < today.date ? 'passée' : a.startDate > today.date ? 'à venir' : 'en cours';
+      lines.push(
+        `- **${a.startDate} → ${a.endDate}** (${phase}, ${ABSENCE_KIND_FR[a.kind]}, ${a.source === 'athlete' ? 'annoncée par lui' : 'prescrite'}) — « ${a.reason} »`,
+      );
+    }
+    lines.push(
+      "Les séances que ces périodes recouvrent sont retirées, pas manquées. La chute de CTL qui suit " +
+        "est réelle et se mesure ; elle ne se raconte pas comme un abandon.",
+    );
     lines.push('');
   }
 
@@ -156,11 +225,16 @@ export function buildContextSnapshot(state: AthleteState): string {
   }
 
   if (state.plan) {
+    // Une séance retirée par une absence déclarée n'est plus à venir. La laisser
+    // ici ferait prescrire au coach ce qu'on vient d'accepter qu'il ne fasse pas.
     const upcoming = state.plan.weeks
       .flatMap((w) => w.sessions)
-      .filter((s) => s.date >= today.date)
+      .filter((s) => s.date >= today.date && s.status !== 'withdrawn' && s.status !== 'cancelled')
       .slice(0, 7);
     lines.push('## Prochaines séances planifiées');
+    if (upcoming.length === 0) {
+      lines.push('Aucune : la période en cours est couverte par une absence déclarée.');
+    }
     for (const s of upcoming) {
       lines.push(`- ${s.date} — ${s.title} (${s.plannedLoad} pts, ${formatDuration(s.plannedDurationS)}) [${s.id}]`);
     }

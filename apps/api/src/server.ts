@@ -9,7 +9,7 @@ import {
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
 } from '@cairn/strava';
-import type { ActivityStreams } from '@cairn/core';
+import type { ActivityStreams, DeclaredAbsence } from '@cairn/core';
 import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
 import { env, missingConfig } from './env.js';
 import { activityPollerStatus } from './poller.js';
@@ -269,6 +269,10 @@ export async function buildServer() {
         today: s.today,
         readiness: s.readiness,
         checkIn: s.todayCheckIn ?? null,
+        // Ce que Pierre a écrit et dont rien n'a encore été fait. Le tableau de
+        // bord le montre : une note qui reste dans sa colonne n'a servi à rien.
+        pendingNotes: s.pendingNotes,
+        absences: await withWithdrawnCounts(A, s.absences),
         weeklyTotals: s.weeklyTotals,
         upcomingRaces: s.upcomingRaces.map((r) => ({
           ...r,
@@ -356,10 +360,12 @@ export async function buildServer() {
     const plan = await db.getActivePlan(A);
     const sessions = await db.listPlannedSessions(A, from, to);
     const activities = await db.listActivities(A, { from, to: iso(new Date()), limit: 200 });
+    const absences = await db.listAbsences(A, { from, to });
     return {
       plan: plan?.plan ?? null,
       weekSummaries: plan?.weeks.map(summarizeWeek) ?? [],
       sessions,
+      absences,
       completedByDate: Object.fromEntries(
         activities.map((a) => [a.startDateLocal.slice(0, 10), { id: a.id, name: a.name }]),
       ),
@@ -418,6 +424,7 @@ export async function buildServer() {
       const note = typeof body.notes === 'string' ? body.notes.trim().slice(0, 2000) : undefined;
 
       const fields = {
+        fatigue: scale(body.fatigue),
         sleepHours: numeric(body.sleepHours, 0, 24),
         sleepQuality: scale(body.sleepQuality),
         soreness: scale(body.soreness),
@@ -437,9 +444,11 @@ export async function buildServer() {
       // second n'efface pas ce que le premier avait déclaré.
       const existing = (await db.listCheckIns(A, date)).find((c) => c.date === date);
       const defined = <T,>(next: T | undefined, prev: T | undefined) => next ?? prev;
+      const keptNote = note === undefined ? existing?.notes : note || undefined;
       await db.upsertCheckIn({
         athleteId: A,
         date,
+        fatigue: defined(fields.fatigue, existing?.fatigue),
         sleepHours: defined(fields.sleepHours, existing?.sleepHours),
         sleepQuality: defined(fields.sleepQuality, existing?.sleepQuality),
         soreness: defined(fields.soreness, existing?.soreness),
@@ -450,7 +459,12 @@ export async function buildServer() {
         bodyMassKg: defined(fields.bodyMassKg, existing?.bodyMassKg),
         // Une note absente du corps se conserve ; une note vidée s'efface —
         // sans quoi on ne pourrait pas revenir sur ce qu'on a écrit.
-        notes: note === undefined ? existing?.notes : note || undefined,
+        notes: keptNote,
+        // Ce qui a été fait d'une note ne vaut que pour le texte sur lequel on
+        // l'a fait : réécrire la note la remet en attente.
+        ...(keptNote === existing?.notes
+          ? { noteHandledAt: existing?.noteHandledAt, noteHandledAs: existing?.noteHandledAs }
+          : {}),
       });
 
       // Un relevé peut changer la disponibilité du jour : on réévalue tout de suite.
@@ -472,6 +486,40 @@ export async function buildServer() {
   app.get('/api/checkins', async (req) => {
     const q = req.query as { from?: string };
     return db.listCheckIns(A, q.from ?? daysAgo(30));
+  });
+
+  /**
+   * Sort une note de l'attente sans rien en déduire.
+   *
+   * Toutes les notes n'appellent pas une décision : celle qui n'en appelle pas
+   * doit pouvoir être classée, sinon la seule façon de faire taire le bandeau
+   * serait d'effacer ce qu'on a écrit.
+   */
+  app.post<{ Params: { date: string }; Body: { as?: string } }>(
+    '/api/checkins/:date/note/handled',
+    async (req, reply) => {
+      const { date } = req.params;
+      const existing = (await db.listCheckIns(A, date)).find((c) => c.date === date);
+      if (!existing) return reply.code(404).send({ error: `Aucun point du jour au ${date}.` });
+      if (!existing.notes?.trim()) {
+        return reply.code(400).send({ error: `Le point du ${date} ne porte aucune note.` });
+      }
+      // Déjà traitée : on ne réécrit pas ce qui en avait été fait. Un second
+      // clic effacerait « absence déclarée du 3 au 13 » au profit d'un classement.
+      if (existing.noteHandledAt) {
+        return { date, handledAs: existing.noteHandledAs ?? null, alreadyHandled: true };
+      }
+      const as = typeof req.body?.as === 'string' && req.body.as.trim()
+        ? req.body.as.trim().slice(0, 300)
+        : 'Lue et classée, sans suite à donner.';
+      await db.markCheckInNoteHandled(A, date, as);
+      return { date, handledAs: as };
+    },
+  );
+
+  app.get('/api/absences', async (req) => {
+    const q = req.query as { from?: string };
+    return db.listAbsences(A, { from: q.from ?? daysAgo(120) });
   });
 
   app.get('/api/gear', async () => {
@@ -543,6 +591,24 @@ export async function buildServer() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Combien de séances chaque absence a retirées.
+ *
+ * Compté en base plutôt que déduit de la fenêtre affichée : une coupure qui
+ * dépasse d'un jour la fenêtre du tableau de bord perdrait une séance, et
+ * l'athlète lirait un chiffre faux là où il vient d'en accepter un.
+ */
+async function withWithdrawnCounts(athleteId: string, absences: DeclaredAbsence[]) {
+  if (absences.length === 0) return [];
+  const from = absences.reduce((m, a) => (a.startDate < m ? a.startDate : m), absences[0]!.startDate);
+  const to = absences.reduce((m, a) => (a.endDate > m ? a.endDate : m), absences[0]!.endDate);
+  const counts = new Map<string, number>();
+  for (const s of await db.listPlannedSessions(athleteId, from, to)) {
+    if (s.absenceId) counts.set(s.absenceId, (counts.get(s.absenceId) ?? 0) + 1);
+  }
+  return absences.map((a) => ({ ...a, withdrawnSessions: counts.get(a.id) ?? 0 }));
+}
 
 /** Sous-échantillonne les flux pour l'affichage. */
 function downsample(input: ActivityStreams, target: number): Record<string, unknown> {

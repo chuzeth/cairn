@@ -149,6 +149,7 @@ export const dailyCheckIns = sqliteTable(
     id: text('id').primaryKey(),
     athleteId: text('athlete_id').notNull().references(() => athletes.id, { onDelete: 'cascade' }),
     date: text('date').notNull(),
+    fatigue: integer('fatigue'),
     sleepHours: real('sleep_hours'),
     sleepQuality: integer('sleep_quality'),
     soreness: integer('soreness'),
@@ -158,6 +159,9 @@ export const dailyCheckIns = sqliteTable(
     hrvRmssd: real('hrv_rmssd'),
     bodyMassKg: real('body_mass_kg'),
     notes: text('notes'),
+    /** Tant que c'est vide, la note libre est en attente : l'application la montre. */
+    noteHandledAt: text('note_handled_at'),
+    noteHandledAs: text('note_handled_as'),
     createdAt: text('created_at').notNull().default(now),
   },
   (t) => ({ byAthleteDate: uniqueIndex('checkins_athlete_date_idx').on(t.athleteId, t.date) }),
@@ -216,6 +220,8 @@ export const plannedSessions = sqliteTable(
     priority: text('priority', { enum: ['key', 'support', 'optional'] }).notNull(),
     status: text('status').notNull().default('planned'),
     completedActivityId: text('completed_activity_id'),
+    /** Absence déclarée qui a retiré la séance — renseigné avec le statut `withdrawn`. */
+    absenceId: text('absence_id'),
     rationale: text('rationale'),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
@@ -224,6 +230,34 @@ export const plannedSessions = sqliteTable(
     byAthleteDate: index('sessions_athlete_date_idx').on(t.athleteId, t.date),
     byPlan: index('sessions_plan_idx').on(t.planId, t.date),
   }),
+);
+
+/**
+ * Absences déclarées.
+ *
+ * Une table à part, et non une note dans les contraintes de l'athlète : les
+ * contraintes disent une semaine type — des jours, un volume — et n'ont aucun
+ * moyen de retenir « du 3 au 13 septembre ». C'est daté, c'est ponctuel, et
+ * c'est ce qui décide si une séance non faite est une faute ou un fait.
+ */
+export const declaredAbsences = sqliteTable(
+  'declared_absences',
+  {
+    id: text('id').primaryKey(),
+    athleteId: text('athlete_id').notNull().references(() => athletes.id, { onDelete: 'cascade' }),
+    /** Bornes incluses. */
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    kind: text('kind').notNull(),
+    /** Mot pour mot ce que l'athlète a dit — jamais la reformulation du coach. */
+    reason: text('reason').notNull(),
+    source: text('source').notNull().default('athlete'),
+    declaredAt: text('declared_at').notNull().default(now),
+    /** Point du jour d'où vient la phrase, s'il y en a un. */
+    checkInDate: text('check_in_date'),
+    createdAt: text('created_at').notNull().default(now),
+  },
+  (t) => ({ byAthleteDate: index('absences_athlete_date_idx').on(t.athleteId, t.startDate) }),
 );
 
 export const coachInsights = sqliteTable(
@@ -299,4 +333,5 @@ export const webhookEvents = sqliteTable(
 export type AthleteRow = typeof athletes.$inferSelect;
 export type ActivityRow = typeof activities.$inferSelect;
 export type PlannedSessionRow = typeof plannedSessions.$inferSelect;
+export type DeclaredAbsenceRow = typeof declaredAbsences.$inferSelect;
 export type RaceGoalRow = typeof raceGoals.$inferSelect;

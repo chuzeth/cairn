@@ -200,6 +200,9 @@ export interface StateResponse {
   };
   readiness: Readiness;
   checkIn: CheckIn | null;
+  /** Notes libres dont rien n'a encore été fait, la plus récente d'abord. */
+  pendingNotes: { date: string; notes: string }[];
+  absences: DeclaredAbsence[];
   weeklyTotals: { weekStart: string; load: number; mechanical: number; durationS: number; vertM: number }[];
   upcomingRaces: RaceRow[];
   hasPlan: boolean;
@@ -207,7 +210,10 @@ export interface StateResponse {
 }
 
 /** Provenance d'une composante de disponibilité — miroir de `ReadinessSource`. */
-export type ReadinessSource = 'load' | 'declared' | 'partial' | 'hrv' | 'resting-hr' | 'default';
+export type ReadinessSource =
+  | 'load' | 'declared' | 'partial' | 'baseline' | 'hrv' | 'resting-hr' | 'default';
+
+export type ReadinessComponent = 'tsbMetabolic' | 'tsbMechanical' | 'subjective' | 'autonomic';
 
 export interface Readiness {
   date?: string;
@@ -215,13 +221,36 @@ export interface Readiness {
   verdict: 'green' | 'amber' | 'red';
   recommendation: string;
   components: Record<string, number>;
-  sources: Record<'tsbMetabolic' | 'tsbMechanical' | 'subjective' | 'autonomic', ReadinessSource>;
-  /** Part du score (0–1) qui repose sur des valeurs par défaut. */
+  sources: Record<ReadinessComponent, ReadinessSource>;
+  /** Poids réellement appliqué à chaque composante ; une composante sans source pèse 0. */
+  weights: Record<ReadinessComponent, number>;
+  /** 1 quand rien n'est relevé nulle part, 0 dès qu'une seule source existe. */
   assumedShare: number;
+}
+
+/**
+ * Une période datée sans entraînement, annoncée par l'athlète.
+ *
+ * Les séances qu'elle recouvre portent le statut `withdrawn` : retirées, ni à
+ * faire ni manquées.
+ */
+export interface DeclaredAbsence {
+  id: string;
+  startDate: string;
+  endDate: string;
+  kind: 'chosen' | 'illness' | 'injury' | 'unavailable';
+  /** Les mots de l'athlète, tels qu'il les a écrits. */
+  reason: string;
+  source: 'athlete' | 'coach';
+  declaredAt: string;
+  checkInDate?: string;
+  /** Nombre de séances retirées, compté en base. */
+  withdrawnSessions?: number;
 }
 
 export interface CheckIn {
   date: string;
+  fatigue?: number;
   sleepHours?: number;
   sleepQuality?: number;
   soreness?: number;
@@ -231,6 +260,9 @@ export interface CheckIn {
   hrvRmssd?: number;
   bodyMassKg?: number;
   notes?: string;
+  /** Renseigné quand quelque chose a été fait de la note ; vide, elle est en attente. */
+  noteHandledAt?: string;
+  noteHandledAs?: string;
 }
 
 export interface CheckInResult {
@@ -284,6 +316,7 @@ export interface PlanResponse {
   plan: { id: string; goalRaceId: string; targetRaceDayTsb: number; revisionLog: { at: string; trigger: string; summary: string }[] } | null;
   weekSummaries: string[];
   sessions: SessionRow[];
+  absences: DeclaredAbsence[];
   completedByDate: Record<string, { id: string; name: string }>;
 }
 
@@ -301,4 +334,6 @@ export interface SessionRow {
   status: string; rationale?: string;
   /** Activité qui a rattaché la séance — celle qui l'a réalisée ou remplacée. */
   completedActivityId?: string;
+  /** Absence déclarée qui a retiré la séance, quand le statut vaut `withdrawn`. */
+  absenceId?: string;
 }

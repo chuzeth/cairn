@@ -647,6 +647,12 @@ describe('Rattachement d\'une activité à la séance prescrite', () => {
     expect(matchPlannedSession([session({ status: 'moved' })], sortie())).toBeNull();
   });
 
+  it('refuse une séance retirée par une absence déclarée', () => {
+    // Courir pendant une coupure annoncée n'honore aucune prescription : ce
+    // jour-là, le plan ne demandait plus rien.
+    expect(matchPlannedSession([session({ status: 'withdrawn' })], sortie())).toBeNull();
+  });
+
   it('refuse de croiser les disciplines', () => {
     expect(matchPlannedSession([session()], sortie({ sportType: 'Swim' }))).toBeNull();
     expect(matchPlannedSession([session({ type: 'strength' })], sortie())).toBeNull();
@@ -691,30 +697,53 @@ describe('Provenance de la disponibilité', () => {
   const checkIn = (over: Partial<DailyCheckIn> = {}): DailyCheckIn => ({
     date: '2026-09-02', athleteId: 'pierre', ...over,
   });
+  const full = {
+    fatigue: 2, sleepHours: 7.5, sleepQuality: 4, soreness: 2, stress: 2, motivation: 4,
+  } as const;
 
-  it('déclare supposée la moitié du score quand rien n\'est relevé', () => {
+  it('retire du calcul ce qui n\'a pas de source, au lieu de l\'y supposer', () => {
     const r = at();
     expect(r.sources.subjective).toBe('default');
     expect(r.sources.autonomic).toBe('default');
     expect(r.sources.tsbMetabolic).toBe('load');
-    // 0,32 de ressenti + 0,20 de système autonome : la majorité du reste.
-    expect(r.assumedShare).toBeCloseTo(0.52, 6);
-  });
-
-  it('ne suppose plus rien quand le point du jour est complet', () => {
-    const r = at([checkIn({ sleepHours: 7.5, sleepQuality: 4, soreness: 2, stress: 2, motivation: 4, hrvRmssd: 62 })]);
-    expect(r.sources.subjective).toBe('declared');
-    expect(r.sources.autonomic).toBe('hrv');
+    // Ressenti et système autonome sont muets : leurs 0,52 vont aux deux
+    // composantes de charge, au prorata de 0,26 et 0,22.
+    expect(r.weights.subjective).toBe(0);
+    expect(r.weights.autonomic).toBe(0);
+    expect(r.weights.tsbMetabolic).toBeCloseTo(0.54, 6);
+    expect(r.weights.tsbMechanical).toBeCloseTo(0.46, 6);
+    // Plus rien d'inventé n'entre dans le score : il est étroit, pas supposé.
     expect(r.assumedShare).toBe(0);
   });
 
-  it('accepte une réponse partielle et n\'en suppose que le reste', () => {
-    // Seul le sommeil est déclaré : les quatre autres questions pèsent 0,75 du
-    // ressenti, soit 0,24 du score, auxquels s'ajoute le système autonome.
+  it('rend son poids nominal à chaque composante quand tout est relevé', () => {
+    const r = at([checkIn({ ...full, hrvRmssd: 62 })]);
+    expect(r.sources.subjective).toBe('declared');
+    expect(r.sources.autonomic).toBe('hrv');
+    expect(r.weights).toEqual({
+      tsbMetabolic: 0.26, tsbMechanical: 0.22, subjective: 0.32, autonomic: 0.2,
+    });
+    expect(r.assumedShare).toBe(0);
+  });
+
+  it('fait toujours 100 % des poids affichés', () => {
+    for (const c of [[], [checkIn({ fatigue: 2 })], [checkIn({ ...full })], [checkIn({ hrvRmssd: 55 })]]) {
+      const w = at(c).weights;
+      const sum = w.tsbMetabolic + w.tsbMechanical + w.subjective + w.autonomic;
+      expect(sum).toBeCloseTo(1, 9);
+    }
+  });
+
+  it('accepte une réponse partielle sans en supposer le reste', () => {
+    // Seul le sommeil est déclaré : les cinq autres questions ne pèsent rien.
+    // Le ressenti garde sa pleine voix de composante, et récupère même une part
+    // du système autonome, muet lui aussi — 0,32 sur 0,80 de poids sourcé.
     const r = at([checkIn({ sleepHours: 8.5 })]);
     expect(r.sources.subjective).toBe('partial');
-    expect(r.assumedShare).toBeCloseTo(0.44, 6);
-    expect(r.components.subjective).not.toBe(at().components.subjective);
+    expect(r.weights.subjective).toBeCloseTo(0.4, 6);
+    expect(r.assumedShare).toBe(0);
+    // 8 h 30 seules valent bien mieux que la valeur neutre d'avant.
+    expect(r.components.subjective).toBe(100);
   });
 
   it('distingue le rMSSD de la FC de repos, et les deux d\'une absence', () => {
@@ -724,15 +753,124 @@ describe('Provenance de la disponibilité', () => {
   });
 
   it('ne compte pour relevé qu\'un point du jour daté du jour', () => {
-    const r = at([checkIn({ date: '2026-09-01', sleepHours: 7.5, sleepQuality: 4, soreness: 1, stress: 1, motivation: 5 })]);
+    const r = at([checkIn({ date: '2026-09-01', ...full })]);
     expect(r.sources.subjective).toBe('default');
-    expect(r.assumedShare).toBeCloseTo(0.52, 6);
+    expect(r.weights.subjective).toBe(0);
   });
 
   it('avoue un score entièrement supposé quand la charge manque aussi', () => {
     const r = at([], pmc({ metabolic: [], mechanical: [], acwr: [] }));
     expect(r.sources.tsbMetabolic).toBe('default');
     expect(r.sources.tsbMechanical).toBe('default');
+    // Rien à redistribuer : on garde les poids nominaux et on le dit.
+    expect(r.weights).toEqual({
+      tsbMetabolic: 0.26, tsbMechanical: 0.22, subjective: 0.32, autonomic: 0.2,
+    });
     expect(r.assumedShare).toBe(1);
+  });
+
+  it('ne laisse pas un signal absent diluer un signal présent', () => {
+    // Une journée franchement mauvaise au ressenti, sans HRV. L'ancienne règle
+    // noyait ce signal sous un cinquième de valeur neutre.
+    const bad = at([checkIn({ fatigue: 5, sleepHours: 5, sleepQuality: 1, soreness: 5, stress: 5, motivation: 1 })]);
+    const good = at([checkIn({ fatigue: 1, sleepHours: 9.5, sleepQuality: 5, soreness: 1, stress: 1, motivation: 5 })]);
+    expect(bad.components.subjective).toBe(0);
+    expect(good.components.subjective).toBe(100);
+    expect(bad.weights.subjective).toBeCloseTo(0.4, 6);
+    expect(good.score - bad.score).toBe(40);
+  });
+});
+
+describe('Fatigue perçue', () => {
+  const pmc = (): PmcSeries => ({
+    metabolic: [{ date: '2026-09-02', ctl: 50, atl: 50, tsb: 0, load: 50 }],
+    mechanical: [{ date: '2026-09-02', ctl: 30, atl: 30, tsb: 0, load: 30 }],
+    acwr: [{ date: '2026-09-02', value: 1.0 }],
+    monotony: [], strain: [], rampRate: [],
+  });
+  const at = (over: Partial<DailyCheckIn>) =>
+    computeReadiness({
+      date: '2026-09-02',
+      pmc: pmc(),
+      checkIns: [{ date: '2026-09-02', athleteId: 'pierre', ...over }],
+    });
+
+  it('entre dans le score, et plus lourd que les autres items', () => {
+    expect(at({ fatigue: 5 }).components.subjective).toBe(0);
+    expect(at({ fatigue: 1 }).components.subjective).toBe(100);
+    // À réponses complètes par ailleurs, un cran de fatigue pèse plus qu'un
+    // cran de stress : c'est l'item le plus sensible de l'échelle de Hooper.
+    const base = { fatigue: 3, sleepHours: 7.5, sleepQuality: 3, soreness: 3, stress: 3, motivation: 3 };
+    const tired = at({ ...base, fatigue: 5 }).components.subjective;
+    const stressed = at({ ...base, stress: 5 }).components.subjective;
+    expect(tired).toBeLessThan(stressed);
+  });
+
+  it('se dit dans la recommandation quand elle est haute', () => {
+    expect(at({ fatigue: 4 }).recommendation).toContain('fatigue perçue élevée');
+    expect(at({ fatigue: 2 }).recommendation).not.toContain('fatigue perçue élevée');
+  });
+});
+
+describe('Ligne de base du ressenti', () => {
+  const pmc = (): PmcSeries => ({
+    metabolic: [{ date: '2026-09-30', ctl: 50, atl: 50, tsb: 0, load: 50 }],
+    mechanical: [{ date: '2026-09-30', ctl: 30, atl: 30, tsb: 0, load: 30 }],
+    acwr: [{ date: '2026-09-30', value: 1.0 }],
+    monotony: [], strain: [], rampRate: [],
+  });
+  /** `n` jours d'historique à `sleepHours` heures, puis le jour évalué. */
+  const withHistory = (n: number, past: number, todayHours: number): DailyCheckIn[] => {
+    const days: DailyCheckIn[] = [];
+    for (let i = n; i >= 1; i--) {
+      const d = new Date(Date.UTC(2026, 8, 30) - i * 86_400_000).toISOString().slice(0, 10);
+      days.push({ date: d, athleteId: 'pierre', sleepHours: past });
+    }
+    days.push({ date: '2026-09-30', athleteId: 'pierre', sleepHours: todayHours });
+    return days;
+  };
+  const subjective = (n: number, past: number, today: number) =>
+    computeReadiness({ date: '2026-09-30', pmc: pmc(), checkIns: withHistory(n, past, today) })
+      .components.subjective;
+
+  it('reste sur l\'échelle absolue tant que l\'historique est trop court', () => {
+    // 6 h, sous les 7 déclarations qu'exige une moyenne : (6-5)/3 → 33.
+    expect(subjective(6, 6, 6)).toBe(33);
+    expect(computeReadiness({
+      date: '2026-09-30', pmc: pmc(), checkIns: withHistory(6, 6, 6),
+    }).sources.subjective).toBe('partial');
+  });
+
+  it('cesse de compter un déficit chez qui dort court depuis toujours', () => {
+    // Même nuit de 6 h, mais c'est sa norme depuis un mois : plus un déficit.
+    expect(subjective(28, 6, 6)).toBe(50);
+    // Et la même nuit chez qui dort huit heures d'habitude devient un manque.
+    expect(subjective(28, 8, 6)).toBeLessThan(20);
+  });
+
+  it('bascule progressivement, sans qu\'un jour fasse tout changer', () => {
+    const seq = [7, 10, 14, 21, 28].map((n) => subjective(n, 8, 6));
+    for (let i = 1; i < seq.length; i++) expect(seq[i]!).toBeLessThan(seq[i - 1]!);
+    // À 7 déclarations la ligne de base ne pèse encore rien : échelle absolue.
+    expect(seq[0]).toBe(33);
+  });
+
+  it('le dit dans la provenance quand toutes les réponses valent contre la norme', () => {
+    const history: DailyCheckIn[] = [];
+    for (let i = 28; i >= 1; i--) {
+      const d = new Date(Date.UTC(2026, 8, 30) - i * 86_400_000).toISOString().slice(0, 10);
+      history.push({
+        date: d, athleteId: 'pierre',
+        fatigue: 3, sleepHours: 7, sleepQuality: 3, soreness: 3, stress: 3, motivation: 3,
+      });
+    }
+    const today: DailyCheckIn = {
+      date: '2026-09-30', athleteId: 'pierre',
+      fatigue: 3, sleepHours: 7, sleepQuality: 3, soreness: 3, stress: 3, motivation: 3,
+    };
+    const r = computeReadiness({ date: '2026-09-30', pmc: pmc(), checkIns: [...history, today] });
+    expect(r.sources.subjective).toBe('baseline');
+    // Une journée en tous points ordinaire pour lui : 50, ni bonne ni mauvaise.
+    expect(r.components.subjective).toBe(50);
   });
 });

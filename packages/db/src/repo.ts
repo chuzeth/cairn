@@ -1,6 +1,6 @@
 import type {
   Activity, ActivityAnalysis, ActivityStreams, AthleteProfile, ChatMessage,
-  CoachInsight, DailyCheckIn, LabTest, PhysiologyModel, PlannedSession,
+  CoachInsight, DailyCheckIn, DeclaredAbsence, LabTest, PhysiologyModel, PlannedSession,
   RaceGoal, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm';
@@ -408,14 +408,19 @@ export async function getModelHistory(athleteId: string, limit = 40): Promise<Ph
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function upsertCheckIn(checkIn: DailyCheckIn): Promise<void> {
-  const values = { id: uid('chk'), ...checkIn, notes: checkIn.notes ?? null };
+  // L'état de la note est écrit explicitement, à null quand il n'est pas fourni :
+  // une note réécrite redevient une note dont rien n'a été fait, et l'appelant
+  // doit reporter l'état s'il veut le conserver.
+  const row = {
+    ...checkIn,
+    notes: checkIn.notes ?? null,
+    noteHandledAt: checkIn.noteHandledAt ?? null,
+    noteHandledAs: checkIn.noteHandledAs ?? null,
+  };
   await getDb()
     .insert(t.dailyCheckIns)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [t.dailyCheckIns.athleteId, t.dailyCheckIns.date],
-      set: { ...checkIn, notes: checkIn.notes ?? null },
-    });
+    .values({ id: uid('chk'), ...row })
+    .onConflictDoUpdate({ target: [t.dailyCheckIns.athleteId, t.dailyCheckIns.date], set: row });
 }
 
 export async function listCheckIns(athleteId: string, from?: string): Promise<DailyCheckIn[]> {
@@ -429,6 +434,7 @@ export async function listCheckIns(athleteId: string, from?: string): Promise<Da
   return rows.map((r) => ({
     date: r.date,
     athleteId: r.athleteId,
+    fatigue: r.fatigue ?? undefined,
     sleepHours: r.sleepHours ?? undefined,
     sleepQuality: r.sleepQuality ?? undefined,
     soreness: r.soreness ?? undefined,
@@ -438,7 +444,91 @@ export async function listCheckIns(athleteId: string, from?: string): Promise<Da
     hrvRmssd: r.hrvRmssd ?? undefined,
     bodyMassKg: r.bodyMassKg ?? undefined,
     notes: r.notes ?? undefined,
+    noteHandledAt: r.noteHandledAt ?? undefined,
+    noteHandledAs: r.noteHandledAs ?? undefined,
   }));
+}
+
+/**
+ * Sort une note de l'attente.
+ *
+ * `upsertCheckIn` ne peut pas le faire : il écrit ce que l'athlète déclare le
+ * matin, et une note modifiée redevient à traiter. Ce qu'on marque ici, c'est
+ * qu'on en a fait quelque chose.
+ */
+export async function markCheckInNoteHandled(
+  athleteId: string,
+  date: string,
+  handledAs: string,
+): Promise<void> {
+  await getDb()
+    .update(t.dailyCheckIns)
+    .set({ noteHandledAt: new Date().toISOString(), noteHandledAs: handledAs })
+    .where(and(eq(t.dailyCheckIns.athleteId, athleteId), eq(t.dailyCheckIns.date, date)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Absences déclarées
+// ─────────────────────────────────────────────────────────────────────────────
+
+function rowToAbsence(row: typeof t.declaredAbsences.$inferSelect): DeclaredAbsence {
+  return {
+    id: row.id,
+    athleteId: row.athleteId,
+    startDate: row.startDate,
+    endDate: row.endDate,
+    kind: row.kind as DeclaredAbsence['kind'],
+    reason: row.reason,
+    source: row.source as DeclaredAbsence['source'],
+    declaredAt: row.declaredAt,
+    checkInDate: row.checkInDate ?? undefined,
+  };
+}
+
+export async function createAbsence(
+  absence: Omit<DeclaredAbsence, 'id' | 'declaredAt'> & { id?: string; declaredAt?: string },
+): Promise<DeclaredAbsence> {
+  const row = {
+    id: absence.id ?? uid('abs'),
+    athleteId: absence.athleteId,
+    startDate: absence.startDate,
+    endDate: absence.endDate,
+    kind: absence.kind,
+    reason: absence.reason,
+    source: absence.source,
+    declaredAt: absence.declaredAt ?? new Date().toISOString(),
+    checkInDate: absence.checkInDate ?? null,
+  };
+  await getDb().insert(t.declaredAbsences).values(row);
+  return rowToAbsence({ ...row, createdAt: row.declaredAt });
+}
+
+/** Absences qui touchent la fenêtre demandée — bornes incluses des deux côtés. */
+export async function listAbsences(
+  athleteId: string,
+  opts: { from?: string; to?: string } = {},
+): Promise<DeclaredAbsence[]> {
+  const filters = [eq(t.declaredAbsences.athleteId, athleteId)];
+  // Une absence chevauche la fenêtre dès qu'elle ne s'achève pas avant son
+  // début et ne commence pas après sa fin : filtrer sur `startDate` seul
+  // perdrait une coupure en cours, c'est-à-dire le cas qui compte.
+  if (opts.from) filters.push(gte(t.declaredAbsences.endDate, opts.from));
+  if (opts.to) filters.push(lte(t.declaredAbsences.startDate, opts.to));
+  const rows = await getDb()
+    .select()
+    .from(t.declaredAbsences)
+    .where(and(...filters))
+    .orderBy(asc(t.declaredAbsences.startDate));
+  return rows.map(rowToAbsence);
+}
+
+export async function getAbsence(id: string): Promise<DeclaredAbsence | null> {
+  const [row] = await getDb().select().from(t.declaredAbsences).where(eq(t.declaredAbsences.id, id));
+  return row ? rowToAbsence(row) : null;
+}
+
+export async function deleteAbsence(id: string): Promise<void> {
+  await getDb().delete(t.declaredAbsences).where(eq(t.declaredAbsences.id, id));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -550,6 +640,7 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
       priority: s.priority,
       status: s.status,
       completedActivityId: s.completedActivityId ?? null,
+      absenceId: s.absenceId ?? null,
       rationale: s.rationale ?? null,
     })),
   );
@@ -631,6 +722,7 @@ function rowToSession(row: typeof t.plannedSessions.$inferSelect): PlannedSessio
     priority: row.priority,
     status: row.status as PlannedSession['status'],
     completedActivityId: row.completedActivityId ?? undefined,
+    absenceId: row.absenceId ?? undefined,
     rationale: row.rationale ?? undefined,
   };
 }

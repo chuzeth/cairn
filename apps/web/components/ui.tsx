@@ -1,6 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
-import type { Readiness, ReadinessSource } from '@/lib/api';
+import { frDate } from '@/lib/api';
+import type { DeclaredAbsence, Readiness, ReadinessComponent, ReadinessSource } from '@/lib/api';
 
 export function Card({
   title, hint, action, children, style,
@@ -122,11 +123,54 @@ export function Legend({ items }: { items: { color: string; label: string }[] })
   );
 }
 
+/** Nature d'une absence, en un mot. */
+export const ABSENCE_KIND_LABEL: Record<DeclaredAbsence['kind'], string> = {
+  chosen: 'Coupure',
+  illness: 'Maladie',
+  injury: 'Blessure',
+  unavailable: 'Indisponibilité',
+};
+
+/**
+ * Une absence déclarée, telle qu'elle doit se lire : sa période, les mots de
+ * l'athlète, et ce qu'elle a retiré du plan.
+ *
+ * La chute de charge qui suit est réelle et le modèle a raison de la mesurer.
+ * C'est cet encart qui l'empêche d'être lue comme un décrochage.
+ */
+export function AbsenceNotice({ absence, today }: { absence: DeclaredAbsence; today: string }) {
+  const phase =
+    absence.endDate < today ? 'terminée' : absence.startDate > today ? 'à venir' : 'en cours';
+  const n = absence.withdrawnSessions;
+  const plural = (n ?? 0) > 1 ? 's' : '';
+  return (
+    <div className="banner" data-tone="info" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 9 }}>
+      <div className="row-between">
+        <strong>
+          {ABSENCE_KIND_LABEL[absence.kind]} déclarée · {frDate(absence.startDate)} → {frDate(absence.endDate)}
+        </strong>
+        <Badge tone={phase === 'en cours' ? 'watch' : undefined}>{phase}</Badge>
+      </div>
+      <blockquote className="note-quote">{absence.reason}</blockquote>
+      <p className="tiny faint" style={{ margin: 0 }}>
+        {n == null
+          ? ''
+          : n > 0
+            ? `${n} séance${plural} retirée${plural} du plan : ni à faire, ni manquée${plural}. `
+            : 'Aucune séance du plan ne tombait sur cette période. '}
+        {absence.source === 'athlete' ? 'Tu l’as annoncée toi-même. ' : ''}
+        Ta charge chronique baisse sur cette période : c’est mesuré, et c’était prévu.
+      </p>
+    </div>
+  );
+}
+
 /** Provenance d'une composante de disponibilité, dite en trois mots. */
 export const READINESS_SOURCE_LABEL: Record<ReadinessSource, string> = {
   load: 'charge mesurée',
   declared: 'déclaré',
   partial: 'partiel',
+  baseline: 'vs ta norme',
   hrv: 'rMSSD',
   'resting-hr': 'FC repos',
   default: 'par défaut',
@@ -139,11 +183,24 @@ const BASIS_ROWS = [
   ['autonomic', 'Système autonome'],
 ] as const;
 
+/** Ce que le score n'a pas les moyens de regarder, nommé pour être réclamé. */
+export const MISSING_LABEL: Record<'subjective' | 'autonomic', string> = {
+  subjective: 'ton ressenti',
+  autonomic: 'ton système autonome',
+};
+
+/** Les composantes qui ne pèsent rien, faute de source. */
+export function unweighed(readiness: Readiness): ('subjective' | 'autonomic')[] {
+  return (['subjective', 'autonomic'] as const).filter((k) => (readiness.weights?.[k] ?? 0) === 0);
+}
+
 /**
- * Les quatre composantes de la disponibilité, chacune avec sa provenance.
+ * Les quatre composantes de la disponibilité, chacune avec sa provenance et
+ * le poids qu'elle a réellement pesé.
  *
- * Une barre hachurée signale une valeur par défaut : elle occupe la place
- * d'une mesure sans en être une. `before` affiche en plus ce qui a bougé.
+ * Ce poids n'est pas décoratif : une composante sans source pèse 0 et son poids
+ * nominal part aux autres, si bien que la même barre ne vaut pas la même chose
+ * d'un jour à l'autre. L'afficher est la seule façon de lire le score.
  */
 export function ReadinessBasis({ readiness, before }: { readiness: Readiness; before?: Readiness }) {
   return (
@@ -151,22 +208,38 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
       {BASIS_ROWS.map(([key, label]) => {
         const value = readiness.components[key] ?? 0;
         const source = readiness.sources[key];
-        const assumed = source === 'default';
-        const delta = before ? value - (before.components[key] ?? 0) : 0;
+        const weight = readiness.weights?.[key as ReadinessComponent] ?? 0;
+        // Deux états à ne pas confondre. Sans source, la composante ne pèse rien
+        // et sa barre reste vide : il n'y a rien à montrer. Une valeur par défaut
+        // qui pèse malgré tout — le cas où plus rien n'est mesuré nulle part —
+        // reste hachurée : elle occupe la place d'une mesure sans en être une.
+        const idle = weight === 0;
+        const assumed = !idle && source === 'default';
+        // Un écart ne se calcule pas contre une composante qui ne pesait rien :
+        // la comparaison ferait passer sa valeur de remplissage pour un état.
+        const wasIdle = before ? (before.weights?.[key as ReadinessComponent] ?? 0) === 0 : true;
+        const delta = before && !wasIdle ? value - (before.components[key] ?? 0) : 0;
         const changedSource = before && before.sources[key] !== source;
         return (
           <div className="basis-row" key={key}>
             <span className="basis-name">{label}</span>
-            <span className="basis-src" data-assumed={assumed}>
+            <span className="basis-src" data-assumed={assumed || idle}>
               {changedSource && <s className="faint">{READINESS_SOURCE_LABEL[before.sources[key]]}</s>}
               {READINESS_SOURCE_LABEL[source]}
+              <span className="basis-weight" title="poids de cette composante dans le score">
+                {Math.round(weight * 100)} %
+              </span>
             </span>
             <div className="basis-meter">
-              <div className="basis-fill" data-assumed={assumed} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+              <div
+                className="basis-fill"
+                data-assumed={assumed}
+                style={{ width: idle ? 0 : `${Math.max(0, Math.min(100, value))}%` }}
+              />
             </div>
             <span className="basis-num mono">
-              {Math.round(value)}
-              {delta !== 0 && (
+              {idle ? '—' : Math.round(value)}
+              {!idle && delta !== 0 && (
                 <span className="delta" data-dir={delta > 0 ? 'up' : 'down'} style={{ marginLeft: 5 }}>
                   {delta > 0 ? '+' : ''}{Math.round(delta)}
                 </span>

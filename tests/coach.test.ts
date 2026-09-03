@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { LAB_TEST_2025_07_24, PIERRE, type PlannedSession, type RaceGoal } from '@cairn/core';
+import {
+  LAB_TEST_2025_07_24, PIERRE,
+  type DeclaredAbsence, type PlannedSession, type RaceGoal,
+} from '@cairn/core';
 import { modelFromLabOnly, msToKmh } from '@cairn/physiology';
 import {
-  allocatePhases, assumedCtl, buildPeriodization, buildTrainingPlan, buildWeek,
-  evaluateAdjustments, mondayOf, taperWeeks, weeksBetween,
+  absenceCovering, allocatePhases, assumedCtl, buildPeriodization, buildTrainingPlan, buildWeek,
+  evaluateAdjustments, mondayOf, taperWeeks, weeksBetween, withdrawalsFor,
 } from '@cairn/coach';
 // La bibliothèque de séances est ré-exportée par l'index du paquet.
 import * as lib from '@cairn/coach';
@@ -240,6 +243,7 @@ describe('Règles d\'ajustement automatique', () => {
     ({
       today: { date: '2026-09-01', ctl: 50, atl: 55, tsb: -5, mechanicalTsb: 0, acwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
       readiness: { date: '2026-09-01', score: 75, verdict: 'green', components: {}, recommendation: '' },
+      absences: [],
       ...over,
     }) as never;
 
@@ -295,6 +299,105 @@ describe('Règles d\'ajustement automatique', () => {
     });
     const adj = evaluateAdjustments(state, [session({ date: '2026-09-02' })]);
     expect(adj.filter((a) => a.sessionId === 's1')).toHaveLength(1);
+  });
+});
+
+describe('Absences déclarées', () => {
+  const absence = (over: Partial<DeclaredAbsence> = {}): DeclaredAbsence => ({
+    id: 'abs1',
+    athleteId: 'pierre',
+    startDate: '2026-09-03',
+    endDate: '2026-09-13',
+    kind: 'chosen',
+    reason: 'Je coupe jusqu\'au 13, c\'était prévu.',
+    source: 'athlete',
+    declaredAt: '2026-09-03T07:00:00.000Z',
+    ...over,
+  });
+
+  const session = (over: Partial<PlannedSession>): PlannedSession => ({
+    id: 's1', athleteId: 'pierre', date: '2026-09-05', type: 'endurance',
+    title: 'Endurance', intent: '', blocks: [], plannedLoad: 60, plannedMechanicalLoad: 10,
+    plannedDurationS: 3600, priority: 'support', status: 'planned', ...over,
+  });
+
+  const stateWith = (absences: DeclaredAbsence[], over: Record<string, unknown> = {}) =>
+    ({
+      today: { date: '2026-09-14', ctl: 50, atl: 30, tsb: 20, mechanicalTsb: 5, acwr: 0.6, rampRate: -4, monotony: 1.1, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
+      readiness: { date: '2026-09-14', score: 80, verdict: 'green', components: {}, recommendation: '' },
+      absences,
+      ...over,
+    }) as never;
+
+  it('couvre ses deux bornes', () => {
+    const a = [absence()];
+    expect(absenceCovering(a, '2026-09-03')?.id).toBe('abs1');
+    expect(absenceCovering(a, '2026-09-13')?.id).toBe('abs1');
+    expect(absenceCovering(a, '2026-09-02')).toBeUndefined();
+    expect(absenceCovering(a, '2026-09-14')).toBeUndefined();
+  });
+
+  it('retire les séances de la période, et rien au-delà', () => {
+    const out = withdrawalsFor(absence(), [
+      session({ id: 'avant', date: '2026-09-02' }),
+      session({ id: 'dedans', date: '2026-09-08' }),
+      session({ id: 'apres', date: '2026-09-14' }),
+    ]);
+    expect(out.map((w) => w.sessionId)).toEqual(['dedans']);
+    expect(out[0]!.action).toBe('withdraw');
+    expect(out[0]!.absenceId).toBe('abs1');
+    // Le motif de l'athlète voyage avec le retrait : c'est lui qu'on relira.
+    expect(out[0]!.reason).toContain('Je coupe jusqu\'au 13');
+  });
+
+  it('ne retire ni un jour de repos ni ce qui a réellement eu lieu', () => {
+    const out = withdrawalsFor(absence(), [
+      session({ id: 'repos', date: '2026-09-06', type: 'rest' }),
+      session({ id: 'faite', date: '2026-09-07', status: 'completed' }),
+      session({ id: 'remplacee', date: '2026-09-09', status: 'replaced' }),
+      session({ id: 'partielle', date: '2026-09-10', status: 'partial' }),
+    ]);
+    expect(out).toHaveLength(0);
+  });
+
+  it('répare une séance déjà comptée manquée sur la période', () => {
+    const out = withdrawalsFor(absence(), [session({ id: 'faussement_manquee', status: 'missed' })]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.action).toBe('withdraw');
+  });
+
+  it('empêche la règle « séance manquée » de se déclencher sur une absence annoncée', () => {
+    const sessions = [
+      session({ id: 'coupure', date: '2026-09-08', type: 'tempo' }),
+      session({ id: 'hors_coupure', date: '2026-09-01', type: 'tempo' }),
+    ];
+    const adj = evaluateAdjustments(stateWith([absence()]), sessions);
+    const byId = new Map(adj.map((a) => [a.sessionId, a]));
+    expect(byId.get('coupure')!.rule).toBe('declared_absence');
+    expect(byId.get('hors_coupure')!.rule).toBe('missed_session');
+    // Onze jours annoncés ne produisent aucune faute : c'est tout l'enjeu.
+    expect(adj.filter((a) => a.rule === 'missed_session' && a.date >= '2026-09-03')).toHaveLength(0);
+  });
+
+  it('prime sur les autres règles : une séance retirée n\'est pas allégée', () => {
+    const state = stateWith([absence({ startDate: '2026-09-14', endDate: '2026-09-24' })], {
+      today: { date: '2026-09-14', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: -30, acwr: 1.8, rampRate: 12, monotony: 2.5, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
+      readiness: { date: '2026-09-14', score: 25, verdict: 'red', components: {}, recommendation: '' },
+    });
+    const adj = evaluateAdjustments(state, [session({ id: 'demain', date: '2026-09-15', type: 'downhill', plannedMechanicalLoad: 60 })]);
+    expect(adj).toHaveLength(1);
+    expect(adj[0]!.rule).toBe('declared_absence');
+  });
+
+  it('ne décale pas une séance clef à cause d\'une séance retirée', () => {
+    // Sans exclusion, la séance du 16 serait repoussée pour s'espacer d'une
+    // séance du 15 que plus personne n'a l'intention de faire.
+    const state = stateWith([absence({ startDate: '2026-09-15', endDate: '2026-09-15' })]);
+    const adj = evaluateAdjustments(state, [
+      session({ id: 'retiree', date: '2026-09-15', priority: 'key' }),
+      session({ id: 'apres', date: '2026-09-16', priority: 'key' }),
+    ]);
+    expect(adj.some((a) => a.sessionId === 'apres')).toBe(false);
   });
 });
 

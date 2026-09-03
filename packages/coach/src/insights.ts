@@ -206,6 +206,11 @@ export async function generateWeeklyReview(athleteId: string): Promise<CoachInsi
       .slice(0, 7)
       .map((x) => ({ date: x.date, titre: x.title, charge: x.plannedLoad })),
     historique_hebdomadaire: s.weeklyTotals.slice(-6),
+    // Sans cette ligne, une semaine à zéro se raconte comme un abandon. La
+    // chute de charge est réelle ; ce qui manquait, c'est qu'elle était prévue.
+    absences_declarees: s.absences
+      .filter((a) => a.endDate >= week.weekStart)
+      .map((a) => ({ du: a.startDate, au: a.endDate, nature: a.kind, motif: a.reason, source: a.source })),
   };
 
   try {

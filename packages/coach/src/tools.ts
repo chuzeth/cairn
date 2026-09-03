@@ -1,9 +1,10 @@
-import type { CourseProfile, PlannedSession, RaceGoal, SessionBlock } from '@cairn/core';
+import type { AbsenceKind, CourseProfile, PlannedSession, RaceGoal, SessionBlock } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   describeZone, formatClock, formatDuration, formatPace, goalProbability,
   interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
 } from '@cairn/physiology';
+import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import { renderSession, sessionTotals } from './sessionLibrary.js';
@@ -47,6 +48,7 @@ const num = (description: string, extra: Record<string, unknown> = {}) => ({ typ
 const bool = (description: string) => ({ type: 'boolean', description });
 
 const ZONES = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
+const ABSENCE_KINDS: AbsenceKind[] = ['chosen', 'illness', 'injury', 'unavailable'];
 
 const pair = (description: string) => ({
   type: 'array',
@@ -145,7 +147,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_plan',
     description:
-      "Plan d'entraînement en cours : phases, charges hebdomadaires cibles, et le détail des séances sur la fenêtre demandée avec leur statut (prévue, faite, manquée).",
+      "Plan d'entraînement en cours : phases, charges hebdomadaires cibles, les absences déclarées qui recouvrent la fenêtre, et le détail des séances avec leur statut — prévue, faite, manquée, ou retirée par une absence annoncée.",
     input_schema: obj({
       from: str('Date de début, YYYY-MM-DD. Par défaut : aujourd\'hui.'),
       weeks: num('Nombre de semaines à retourner (défaut 3).'),
@@ -246,13 +248,39 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_check_ins',
     description:
-      'Relevés quotidiens déclarés : sommeil, courbatures, stress, motivation, FC de repos, HRV, masse corporelle. Ces données subjectives pèsent lourd dans le score de disponibilité.',
+      'Relevés quotidiens déclarés : fatigue perçue, sommeil, courbatures, stress, motivation, FC de repos, HRV, masse corporelle. Ces données subjectives pèsent lourd dans le score de disponibilité.',
     input_schema: obj({ from: str('Date de début, YYYY-MM-DD. Par défaut : il y a 30 jours.') }),
+  },
+  {
+    name: 'declare_absence',
+    description:
+      "Enregistre une absence que Pierre a annoncée : une période datée pendant laquelle il ne s'entraînera pas — coupure choisie, maladie, blessure, déplacement. Les séances que la période recouvre sont retirées du plan : ni à faire, ni manquées, et la règle « séance manquée » ne se déclenche pas dessus. " +
+      "Procédure : tu interprètes la phrase, tu lui soumets les dates que tu en as comprises avec `preview` pour lui montrer les séances concernées, tu attends sa confirmation, puis tu enregistres. N'enregistre jamais une absence qu'il n'a pas confirmée. " +
+      "`reason` reprend ses mots, pas ta reformulation. " +
+      "Le plan n'est pas reconstruit : la charge qui suit la coupure est une décision d'entraînement, à prendre avec lui ensuite (`rebuild_plan`). La chute de CTL, elle, est réelle et reste mesurée — ne la raconte pas comme un abandon.",
+    input_schema: obj(
+      {
+        start_date: str('Premier jour sans entraînement, YYYY-MM-DD, inclus.'),
+        end_date: str('Dernier jour sans entraînement, YYYY-MM-DD, inclus. « Je coupe jusqu\'au 13 » se déclare avec le 13.'),
+        kind: str(
+          "Nature de l'absence : « chosen » coupure voulue (repos choisi, assimilation), « illness » maladie, « injury » blessure, « unavailable » empêchement extérieur (travail, voyage).",
+          { enum: ['chosen', 'illness', 'injury', 'unavailable'] },
+        ),
+        reason: str("La raison telle que Pierre l'a formulée, mot pour mot."),
+        from_check_in_date: str(
+          "Date du point du jour d'où vient la phrase, YYYY-MM-DD. La note cesse alors d'être en attente dans l'application.",
+        ),
+        preview: bool(
+          "Si vrai, ne rien enregistrer : renvoyer seulement les séances que la période recouvre, pour les lui soumettre avant confirmation.",
+        ),
+      },
+      ['start_date', 'end_date', 'kind', 'reason'],
+    ),
   },
   {
     name: 'update_availability',
     description:
-      "Met à jour les contraintes de disponibilité : jours d'entraînement, jours de sortie longue, volume horaire hebdomadaire maximal, nombre de séances de qualité, dénivelé accessible. Le plan doit être reconstruit ensuite pour en tenir compte.",
+      "Met à jour les contraintes de disponibilité : jours d'entraînement, jours de sortie longue, volume horaire hebdomadaire maximal, nombre de séances de qualité, dénivelé accessible. Ces contraintes décrivent une semaine type et ne portent aucune date : une interruption datée se déclare avec `declare_absence`. Le plan doit être reconstruit ensuite pour en tenir compte.",
     input_schema: obj({
       available_days: { type: 'array', items: { type: 'number' }, description: "Jours disponibles (0 = dimanche … 6 = samedi)." },
       long_run_days: { type: 'array', items: { type: 'number' }, description: 'Jours possibles pour la sortie longue.' },
@@ -285,6 +313,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 const dayMs = 86_400_000;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
+const isDay = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+const midnight = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 const arg = <T>(input: Record<string, unknown>, key: string): T | undefined => input[key] as T | undefined;
 
 export interface ToolResult {
@@ -521,12 +551,25 @@ export async function executeTool(
       const to = iso(new Date(new Date(`${from}T00:00:00Z`).getTime() + weeks * 7 * dayMs));
       const plan = await db.getActivePlan(athleteId);
       const sessions = await db.listPlannedSessions(athleteId, from, to);
+      const absences = await db.listAbsences(athleteId, { from, to });
 
       return {
         summary: plan
           ? `Plan actif — ${sessions.length} séance(s) du ${from} au ${to}`
           : "Aucun plan actif : en créer un via rebuild_plan.",
         content: {
+          // Une séance au statut `withdrawn` n'a pas été manquée : elle tombait
+          // dans une absence annoncée. Sans ces lignes, le statut se lirait
+          // comme un abandon.
+          absences_declarees: absences.map((a) => ({
+            id: a.id,
+            du: a.startDate,
+            au: a.endDate,
+            nature: a.kind,
+            motif: a.reason,
+            source: a.source,
+            declaree_le: a.declaredAt.slice(0, 10),
+          })),
           plan_actif: plan
             ? {
                 id: plan.plan.id,
@@ -836,6 +879,116 @@ export async function executeTool(
       return {
         summary: `${checkIns.length} relevé(s) depuis le ${from}`,
         content: checkIns,
+      };
+    }
+
+    case 'declare_absence': {
+      const startDate = arg<string>(input, 'start_date');
+      const endDate = arg<string>(input, 'end_date');
+      const reason = arg<string>(input, 'reason');
+      const kind = arg<AbsenceKind>(input, 'kind');
+      if (!startDate || !endDate) throw new Error('start_date et end_date requis.');
+      if (!isDay(startDate) || !isDay(endDate)) throw new Error('Dates attendues au format YYYY-MM-DD.');
+      if (endDate < startDate) throw new Error('end_date ne peut pas précéder start_date.');
+      if (!reason?.trim()) {
+        throw new Error("reason requis : une absence se retient avec les mots de l'athlète.");
+      }
+      if (!kind || !ABSENCE_KINDS.includes(kind)) {
+        throw new Error(`kind attendu parmi ${ABSENCE_KINDS.join(', ')} — reçu « ${String(kind)} ».`);
+      }
+
+      const covered = await db.listPlannedSessions(athleteId, startDate, endDate);
+      const days = Math.round((midnight(endDate) - midnight(startDate)) / dayMs) + 1;
+      const describe = (s: PlannedSession) => ({
+        id: s.id,
+        date: s.date,
+        titre: s.title,
+        type: s.type,
+        priorite: s.priority,
+        charge: s.plannedLoad,
+        statut: s.status,
+      });
+
+      if (arg<boolean>(input, 'preview')) {
+        // La règle de retrait est la même que celle qui s'appliquera : ce qu'il
+        // confirme est exactement ce qui sera fait.
+        const would = withdrawalsFor(
+          { id: 'preview', athleteId, startDate, endDate, kind, reason, source: 'athlete', declaredAt: '' },
+          covered,
+        );
+        const ids = new Set(would.map((w) => w.sessionId));
+        return {
+          summary: `Aperçu — ${would.length} séance(s) seraient retirées du ${startDate} au ${endDate}`,
+          content: {
+            enregistre: false,
+            periode: { du: startDate, au: endDate, jours: days },
+            seances_retirees: covered.filter((s) => ids.has(s.id)).map(describe),
+            seances_conservees: covered.filter((s) => !ids.has(s.id)).map(describe),
+            a_faire: "Soumets ces dates et ces séances à Pierre. S'il confirme, rappelle cet outil sans preview.",
+          },
+        };
+      }
+
+      // Un appel rejoué — reprise après erreur, message répété — ne doit pas
+      // créer un second fait pour la même période : la deuxième absence ne
+      // retirerait rien et se lirait comme deux coupures.
+      const existing = (await db.listAbsences(athleteId, { from: startDate, to: endDate })).find(
+        (a) => a.startDate === startDate && a.endDate === endDate,
+      );
+      if (existing) {
+        return {
+          summary: `Absence déjà enregistrée du ${startDate} au ${endDate} (${existing.id}) — rien de nouveau`,
+          content: {
+            absence: { id: existing.id, du: existing.startDate, au: existing.endDate, motif: existing.reason },
+            enregistre: false,
+            rappel: "Cette période est déjà déclarée. Pour la corriger, il faudra la remplacer, pas l'empiler.",
+          },
+        };
+      }
+
+      const checkInDate = arg<string>(input, 'from_check_in_date');
+      const absence = await db.createAbsence({
+        athleteId,
+        startDate,
+        endDate,
+        kind,
+        reason: reason.trim(),
+        // L'outil n'existe que pour retenir ce que l'athlète a annoncé.
+        source: 'athlete',
+        checkInDate,
+      });
+
+      const withdrawals = withdrawalsFor(absence, covered);
+      await applyAdjustments(athleteId, withdrawals, 'declared_absence');
+
+      if (checkInDate) {
+        await db.markCheckInNoteHandled(
+          athleteId,
+          checkInDate,
+          `Absence déclarée du ${startDate} au ${endDate} — ${withdrawals.length} séance(s) retirée(s).`,
+        );
+      }
+
+      const withdrawnIds = new Set(withdrawals.map((w) => w.sessionId));
+      return {
+        summary: `Absence déclarée du ${startDate} au ${endDate} — ${withdrawals.length} séance(s) retirée(s)`,
+        content: {
+          absence: {
+            id: absence.id,
+            du: absence.startDate,
+            au: absence.endDate,
+            jours: days,
+            nature: absence.kind,
+            motif: absence.reason,
+            source: absence.source,
+          },
+          seances_retirees: covered.filter((s) => withdrawnIds.has(s.id)).map(describe),
+          seances_inchangees: covered.filter((s) => !withdrawnIds.has(s.id)).map(describe),
+          note_traitee: checkInDate ?? null,
+          rappel:
+            'Ces séances ne sont ni à faire ni manquées. Le plan n\'a pas été reconstruit : ' +
+            'ce qui suit la coupure se décide avec Pierre.',
+        },
       };
     }
 

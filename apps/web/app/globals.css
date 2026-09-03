@@ -275,6 +275,9 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .basis-src { font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); text-align: right; }
 .basis-src[data-assumed="true"] { color: var(--watch); }
 .basis-src s { margin-right: 6px; opacity: 0.6; }
+/* Le poids appliqué, collé à la provenance : une barre ne se lit pas sans lui. */
+.basis-weight { margin-left: 7px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.basis-src[data-assumed="true"] .basis-weight { color: inherit; }
 .basis-meter { height: 5px; border-radius: 3px; background: var(--bg-inset); overflow: hidden; align-self: center; }
 .basis-fill { height: 100%; background: var(--accent); opacity: 0.75; transition: width 400ms ease; }
 .basis-fill[data-assumed="true"] {
@@ -307,8 +310,11 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .q-option {
   min-height: 46px;
   border: 1px solid var(--border-strong); background: var(--bg-inset); color: var(--text-dim);
-  border-radius: var(--radius-sm); font-size: 14px; font-weight: 550; cursor: pointer;
-  padding: 0 2px;
+  border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 550; cursor: pointer;
+  padding: 4px 3px;
+  /* Un libellé vaut mieux qu'un chiffre — encore faut-il qu'il tienne. */
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  line-height: 1.2; overflow-wrap: anywhere; hyphens: auto;
   transition: background 120ms, border-color 120ms, color 120ms;
   /* Au pouce, une frappe doit choisir une réponse, pas sélectionner un libellé. */
   -webkit-tap-highlight-color: transparent;
@@ -320,7 +326,6 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   background: color-mix(in srgb, var(--accent) 16%, var(--bg-inset));
   border-color: var(--accent); color: var(--text);
 }
-.q-anchors { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); margin-top: 6px; }
 
 .q-extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .extra { display: block; margin: 0; text-transform: none; letter-spacing: 0; }

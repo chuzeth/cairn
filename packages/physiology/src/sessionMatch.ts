@@ -49,9 +49,15 @@ export const MATERIAL_DEVIATION_PCT = { duration: 40, load: 50, intensity: 15 } 
  * `missed` reste éligible : les règles de charge constatent l'absence dès le
  * lendemain, alors qu'une activité peut n'arriver de Strava qu'ensuite. Refuser
  * la reprise laisserait la journée « manquée » alors qu'elle a été courue.
+ *
+ * `withdrawn` ne l'est pas : la séance a été retirée du plan par une absence
+ * déclarée, et plus rien n'est prescrit ce jour-là. Une sortie faite pendant
+ * une coupure est une sortie de plus, pas une prescription honorée — la
+ * rattacher ferait remonter une conformité à un plan qui ne demandait rien.
  */
 function isEligible(session: PlannedSession, realized: RealizedEffort): boolean {
   if (session.status === 'cancelled' || session.status === 'moved') return false;
+  if (session.status === 'withdrawn') return false;
   // Une place déjà tenue par une *autre* activité ne se reprend pas : la première
   // sortie du jour garde sa séance, la seconde reste une sortie en plus.
   if (session.completedActivityId != null && session.completedActivityId !== realized.activityId) return false;

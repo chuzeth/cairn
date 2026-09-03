@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { blockDuration, duration, frDate, get, todayIso, type PlanResponse, type SessionRow } from '@/lib/api';
-import { Badge, Card, ErrorBox, Loading } from '@/components/ui';
+import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
 
 const TYPE_LABELS: Record<string, string> = {
   recovery: 'Récupération', endurance: 'Endurance', long_run: 'Sortie longue',
@@ -85,11 +85,18 @@ export default function PlanPage() {
         <Link href="/coach" className="btn">Ajuster avec le coach</Link>
       </div>
 
+      {data.absences.map((a) => (
+        <AbsenceNotice key={a.id} absence={a} today={today} />
+      ))}
+
       <div className="stack">
         {weeks.map(([weekStart, sessions]) => {
-          const total = sessions.reduce((a, s) => a + s.plannedLoad, 0);
-          const totalTime = sessions.reduce((a, s) => a + s.plannedDurationS, 0);
-          const totalVert = sessions.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
+          // Une séance retirée ne pèse plus rien : la compter dans le total de la
+          // semaine ferait lire une charge que personne n'attend plus.
+          const held = sessions.filter((s) => s.status !== 'withdrawn');
+          const total = held.reduce((a, s) => a + s.plannedLoad, 0);
+          const totalTime = held.reduce((a, s) => a + s.plannedDurationS, 0);
+          const totalVert = held.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
           const isCurrent = weekStart === weekStartOf(today);
           const days = Array.from({ length: 7 }, (_, i) =>
             new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + i * 86_400_000).toISOString().slice(0, 10),
@@ -134,7 +141,7 @@ export default function PlanPage() {
                           <div style={{
                             borderLeft: `2.5px solid ${TYPE_COLORS[s.type] ?? 'var(--border-strong)'}`,
                             paddingLeft: 6,
-                            opacity: s.status === 'missed' ? 0.45 : 1,
+                            opacity: s.status === 'missed' || s.status === 'withdrawn' ? 0.45 : 1,
                           }}>
                             <div className="tiny" style={{ fontWeight: 600, lineHeight: 1.25 }}>
                               {TYPE_LABELS[s.type] ?? s.type}
@@ -147,6 +154,9 @@ export default function PlanPage() {
                             {s.status === 'completed' && <span className="tiny" style={{ color: 'var(--good)' }}>✓ faite</span>}
                             {s.status === 'replaced' && <span className="tiny" style={{ color: 'var(--warn)' }}>remplacée</span>}
                             {s.status === 'missed' && <span className="tiny" style={{ color: 'var(--warn)' }}>manquée</span>}
+                            {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait
+                                annoncée. Le ton neutre est le fond de l'affaire. */}
+                            {s.status === 'withdrawn' && <span className="tiny faint">retirée</span>}
                           </div>
                         </button>
                       ))}
@@ -208,7 +218,8 @@ export default function PlanPage() {
 
                   {s.rationale && (
                     <div className="tiny faint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <strong>Pourquoi ici :</strong> {s.rationale}
+                      <strong>{s.status === 'withdrawn' ? 'Pourquoi retirée :' : 'Pourquoi ici :'}</strong>{' '}
+                      {s.rationale}
                     </div>
                   )}
                 </div>

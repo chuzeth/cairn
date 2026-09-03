@@ -5,7 +5,10 @@ import {
   duration, frDate, get, post, signed, shortDate,
   type ActivityRow, type InsightRow, type PmcResponse, type SessionRow, type StateResponse,
 } from '@/lib/api';
-import { Badge, Card, ErrorBox, Loading, Metric, ReadinessBasis, ThreeZoneBar } from '@/components/ui';
+import {
+  AbsenceNotice, Badge, Card, ErrorBox, Loading, Metric, MISSING_LABEL,
+  ReadinessBasis, ThreeZoneBar, unweighed,
+} from '@/components/ui';
 import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
 
 interface Health {
@@ -24,6 +27,7 @@ export default function Dashboard() {
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [filing, setFiling] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -57,26 +61,43 @@ export default function Dashboard() {
     }
   };
 
+  // Classer une note, c'est en avoir fait quelque chose — même quand ce quelque
+  // chose est « rien à en tirer ». Sans ce geste, la seule façon de faire taire
+  // le bandeau serait d'effacer ce qu'on a écrit.
+  const fileNote = async (date: string) => {
+    setFiling(date);
+    try {
+      await post(`/api/checkins/${date}/note/handled`, {});
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFiling(null);
+    }
+  };
+
   if (error && !state) return <ErrorBox error={error} onRetry={load} />;
   if (!state || !pmc) return <Loading label="Chargement de ton état de forme…" />;
 
   const today = state.today;
-  const upcoming = sessions.filter((s) => s.date >= state.today.date && s.type !== 'rest').slice(0, 4);
+  // Une séance retirée par une absence déclarée n'est pas à venir : elle n'est
+  // plus au programme. L'annoncer ici demanderait de faire ce qu'on a accepté
+  // qu'il ne fasse pas.
+  const upcoming = sessions
+    .filter((s) => s.date >= state.today.date && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled')
+    .slice(0, 4);
   const nextRace = state.upcomingRaces[0];
+  // Les absences encore vivantes : en cours ou à venir.
+  const absences = state.absences.filter((a) => a.endDate >= today.date);
 
   const tsbTone = today.tsb > 5 ? 'good' : today.tsb > -15 ? undefined : today.tsb > -28 ? 'watch' : 'warn';
   const mechTone = today.mechanicalTsb > 0 ? 'good' : today.mechanicalTsb > -18 ? undefined : 'warn';
 
-  // Ce qui manque au score, nommé. Un cercle qui ne dit pas sur quoi il repose
-  // laisse croire qu'une valeur par défaut est une mesure.
+  // Ce que le score ne regarde pas, nommé. Il n'invente plus rien — ce qui n'a
+  // pas de source ne pèse rien — mais un score étroit ne dit pas ce que dit un
+  // score complet, et l'athlète a le droit de savoir lequel des deux il lit.
   const readiness = state.readiness;
-  const assumedPct = Math.round(readiness.assumedShare * 100);
-  const missing = [
-    readiness.sources.subjective === 'default'
-      ? 'ton ressenti'
-      : readiness.sources.subjective === 'partial' ? 'une partie de ton ressenti' : null,
-    readiness.sources.autonomic === 'default' ? 'ton système autonome' : null,
-  ].filter(Boolean) as string[];
+  const missing = unweighed(readiness).map((k) => MISSING_LABEL[k]);
 
   return (
     <>
@@ -95,6 +116,32 @@ export default function Dashboard() {
           <Link href="/coach" className="btn" data-variant="primary">Parler au coach</Link>
         </div>
       </div>
+
+      {state.pendingNotes.length > 0 && (
+        <div className="banner" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+          <strong>Ce que tu as écrit, et dont rien n&apos;a encore été fait.</strong>
+          {state.pendingNotes.map((n) => (
+            <div key={n.date} style={{ marginTop: 8 }}>
+              <div className="tiny faint" style={{ marginBottom: 4 }}>{frDate(n.date, { weekday: true })}</div>
+              <blockquote className="note-quote">{n.notes}</blockquote>
+              <div className="row wrap" style={{ gap: 8, marginTop: 8 }}>
+                <Link href="/coach" className="btn" data-variant="primary">En parler au coach</Link>
+                <button className="btn" onClick={() => fileNote(n.date)} disabled={filing === n.date}>
+                  {filing === n.date ? <><span className="spinner" /> …</> : 'Classer sans suite'}
+                </button>
+              </div>
+            </div>
+          ))}
+          <p className="tiny faint" style={{ margin: '10px 0 0' }}>
+            Une note n&apos;entre dans aucun calcul et n&apos;a donc que cette place-là. Elle reste ici
+            tant qu&apos;il n&apos;en sort rien — une absence déclarée, une décision, ou un classement.
+          </p>
+        </div>
+      )}
+
+      {absences.map((a) => (
+        <AbsenceNotice key={a.id} absence={a} today={today.date} />
+      ))}
 
       {health && !health.stravaConnected && (
         <div className="banner">
@@ -204,13 +251,21 @@ export default function Dashboard() {
 
           {missing.length > 0 && (
             <p className="tiny" style={{ color: 'var(--watch)', margin: '12px 0 0' }}>
-              {assumedPct} % de ce score n&apos;est pas mesuré : il manque {missing.join(' et ')}.
-              Le point du jour comble ce manque.
+              Ce score ne regarde pas {missing.join(' ni ')} : faute de relevé,{' '}
+              {missing.length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une
+              moyenne. Le point du jour {missing.length > 1 ? 'leur rend leur' : 'lui rend son'} poids.
             </p>
           )}
 
-          {state.checkIn?.notes && (
-            <blockquote className="note-quote" style={{ marginTop: 12, fontSize: 13 }}>{state.checkIn.notes}</blockquote>
+          {/* La note en attente est déjà en haut de page ; ici ne reste que celle
+              dont quelque chose a été fait, avec ce qui en a été fait. */}
+          {state.checkIn?.notes && state.checkIn.noteHandledAt && (
+            <blockquote className="note-quote" style={{ marginTop: 12, fontSize: 13 }}>
+              {state.checkIn.notes}
+              {state.checkIn.noteHandledAs && (
+                <div className="tiny faint" style={{ marginTop: 6 }}>→ {state.checkIn.noteHandledAs}</div>
+              )}
+            </blockquote>
           )}
 
           <Link

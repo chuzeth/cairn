@@ -1,5 +1,5 @@
 import type {
-  Activity, ActivityAnalysis, AthleteProfile, DailyCheckIn, PhysiologyModel,
+  Activity, ActivityAnalysis, AthleteProfile, DailyCheckIn, DeclaredAbsence, PhysiologyModel,
   PmcSeries, RaceGoal, ReadinessScore, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import * as db from '@cairn/db';
@@ -60,7 +60,22 @@ export interface AthleteState {
   readiness: ReadinessScore;
   /** Le point du jour, s'il a été fait. Sa note libre n'est pas notée : elle est lue. */
   todayCheckIn?: DailyCheckIn;
+  /**
+   * Notes libres dont rien n'a encore été fait, la plus récente d'abord, sur
+   * les soixante derniers jours.
+   *
+   * Une note n'entre dans aucun calcul : si personne ne la reprend, elle dort
+   * dans sa colonne. « Je coupe dix jours » mérite mieux que d'être lu une
+   * fois puis oublié.
+   */
+  pendingNotes: { date: string; notes: string }[];
   plan: { plan: TrainingPlan; weeks: TrainingWeek[] } | null;
+  /**
+   * Absences déclarées encore vivantes : en cours, à venir, ou assez récentes
+   * pour recouvrir des séances que les règles vont juger. Sans elles, une
+   * coupure annoncée ne se distingue pas d'un mois d'entraînements manqués.
+   */
+  absences: DeclaredAbsence[];
   upcomingRaces: RaceGoal[];
   recentActivities: Activity[];
   /** Courbe vitesse-durée corrigée de la pente, enveloppe 90 jours. */
@@ -260,6 +275,8 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const monotony = last(pmc.monotony)?.value ?? 0;
 
   const plan = await db.getActivePlan(athleteId);
+  // Même fenêtre que celle où les règles jugent des séances passées.
+  const absences = await db.listAbsences(athleteId, { from: daysAgo(60) });
   const upcomingRaces = await db.listRaceGoals(athleteId, today);
   const recentActivities = await db.listActivities(athleteId, { from: daysAgo(45), limit: 60 });
 
@@ -306,7 +323,12 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     },
     readiness,
     todayCheckIn: checkIns.find((c) => c.date === today),
+    pendingNotes: checkIns
+      .filter((c) => c.notes?.trim() && !c.noteHandledAt)
+      .map((c) => ({ date: c.date, notes: c.notes as string }))
+      .reverse(),
     plan,
+    absences,
     upcomingRaces,
     recentActivities,
     speedCurve,
