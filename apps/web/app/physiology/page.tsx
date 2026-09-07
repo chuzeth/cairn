@@ -21,6 +21,21 @@ const PROVENANCE_TONE: Record<string, string | undefined> = {
   lab: 'good', field: 'metabolic', blended: undefined, default: 'watch',
 };
 
+const DIRECTIVE_LABELS: Record<string, string> = {
+  session_duration: 'Durée de séance imposée',
+  success_criterion: 'Critère de réussite',
+  weekly_frequency: 'Fréquence hebdomadaire',
+  cadence_target: 'Cible de cadence',
+  interval_policy: 'Politique de fractionné',
+};
+
+const AMBITION_LABELS: Record<string, string> = {
+  trail_long: 'trail long',
+  trail_court: 'trail court',
+  route: 'route',
+  ultra: 'ultra',
+};
+
 /** Convertit « 5 min », « 1 h », « 30 s » en secondes, pour retracer les courbes. */
 function parseDurationLabel(label: string): number {
   const m = /^([\d.]+)\s*(s|min|h)$/.exec(label.trim());
@@ -89,6 +104,33 @@ export default function PhysiologyPage() {
           {rebuilding ? <><span className="spinner" /> Recalcul…</> : 'Recalculer le modèle'}
         </button>
       </div>
+
+      {/* L'ambition n'est pas une course : elle n'a pas de date et ne se coche
+          pas. Elle décide de ce que le plan privilégie, donc elle se lit ici,
+          au-dessus des chiffres qu'elle hiérarchise. */}
+      {state.athlete.ambition && (
+        <Card style={{ marginBottom: 14 }}>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'baseline' }}>
+            <strong>Ambition — {AMBITION_LABELS[state.athlete.ambition.format] ?? state.athlete.ambition.format}</strong>
+            <span className="tiny faint">au dossier depuis le {state.athlete.ambition.since}</span>
+          </div>
+          <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+            {state.athlete.ambition.origin.map((o, i) => (
+              <div key={i} className="small muted">
+                « {o.quote} »
+                <span className="tiny faint">
+                  {' — '}{o.source === 'lab_test' ? o.author ?? "test d'effort" : 'toi'}, {o.date}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="tiny faint" style={{ marginTop: 8, marginBottom: 0 }}>
+            Sur ce format, c'est la durabilité qui décide — la perte de rendement par heure et par
+            1 000 m de D+. Le plan privilégie donc les efforts assez longs pour la construire, et
+            assez longs pour la mesurer.
+          </p>
+        </Card>
+      )}
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
         <Card>
@@ -232,6 +274,35 @@ export default function PhysiologyPage() {
               <p className="small muted" style={{ margin: 0 }}>{lab.interpretation}</p>
             </div>
           )}
+        </Card>
+      )}
+
+      {/* Ce que le planificateur retient de cette prose. Sans cette liste,
+          l'interprétation est un texte qu'on lit ; avec elle, c'est un texte
+          qui agit — et l'athlète voit lequel de ses passages agit. */}
+      {state.directives?.length > 0 && (
+        <Card
+          title="Ce que le plan honore du dossier"
+          hint="Chaque consigne porte l'extrait qui la fonde."
+          style={{ marginTop: 14 }}
+        >
+          <div className="stack" style={{ gap: 12 }}>
+            {state.directives.map((d) => (
+              <div key={d.id} style={{ borderLeft: '2px solid var(--border-strong)', paddingLeft: 10 }}>
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <strong className="small">{DIRECTIVE_LABELS[d.kind] ?? d.kind}</strong>
+                  <Badge>{d.origin.source === 'lab_test' ? "test d'effort" : 'notes du dossier'}</Badge>
+                  <span className="tiny mono faint">{d.origin.date}</span>
+                </div>
+                <div className="small muted" style={{ marginTop: 3 }}>« {d.origin.quote} »</div>
+                {d.derived && (
+                  <div className="tiny faint" style={{ marginTop: 3 }}>
+                    Part du planificateur : {d.derived}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </Card>
       )}
     </>

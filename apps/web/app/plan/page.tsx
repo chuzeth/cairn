@@ -1,7 +1,10 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { blockDuration, duration, frDate, get, todayIso, type PlanResponse, type SessionRow } from '@/lib/api';
+import {
+  blockDuration, duration, frDate, get, todayIso,
+  type DirectiveOriginRow, type PlanResponse, type SessionRow,
+} from '@/lib/api';
 import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
 
 const TYPE_LABELS: Record<string, string> = {
@@ -18,6 +21,20 @@ const TYPE_COLORS: Record<string, string> = {
   downhill: 'var(--mechanical)', race_pace: 'var(--z3)', strength: 'var(--text-faint)',
   race: 'var(--good)', rest: 'var(--border-strong)',
 };
+
+const CRITERION_LABELS: Record<string, string> = {
+  hr_drift: 'pas de dérive cardiaque (Pa:HR) sur la séance',
+};
+
+/** Nomme le document d'où l'extrait est tiré, et sa date. */
+function originLabel(o: DirectiveOriginRow): string {
+  const what =
+    o.source === 'lab_test' ? "test d'effort" : o.source === 'athlete_notes' ? 'notes du dossier' : 'toi';
+  return `${what}, ${frDate(o.date)}`;
+}
+
+/** Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. */
+const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v)}`;
 
 function weekStartOf(date: string): string {
   const d = new Date(`${date}T00:00:00Z`);
@@ -78,12 +95,28 @@ export default function PlanPage() {
         <div>
           <h1 className="page-title">Plan d'entraînement</h1>
           <p className="page-sub">
-            TSB visé le jour de la course : {data.plan.targetRaceDayTsb > 0 ? '+' : ''}{data.plan.targetRaceDayTsb}
+            TSB visé le jour de la course : {signed(data.plan.targetRaceDayTsb)}
+            {/* La cible seule est une intention. Ce que le plan en fait se mesure. */}
+            {data.plan.projectedRaceDayTsb != null && (
+              <> · le plan y amène {signed(data.plan.projectedRaceDayTsb)}</>
+            )}
             {' · '}{data.sessions.length} séances sur {weeks.length} semaines
           </p>
         </div>
         <Link href="/coach" className="btn">Ajuster avec le coach</Link>
       </div>
+
+      {data.plan.raceDayTsbShortfall && (
+        <div className="banner" data-tone="warn" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 9 }}>
+          <strong>
+            La cible d’affûtage n’est pas atteinte
+            {data.plan.projectedRaceDayTsb != null && (
+              <> : {signed(data.plan.projectedRaceDayTsb)} au lieu de {signed(data.plan.targetRaceDayTsb)}</>
+            )}
+          </strong>
+          <p className="tiny faint" style={{ margin: 0 }}>{data.plan.raceDayTsbShortfall}</p>
+        </div>
+      )}
 
       {data.absences.map((a) => (
         <AbsenceNotice key={a.id} absence={a} today={today} />
@@ -182,6 +215,22 @@ export default function PlanPage() {
                   </div>
                   <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
 
+                  {s.successCriteria?.map((c, i) => (
+                    <div
+                      key={i}
+                      className="small"
+                      style={{
+                        marginTop: 8, padding: '8px 10px', borderRadius: 6,
+                        background: 'color-mix(in srgb, var(--good) 8%, transparent)',
+                        borderLeft: '2px solid var(--good)',
+                      }}
+                    >
+                      <strong>Réussite :</strong> {CRITERION_LABELS[c.metric] ?? c.metric}
+                      {c.maxValue != null && ` ≤ ${c.maxValue}`}
+                      <div className="tiny faint" style={{ marginTop: 3 }}>« {c.origin.quote} » — {originLabel(c.origin)}</div>
+                    </div>
+                  ))}
+
                   <div className="stack" style={{ gap: 8, marginTop: 12 }}>
                     {s.blocks.map((b, i) => (
                       <div key={i} style={{ borderLeft: '2px solid var(--border-strong)', paddingLeft: 10 }}>
@@ -220,6 +269,22 @@ export default function PlanPage() {
                     <div className="tiny faint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                       <strong>{s.status === 'withdrawn' ? 'Pourquoi retirée :' : 'Pourquoi ici :'}</strong>{' '}
                       {s.rationale}
+                    </div>
+                  )}
+
+                  {/* Une consigne dont on ne peut pas remonter à la source est une
+                      consigne qu'on demande à l'athlète de croire. */}
+                  {s.directives && s.directives.length > 0 && (
+                    <div className="tiny faint" style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                      <strong>D'où vient cette forme :</strong>
+                      <div className="stack" style={{ gap: 6, marginTop: 5 }}>
+                        {s.directives.map((d, i) => (
+                          <div key={i}>
+                            {d.effect}
+                            <div style={{ opacity: 0.75 }}>« {d.origin.quote} » — {originLabel(d.origin)}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

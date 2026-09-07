@@ -9,7 +9,7 @@ import {
   durabilityAdjustedCs, detectIntervals, assessSeries, computeAcwr,
   descentSpeedCeiling, walkRunTransitionSpeed, speedForMetabolicPower,
   technicalityCostMultiplier, aggregateDurability, blendCriticalSpeed,
-  csPriorFromThresholds, maximalEffortSupport, type DurabilityResult,
+  csPriorFromThresholds, maximalEffortSupport, projectFrom, type DurabilityResult,
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
   matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
 } from '@cairn/physiology';
@@ -176,6 +176,53 @@ describe('PMC', () => {
 
   it('cible un TSB de course décroissant avec la durée', () => {
     expect(targetRaceDayTsb(2700).metabolic).toBeGreaterThan(targetRaceDayTsb(36000).metabolic);
+  });
+});
+
+describe('Projection du PMC sur des charges à venir', () => {
+  const seed = { ctl: 40, atl: 40 };
+  const days = (from: string, n: number, load: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      date: new Date(new Date(`${from}T00:00:00Z`).getTime() + i * 86_400_000).toISOString().slice(0, 10),
+      load,
+    }));
+
+  it('part de l\'état donné et couvre exactement la fenêtre', () => {
+    const points = projectFrom(seed, days('2026-09-01', 10, 50), '2026-09-01', '2026-09-10');
+    expect(points).toHaveLength(10);
+    expect(points[0]!.date).toBe('2026-09-01');
+    expect(points[points.length - 1]!.date).toBe('2026-09-10');
+  });
+
+  it('compte zéro les jours absents des charges — c\'est ainsi qu\'une coupure se paie', () => {
+    const coupure = projectFrom(seed, [], '2026-09-01', '2026-09-11');
+    const last = coupure[coupure.length - 1]!;
+    expect(last.ctl).toBeLessThan(seed.ctl);
+    // La fatigue s'efface plus vite que la forme : onze jours suffisent à
+    // renverser le TSB, et à faire d'une charge d'aujourd'hui un mauvais point
+    // de départ pour un plan qui commence plus tard.
+    expect(last.atl).toBeLessThan(last.ctl);
+    expect(last.tsb).toBeGreaterThan(0);
+  });
+
+  it('n\'invente rien hors de la fenêtre', () => {
+    // Une charge datée hors bornes ne pèse pas, et une fenêtre inversée ne
+    // produit aucun point plutôt qu'un état supposé.
+    const hors = projectFrom(seed, days('2026-08-01', 5, 200), '2026-09-01', '2026-09-05');
+    expect(hors).toEqual(projectFrom(seed, [], '2026-09-01', '2026-09-05'));
+    expect(projectFrom(seed, [], '2026-09-05', '2026-09-01')).toEqual([]);
+  });
+
+  it('additionne deux charges du même jour', () => {
+    const seule = projectFrom(seed, [{ date: '2026-09-01', load: 100 }], '2026-09-01', '2026-09-01');
+    const deux = projectFrom(
+      seed,
+      [{ date: '2026-09-01', load: 60 }, { date: '2026-09-01', load: 40 }],
+      '2026-09-01',
+      '2026-09-01',
+    );
+    expect(deux[0]!.load).toBe(seule[0]!.load);
+    expect(deux[0]!.tsb).toBe(seule[0]!.tsb);
   });
 });
 

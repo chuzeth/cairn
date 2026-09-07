@@ -28,6 +28,7 @@ export async function upsertAthlete(profile: AthleteProfile): Promise<void> {
       sex: profile.sex,
       stravaAthleteId: profile.stravaAthleteId ?? null,
       constraints: profile.constraints,
+      ambition: profile.ambition ?? null,
       preferences: profile.preferences,
     })
     .onConflictDoUpdate({
@@ -36,6 +37,7 @@ export async function upsertAthlete(profile: AthleteProfile): Promise<void> {
         name: profile.name,
         stravaAthleteId: profile.stravaAthleteId ?? null,
         constraints: profile.constraints,
+        ambition: profile.ambition ?? null,
         preferences: profile.preferences,
         updatedAt: new Date().toISOString(),
       },
@@ -66,6 +68,7 @@ export async function getAthlete(id: string): Promise<AthleteProfile | null> {
     stravaAthleteId: row.stravaAthleteId ?? undefined,
     labTests: tests.map((x) => x.data as LabTest),
     constraints: row.constraints as AthleteProfile['constraints'],
+    ambition: (row.ambition as AthleteProfile['ambition']) ?? undefined,
     preferences: row.preferences as AthleteProfile['preferences'],
   };
 }
@@ -610,13 +613,21 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
       athleteId: plan.athleteId,
       goalRaceId: plan.goalRaceId,
       targetRaceDayTsb: plan.targetRaceDayTsb,
+      projectedRaceDayTsb: plan.projectedRaceDayTsb ?? null,
+      raceDayTsbShortfall: plan.raceDayTsbShortfall ?? null,
       active: true,
       revisionLog: plan.revisionLog,
       updatedAt: new Date().toISOString(),
     })
     .onConflictDoUpdate({
       target: t.trainingPlans.id,
-      set: { active: true, revisionLog: plan.revisionLog, updatedAt: new Date().toISOString() },
+      set: {
+        active: true,
+        projectedRaceDayTsb: plan.projectedRaceDayTsb ?? null,
+        raceDayTsbShortfall: plan.raceDayTsbShortfall ?? null,
+        revisionLog: plan.revisionLog,
+        updatedAt: new Date().toISOString(),
+      },
     });
 
   await db.delete(t.plannedSessions).where(eq(t.plannedSessions.planId, plan.id));
@@ -642,6 +653,8 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
       completedActivityId: s.completedActivityId ?? null,
       absenceId: s.absenceId ?? null,
       rationale: s.rationale ?? null,
+      successCriteria: s.successCriteria ?? null,
+      directives: s.directives ?? null,
     })),
   );
   // SQLite plafonne le nombre de variables liées : on insère par lots.
@@ -699,6 +712,8 @@ export async function getActivePlan(
       goalRaceId: planRow.goalRaceId,
       weeks,
       targetRaceDayTsb: planRow.targetRaceDayTsb,
+      projectedRaceDayTsb: planRow.projectedRaceDayTsb ?? undefined,
+      raceDayTsbShortfall: planRow.raceDayTsbShortfall ?? undefined,
       revisionLog: planRow.revisionLog as TrainingPlan['revisionLog'],
     },
     weeks,
@@ -724,6 +739,8 @@ function rowToSession(row: typeof t.plannedSessions.$inferSelect): PlannedSessio
     completedActivityId: row.completedActivityId ?? undefined,
     absenceId: row.absenceId ?? undefined,
     rationale: row.rationale ?? undefined,
+    successCriteria: (row.successCriteria as PlannedSession['successCriteria']) ?? undefined,
+    directives: (row.directives as PlannedSession['directives']) ?? undefined,
   };
 }
 

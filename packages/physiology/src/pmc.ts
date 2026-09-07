@@ -179,6 +179,41 @@ export function projectPmc(
 }
 
 /**
+ * Déroule le PMC d'un jour à un autre sur des charges connues ou prévues.
+ *
+ * `seed` est l'état au soir de la veille de `from`, et les jours absents de
+ * `loads` valent zéro : c'est ce qui fait qu'une coupure se paie, au lieu de
+ * laisser la forme figée entre deux séances. C'est la fonction qui permet de
+ * mesurer un plan au lieu de le déclarer — reporter une forme à la date de
+ * départ d'un plan, puis lire ce que ses charges produisent à la veille de la
+ * course.
+ */
+export function projectFrom(
+  seed: { ctl: number; atl: number },
+  loads: readonly { date: string; load: number }[],
+  from: string,
+  to: string,
+  tau: { chronic: number; acute: number } = TAU_METABOLIC,
+): PmcPoint[] {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+
+  const byDate = new Map<string, number>();
+  for (const l of loads) {
+    if (!Number.isFinite(l.load)) continue;
+    byDate.set(l.date, (byDate.get(l.date) ?? 0) + l.load);
+  }
+
+  const series: { date: string; load: number }[] = [];
+  for (let t = start; t <= end; t += dayMs) {
+    const key = toKey(new Date(t));
+    series.push({ date: key, load: byDate.get(key) ?? 0 });
+  }
+  return computePmc(series, tau, seed);
+}
+
+/**
  * TSB recommandé le jour de course, selon la durée de l'épreuve.
  *
  * Un 10 km se court « affûté mais pas vidé » (+10/+15) ; un ultra tolère — et

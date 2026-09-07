@@ -1,4 +1,5 @@
-import type { AthleteProfile, LabTest } from './types.js';
+import type { AthleteAmbition, AthleteProfile, LabTest } from './types.js';
+import { verbatim } from './quote.js';
 
 const KMH = (kmh: number) => kmh / 3.6;
 
@@ -149,6 +150,38 @@ export const LAB_REFERENCE_TIMES = [
   { distanceM: 42195, timeS: 3 * 3600 + 11 * 60 + 42 },
 ];
 
+/**
+ * L'ambition, distincte du calendrier.
+ *
+ * Elle n'est pas déduite des courses inscrites : le 32 km d'octobre est une
+ * étape, et un plan qui ne lirait que lui optimiserait un format que l'athlète
+ * ne vise pas. Elle s'appuie sur deux sources qui disent la même chose à treize
+ * mois d'écart — le préparateur physique en 2025, l'athlète lui-même en 2026.
+ */
+export const LONG_TRAIL_AMBITION: AthleteAmbition = {
+  format: 'trail_long',
+  since: '2026-09-03',
+  origin: [
+    {
+      source: 'lab_test',
+      documentId: LAB_TEST_2025_07_24.id,
+      date: LAB_TEST_2025_07_24.date,
+      author: 'Mickaël Reynaud',
+      quote: verbatim(
+        LAB_TEST_2025_07_24.interpretation as string,
+        'Bon potentiel pour la course à pied',
+        'notamment pour les trails longs',
+      ),
+    },
+    {
+      source: 'athlete',
+      date: '2026-09-03',
+      quote:
+        "Le 32 km du 18/10 est une étape, pas la finalité : c'est sur les trails longs que je veux performer.",
+    },
+  ],
+};
+
 export const PIERRE: AthleteProfile = {
   id: 'pierre',
   name: 'Pierre Chuzeville',
@@ -156,6 +189,7 @@ export const PIERRE: AthleteProfile = {
   sex: 'M',
   stravaAthleteId: 95596908,
   labTests: [LAB_TEST_2025_07_24],
+  ambition: LONG_TRAIL_AMBITION,
   constraints: {
     // Valeurs de départ raisonnables — ajustables depuis l'app ou par le chat.
     availableDays: [1, 2, 3, 4, 5, 6, 0],

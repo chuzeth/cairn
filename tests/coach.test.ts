@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LAB_TEST_2025_07_24, PIERRE,
-  type DeclaredAbsence, type PlannedSession, type RaceGoal,
+  LAB_TEST_2025_07_24, PIERRE, buildDirectives, directivesFor,
+  type DeclaredAbsence, type PlannedSession, type RaceGoal, type TrainingWeek,
 } from '@cairn/core';
-import { modelFromLabOnly, msToKmh } from '@cairn/physiology';
+import { DURABILITY_MEASURABLE, modelFromLabOnly, msToKmh, projectFrom } from '@cairn/physiology';
 import {
-  absenceCovering, allocatePhases, assumedCtl, buildPeriodization, buildTrainingPlan, buildWeek,
-  evaluateAdjustments, mondayOf, taperWeeks, weeksBetween, withdrawalsFor,
+  INTERVAL_FORMAT, TAPER_SCALE_BOUNDS, absenceCovering, allocatePhases, assumedCtl,
+  buildPeriodization, buildTrainingPlan, buildWeek, carryFitness, evaluateAdjustments,
+  isIntervalSession, mondayOf, taperWeeks, weeksBetween, withdrawalsFor,
 } from '@cairn/coach';
 // La bibliothèque de séances est ré-exportée par l'index du paquet.
 import * as lib from '@cairn/coach';
@@ -229,6 +230,174 @@ describe('Plan complet', () => {
 
   it('vise un TSB positif le jour de la course', () => {
     expect(plan.targetRaceDayTsb).toBeGreaterThan(0);
+  });
+});
+
+describe('Le plan est mesuré contre la cible qu\'il se donne', () => {
+  const build = (over: Partial<Parameters<typeof buildTrainingPlan>[0]> = {}) =>
+    buildTrainingPlan({
+      athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+      currentCtl: 45, currentAtl: 45, estimatedRaceDurationS: 3 * 3600,
+      startDate: '2026-09-01', ...over,
+    });
+
+  /** Re-projection indépendante, depuis les seules séances du plan. */
+  const measure = (
+    weeks: TrainingWeek[],
+    seed: { ctl: number; atl: number },
+    from: string,
+    to: string,
+  ) => {
+    const loads = weeks.flatMap((w) => w.sessions.map((s) => ({ date: s.date, load: s.plannedLoad })));
+    const points = projectFrom(seed, loads, from, to);
+    return points[points.length - 1]!.tsb;
+  };
+
+  it('mesure les charges réellement prescrites, pas les cibles de semaine', () => {
+    const { weeks, tsbCheck } = build();
+    expect(tsbCheck.projected).toBe(measure(weeks, { ctl: 45, atl: 45 }, '2026-08-31', tsbCheck.date));
+  });
+
+  it('lit le TSB la veille de la course, pas le jour J', () => {
+    const { tsbCheck } = build();
+    expect(tsbCheck.date).toBe('2026-12-04');
+    // Le jour J porte la charge de la course : y lire le TSB donnerait l'état
+    // d'arrivée, très négatif, au lieu de celui du départ.
+    const { weeks } = build();
+    expect(measure(weeks, { ctl: 45, atl: 45 }, '2026-08-31', RACE.date))
+      .toBeLessThan(tsbCheck.projected);
+  });
+
+  it('atteint la cible quand la préparation en laisse le temps', () => {
+    const { plan, tsbCheck } = build();
+    expect(tsbCheck.onTarget).toBe(true);
+    expect(Math.abs(tsbCheck.gap)).toBeLessThanOrEqual(0.5);
+    expect(tsbCheck.shortfall).toBeNull();
+    expect(plan.projectedRaceDayTsb).toBe(tsbCheck.projected);
+    expect(plan.raceDayTsbShortfall).toBeUndefined();
+  });
+
+  it('dit ce qui manque quand la place manque, au lieu de manquer la cible en silence', () => {
+    // Cinq semaines, charge de départ basse : la fraîcheur ne peut pas monter
+    // jusqu'à la cible sans défaire la forme que ces semaines construisent.
+    const { plan, tsbCheck } = build({
+      race: { ...RACE, date: '2026-10-18' },
+      currentCtl: 32, currentAtl: 12, startDate: '2026-09-14',
+    });
+    expect(tsbCheck.onTarget).toBe(false);
+    expect(tsbCheck.gap).toBeLessThan(0);
+    expect(tsbCheck.shortfall).toContain('plancher');
+    expect(plan.raceDayTsbShortfall).toBe(tsbCheck.shortfall);
+    // Et le journal du plan le porte, avec les deux nombres.
+    expect(plan.revisionLog[0]!.summary).toContain('veille de course');
+    expect(plan.revisionLog[0]!.summary).toContain(`${tsbCheck.projected.toFixed(1)}`);
+  });
+
+  it('dit aussi l\'écart dans l\'autre sens : plus frais que visé, donc moins entraîné', () => {
+    // Forme très haute, mais plus que trois heures par semaine pour la tenir :
+    // le plan ne peut plus construire la charge que la cible suppose.
+    const { tsbCheck } = build({
+      constraints: { ...PIERRE.constraints, maxWeeklyHours: 3 },
+      race: { ...RACE, date: '2026-10-25' },
+      currentCtl: 95, currentAtl: 95, estimatedRaceDurationS: 2 * 3600, startDate: '2026-09-07',
+    });
+    expect(tsbCheck.gap).toBeGreaterThan(0);
+    expect(tsbCheck.taperScale).toBe(TAPER_SCALE_BOUNDS.max);
+    expect(tsbCheck.shortfall).toContain('plafond');
+  });
+
+  it('garde l\'affûtage dans ses bornes', () => {
+    for (const start of ['2026-09-01', '2026-09-14', '2026-10-19']) {
+      const { tsbCheck } = build({ startDate: start, race: { ...RACE, date: '2026-12-05' } });
+      expect(tsbCheck.taperScale).toBeGreaterThanOrEqual(TAPER_SCALE_BOUNDS.min);
+      expect(tsbCheck.taperScale).toBeLessThanOrEqual(TAPER_SCALE_BOUNDS.max);
+    }
+  });
+
+  it('ne laisse aucune semaine d\'affûtage dépasser le pic de la préparation', () => {
+    const { weeks } = build();
+    const peak = Math.max(...weeks.filter((w) => w.phase !== 'taper').map((w) => w.targetLoad));
+    for (const w of weeks.filter((x) => x.phase === 'taper')) {
+      expect(w.targetLoad).toBeLessThanOrEqual(peak);
+    }
+  });
+
+  it('part de la fatigue qu\'on lui donne, tant qu\'elle pèse encore', () => {
+    // Trois semaines : la fatigue de départ n'a pas fini de s'effacer, et deux
+    // athlètes de même forme mais de fraîcheur opposée n'ont pas besoin du même
+    // affûtage pour arriver au même TSB.
+    const short = { race: { ...RACE, date: '2026-09-20' } };
+    const fresh = build({ ...short, currentCtl: 45, currentAtl: 20 });
+    const tired = build({ ...short, currentCtl: 45, currentAtl: 70 });
+    expect(fresh.tsbCheck.taperScale).toBeGreaterThan(tired.tsbCheck.taperScale);
+    // Sur quatorze semaines, la constante de temps de sept jours l'a effacée :
+    // c'est la charge chronique qui commande, et le plan converge au même point.
+    expect(build({ currentCtl: 45, currentAtl: 20 }).tsbCheck.taperScale)
+      .toBe(build({ currentCtl: 45, currentAtl: 70 }).tsbCheck.taperScale);
+  });
+
+  it('calibre la première semaine sur la charge du jour du départ, pas sur celle d\'aujourd\'hui', () => {
+    // Le cas du dossier : CTL 40,5 aujourd'hui, onze jours de coupure avant que
+    // le plan ne commence. Calibrer sur 40,5 propose une semaine de reprise que
+    // l'athlète ne peut plus tenir.
+    const today = { date: '2026-09-03', ctl: 40.5, atl: 48.6 };
+    const carried = carryFitness(today, '2026-09-14', [], []);
+    const race = { ...RACE, date: '2026-10-18' };
+
+    const naive = build({ race, startDate: '2026-09-14', currentCtl: today.ctl, currentAtl: today.atl });
+    const honest = build({ race, startDate: '2026-09-14', currentCtl: carried.ctl, currentAtl: carried.atl });
+
+    expect(naive.weeks[0]!.targetLoad).toBe(303);
+    expect(honest.weeks[0]!.targetLoad).toBe(239);
+    expect(honest.weeks[0]!.targetLoad).toBeLessThan(naive.weeks[0]!.targetLoad);
+  });
+});
+
+describe('Forme reportée au premier jour du plan', () => {
+  const today = { date: '2026-09-03', ctl: 40.5, atl: 48.6 };
+  const planned = (date: string, over: Partial<PlannedSession> = {}): PlannedSession => ({
+    id: `s_${date}`, athleteId: 'pierre', date, type: 'endurance', title: 'Endurance',
+    intent: '', blocks: [], plannedLoad: 60, plannedMechanicalLoad: 10,
+    plannedDurationS: 3600, priority: 'support', status: 'planned', ...over,
+  });
+
+  it('ne reporte rien quand le plan commence demain', () => {
+    const carried = carryFitness(today, '2026-09-04', [], []);
+    expect(carried).toEqual({ ctl: 40.5, atl: 48.6, gapDays: 0, gapLoad: 0 });
+  });
+
+  it('fait payer la coupure : onze jours sans rien font tomber la charge chronique', () => {
+    const carried = carryFitness(today, '2026-09-14', [], []);
+    expect(carried.gapDays).toBe(10);
+    expect(carried.gapLoad).toBe(0);
+    expect(carried.ctl).toBeLessThan(today.ctl);
+    // La fatigue s'efface plus vite que la forme : c'est ce qui rend le départ
+    // frais, et c'est aussi ce que la calibration sur « aujourd'hui » ignorait.
+    expect(carried.atl).toBeLessThan(carried.ctl);
+  });
+
+  it('compte les séances qui tiennent encore', () => {
+    const sessions = ['2026-09-05', '2026-09-08', '2026-09-11'].map((d) => planned(d));
+    const carried = carryFitness(today, '2026-09-14', sessions, []);
+    expect(carried.gapLoad).toBe(180);
+    expect(carried.ctl).toBeGreaterThan(carryFitness(today, '2026-09-14', [], []).ctl);
+  });
+
+  it('ne compte pas une séance retirée par une absence déclarée', () => {
+    const sessions = ['2026-09-05', '2026-09-08'].map((d) => planned(d));
+    const absence: DeclaredAbsence = {
+      id: 'abs1', athleteId: 'pierre', startDate: '2026-09-04', endDate: '2026-09-13',
+      kind: 'chosen', reason: 'Je coupe.', source: 'athlete', declaredAt: '2026-09-03T07:00:00.000Z',
+    };
+    expect(carryFitness(today, '2026-09-14', sessions, [absence]).gapLoad).toBe(0);
+    // Le statut dit la même chose par l'autre bout.
+    const withdrawn = sessions.map((s) => ({ ...s, status: 'withdrawn' as const }));
+    expect(carryFitness(today, '2026-09-14', withdrawn, []).gapLoad).toBe(0);
+  });
+
+  it('ignore ce qui tombe hors de l\'intervalle', () => {
+    const outside = [planned('2026-09-03'), planned('2026-09-14'), planned('2026-09-20')];
+    expect(carryFitness(today, '2026-09-14', outside, []).gapLoad).toBe(0);
   });
 });
 
@@ -521,5 +690,272 @@ describe('Remplacement du contenu d\'une séance', () => {
     );
     expect(totals.elevationGainM).toBe(300);
     expect(totals.durationS).toBe(6 * 300);
+  });
+
+  it('fait suivre la charge mécanique au dénivelé remplacé', () => {
+    const long = (vertM: number) =>
+      lib.sessionTotals(
+        model,
+        lib.parseSessionBlocks(
+          [
+            { label: 'Corps de sortie', zone: 'Z2', durationS: 5100, elevationGainM: vertM },
+            { label: 'Progression finale', zone: 'Z3', durationS: 1200 },
+          ],
+          model,
+        ),
+      );
+
+    // Le défaut : une sortie longue réduite de 700 à 350 m D+ qui gardait la
+    // charge mécanique des 700 m. Le PMC mécanique protège les quadriceps ; il
+    // ne peut pas le faire sur un chiffre qui décrit la séance d'avant.
+    const avant = long(700);
+    const apres = long(350);
+    expect(apres.elevationGainM).toBe(350);
+    expect(apres.mechanicalLoad).toBeLessThan(avant.mechanicalLoad);
+    // À défaut de dénivelé négatif sur les blocs, on suppose une boucle.
+    expect(apres.mechanicalLoad).toBe(
+      lib.sessionTotals(model, lib.parseSessionBlocks(
+        [{ label: 'Corps de sortie', zone: 'Z2', durationS: 5100, elevationGainM: 350 },
+         { label: 'Progression finale', zone: 'Z3', durationS: 1200 }], model,
+      ), 350).mechanicalLoad,
+    );
+  });
+
+  it('laisse la bibliothèque imposer sa descente quand elle la connaît', () => {
+    // Une séance de descente ne monte pas ce qu'elle descend : ses blocs ne
+    // portent aucun D+, et la boucle supposée sous-estimerait la contrainte.
+    const descente = lib.downhillSession(model, 6, 150);
+    expect(descente.plannedMechanicalLoad).toBeGreaterThan(
+      lib.sessionTotals(model, descente.blocks).mechanicalLoad,
+    );
+  });
+});
+
+describe('Directives du dossier', () => {
+  const directives = directivesFor(PIERRE);
+  const interpretation = LAB_TEST_2025_07_24.interpretation as string;
+  const notes = [
+    ...(LAB_TEST_2025_07_24.practitionerNotes ?? []),
+    ...(PIERRE.constraints.notes ?? []),
+  ];
+
+  it('cite le document sans le reformuler', () => {
+    expect(directives.length).toBeGreaterThan(0);
+    for (const d of directives) {
+      const literal = interpretation.includes(d.origin.quote) || notes.includes(d.origin.quote);
+      expect(literal, `${d.id} — « ${d.origin.quote} »`).toBe(true);
+    }
+  });
+
+  it('échoue au lieu de laisser vivre une citation orpheline', () => {
+    expect(() =>
+      buildDirectives({ ...LAB_TEST_2025_07_24, interpretation: 'Rien à signaler.' }, PIERRE.constraints.notes),
+    ).toThrow(/Extrait introuvable/);
+  });
+
+  it('traduit les plages du praticien en secondes, sans les arrondir à sa façon', () => {
+    expect(directives.find((d) => d.id === 'foncier_duree')).toMatchObject({
+      kind: 'session_duration', minS: 90 * 60, maxS: 150 * 60, appliesTo: ['long_run'],
+    });
+    expect(directives.find((d) => d.id === 'rando_course_duree')).toMatchObject({
+      kind: 'session_duration', minS: 180 * 60, maxS: 300 * 60, appliesTo: ['long_trail'],
+    });
+  });
+
+  it('nomme ce que le planificateur a tranché et que le dossier ne dit pas', () => {
+    // Le dossier constate le déficit ventilatoire sans fixer de fréquence.
+    expect(directives.find((d) => d.id === 'respiration')?.derived).toBeTruthy();
+    // La cadence, elle, est intégralement portée par sa citation.
+    expect(directives.find((d) => d.id === 'cadence')?.derived).toBeUndefined();
+  });
+
+  it('ne produit aucune directive quand personne n\'a dépouillé la prose', () => {
+    expect(directivesFor({ ...PIERRE, labTests: [] })).toEqual([]);
+    expect(buildDirectives({ ...LAB_TEST_2025_07_24, interpretation: undefined })).toEqual([]);
+  });
+});
+
+describe('Plan qui lit le dossier entier', () => {
+  const directives = directivesFor(PIERRE);
+  const common = {
+    athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+    currentCtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+  };
+  const { weeks } = buildTrainingPlan({ ...common, directives, ambition: PIERRE.ambition });
+  const plain = buildTrainingPlan(common).weeks;
+  // Ni la décharge ni l'affûtage n'ont à honorer un plancher de durée : ces
+  // semaines ont une autre fonction que de construire.
+  const building = weeks.filter((w) => !w.isDeload && w.phase !== 'taper');
+  const longOf = (w: (typeof weeks)[number]) =>
+    w.sessions.find((s) => s.type === 'long_run' || s.type === 'long_trail');
+
+  it('tient le travail foncier dans les plages prescrites', () => {
+    for (const w of building) {
+      const long = longOf(w);
+      if (!long) continue;
+      const d = directives.find(
+        (x) => x.kind === 'session_duration' && x.appliesTo.includes(long.type),
+      );
+      expect(d, long.type).toBeDefined();
+      if (d?.kind !== 'session_duration') continue;
+      expect(long.plannedDurationS, `${w.weekStart} ${long.type}`).toBeGreaterThanOrEqual(d.minS);
+      expect(long.plannedDurationS, `${w.weekStart} ${long.type}`).toBeLessThanOrEqual(d.maxS);
+    }
+  });
+
+  it('corrige aussi bien le défaut que l\'excès', () => {
+    // Sans directives, le planificateur produisait des rando-courses trop
+    // courtes en début de préparation et des footings trop longs à la fin.
+    const tooShort = plain.some((w) => {
+      const l = longOf(w);
+      return l?.type === 'long_trail' && !w.isDeload && w.phase !== 'taper' && l.plannedDurationS < 180 * 60;
+    });
+    const tooLong = plain.some((w) => {
+      const l = longOf(w);
+      return l?.type === 'long_run' && l.plannedDurationS > 150 * 60;
+    });
+    expect(tooShort || tooLong).toBe(true);
+  });
+
+  it('laisse la décharge et l\'affûtage hors du plancher', () => {
+    const deloads = weeks.filter((w) => w.isDeload).map(longOf).filter((s) => s != null);
+    expect(deloads.length).toBeGreaterThan(0);
+    for (const long of deloads) {
+      const d = directives.find(
+        (x) => x.kind === 'session_duration' && x.appliesTo.includes(long.type),
+      );
+      if (d?.kind !== 'session_duration') continue;
+      expect(long.plannedDurationS).toBeLessThan(d.minS);
+    }
+  });
+
+  it('fait reculer le volume facile, jamais la séance prescrite', () => {
+    // Le plancher de la sortie longue est honoré sans que la semaine explose.
+    for (const w of building) {
+      const total = w.sessions.reduce((a, s) => a + s.plannedLoad, 0);
+      expect(total, w.weekStart).toBeLessThan(w.targetLoad * 1.15);
+    }
+  });
+
+  it('ne prescrit qu\'un fractionné par semaine, en alternant court et moyen', () => {
+    const sequence: ('short' | 'medium')[] = [];
+    for (const w of weeks) {
+      const intervals = w.sessions.filter((s) => isIntervalSession(s.type));
+      expect(intervals.length, w.weekStart).toBeLessThanOrEqual(1);
+      // La semaine de course fait exception : ses six répétitions sont un rappel
+      // de foulée, pas le fractionné de la semaine.
+      const isRaceWeek = w.sessions.some((s) => s.type === 'race');
+      if (intervals[0] && !isRaceWeek) {
+        sequence.push(INTERVAL_FORMAT[intervals[0].type] as 'short' | 'medium');
+      }
+    }
+    expect(sequence.length).toBeGreaterThan(4);
+    for (let i = 1; i < sequence.length; i++) {
+      expect(sequence[i], `position ${i} de ${sequence.join(',')}`).not.toBe(sequence[i - 1]);
+    }
+  });
+
+  it('honore les fréquences hebdomadaires, sur des jours distincts', () => {
+    for (const w of weeks) {
+      for (const kind of ['mobility', 'respiratory'] as const) {
+        const days = new Set(
+          w.sessions.filter((s) => s.blocks.some((b) => b.kind === kind)).map((s) => s.date),
+        );
+        expect(days.size, `${w.weekStart} ${kind}`).toBe(2);
+      }
+      // Jamais un jour de repos : ce jour a une fonction.
+      for (const s of w.sessions.filter((x) => x.type === 'rest')) {
+        expect(s.blocks).toHaveLength(0);
+      }
+    }
+  });
+
+  it('ne prescrit plus de cadence hors de la fenêtre du praticien', () => {
+    const cadences = weeks.flatMap((w) =>
+      w.sessions.flatMap((s) => s.blocks.map((b) => b.cadenceTargetSpm)),
+    ).filter((c): c is number => c != null);
+    expect(cadences.length).toBeGreaterThan(20);
+    for (const c of cadences) {
+      expect(c).toBeGreaterThanOrEqual(170);
+      expect(c).toBeLessThanOrEqual(180);
+    }
+    // Sans directives, la bibliothèque demandait jusqu'à 182 ppm.
+    const before = plain.flatMap((w) =>
+      w.sessions.flatMap((s) => s.blocks.map((b) => b.cadenceTargetSpm)),
+    ).filter((c): c is number => c != null);
+    expect(Math.max(...before)).toBeGreaterThan(180);
+  });
+
+  it('attache le critère de dérive cardiaque, avec la phrase qui le demande', () => {
+    const aerobic = weeks.flatMap((w) =>
+      w.sessions.filter((s) => ['endurance', 'long_run', 'long_trail'].includes(s.type)),
+    );
+    expect(aerobic.length).toBeGreaterThan(10);
+    for (const s of aerobic) {
+      const criterion = s.successCriteria?.find((c) => c.metric === 'hr_drift');
+      expect(criterion, `${s.date} ${s.type}`).toBeDefined();
+      expect((LAB_TEST_2025_07_24.interpretation as string).includes(criterion!.origin.quote)).toBe(true);
+    }
+    // Aucune sur les séances que le dossier ne vise pas.
+    for (const s of weeks.flatMap((w) => w.sessions).filter((x) => x.type === 'threshold')) {
+      expect(s.successCriteria ?? []).toHaveLength(0);
+    }
+  });
+
+  it('laisse sur chaque séance l\'extrait qui a fixé sa forme', () => {
+    const traced = weeks.flatMap((w) => w.sessions).filter((s) => (s.directives?.length ?? 0) > 0);
+    expect(traced.length).toBeGreaterThan(20);
+    for (const s of traced) {
+      for (const d of s.directives ?? []) {
+        expect(d.origin.quote.length).toBeGreaterThan(10);
+        expect(d.origin.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(d.effect.length).toBeGreaterThan(10);
+      }
+    }
+    // Sans directives, rien n'est tracé : le plan ne prétend pas lire ce qu'il ne lit pas.
+    expect(plain.flatMap((w) => w.sessions).every((s) => s.directives == null)).toBe(true);
+  });
+});
+
+describe('Ambition longue distance', () => {
+  const directives = directivesFor(PIERRE);
+  const common = {
+    athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+    currentCtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01', directives,
+  };
+  const withAmbition = buildTrainingPlan({ ...common, ambition: PIERRE.ambition }).weeks;
+  const without = buildTrainingPlan(common).weeks;
+  const longOf = (w: (typeof withAmbition)[number]) =>
+    w.sessions.find((s) => s.type === 'long_run' || s.type === 'long_trail');
+
+  it('existe comme un fait du dossier, distinct des courses', () => {
+    expect(PIERRE.ambition?.format).toBe('trail_long');
+    // Elle ne porte pas de date d'échéance : elle oriente, elle ne se coche pas.
+    expect(PIERRE.ambition).not.toHaveProperty('date');
+    expect(PIERRE.ambition?.origin.length).toBeGreaterThanOrEqual(2);
+    const labQuote = PIERRE.ambition?.origin.find((o) => o.source === 'lab_test')?.quote as string;
+    expect((LAB_TEST_2025_07_24.interpretation as string).includes(labQuote)).toBe(true);
+  });
+
+  it('donne plus de place à la sortie longue', () => {
+    const first = longOf(withAmbition[0]!)!;
+    const plainFirst = longOf(without[0]!)!;
+    expect(first.plannedDurationS).toBeGreaterThan(plainFirst.plannedDurationS);
+  });
+
+  it('rend la durabilité mesurable au lieu de la supposer', () => {
+    const building = withAmbition.filter((w) => !w.isDeload && w.phase !== 'taper');
+    for (const w of building) {
+      const long = longOf(w);
+      if (!long) continue;
+      expect(long.plannedDurationS, w.weekStart).toBeGreaterThanOrEqual(DURABILITY_MEASURABLE.minDurationS);
+      expect(long.plannedElevationGainM ?? 0, w.weekStart).toBeGreaterThanOrEqual(DURABILITY_MEASURABLE.minVertM);
+    }
+    // Sans l'ambition, le plan produisait des sorties trop plates pour que la
+    // régression donne une pente par 1 000 m de D+.
+    const flat = without
+      .filter((w) => !w.isDeload && w.phase !== 'taper')
+      .some((w) => (longOf(w)?.plannedElevationGainM ?? 0) < DURABILITY_MEASURABLE.minVertM);
+    expect(flat).toBe(true);
   });
 });

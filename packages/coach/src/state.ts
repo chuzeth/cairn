@@ -1,13 +1,16 @@
 import type {
   Activity, ActivityAnalysis, AthleteProfile, DailyCheckIn, DeclaredAbsence, PhysiologyModel,
-  PmcSeries, RaceGoal, ReadinessScore, TrainingPlan, TrainingWeek,
+  PlannedSession, PmcSeries, RaceGoal, ReadinessScore, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
   computeReadiness, decayedEnvelopeWithCompanion, fitCriticalSpeed, interpretAcwr, interpretTsb,
-  maximalEffortSupport, modelFromLabOnly, monotonize, type FieldEvidence, type MmpCurve,
+  maximalEffortSupport, modelFromLabOnly, monotonize, projectFrom, type FieldEvidence,
+  type MmpCurve,
 } from '@cairn/physiology';
+import { absenceCovering } from './adapt.js';
+import { addDays } from './periodization.js';
 
 /**
  * État de l'athlète.
@@ -336,6 +339,82 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     vamCurve,
     weeklyTotals: computeWeeklyTotals(recentActivities, analyses),
   };
+}
+
+/**
+ * Statuts d'une séance qu'on attend encore. Elles seules pèsent sur la forme à
+ * venir : une séance retirée, annulée ou déjà remplacée ne produira aucune
+ * charge.
+ */
+const STANDING_STATUSES = new Set<PlannedSession['status']>(['planned', 'moved']);
+
+/** Forme reportée d'une date à une autre. */
+export interface CarriedFitness {
+  ctl: number;
+  atl: number;
+  /** Jours franchis entre les deux dates. Zéro : rien n'a été reporté. */
+  gapDays: number;
+  /** Charge attendue sur ces jours-là, en points. */
+  gapLoad: number;
+}
+
+/**
+ * Reporte la forme d'aujourd'hui au premier jour d'un plan à venir.
+ *
+ * Calibrer un plan sur la forme du jour où on le construit est faux dès qu'il
+ * commence plus tard : entre les deux dates, la charge chronique continue de
+ * vivre — elle se perd pendant une coupure, elle monte si l'athlète s'entraîne.
+ * Onze jours d'écart suffisent à faire proposer une semaine de reprise que
+ * personne ne peut plus tenir.
+ *
+ * Les jours intercalaires portent ce que le plan y prévoit encore : une séance
+ * retirée par une absence déclarée ne pèse rien, et un jour sans séance vaut
+ * zéro — c'est ainsi qu'une coupure se paie.
+ */
+export function carryFitness(
+  from: { date: string; ctl: number; atl: number },
+  until: string,
+  planned: PlannedSession[],
+  absences: DeclaredAbsence[],
+): CarriedFitness {
+  const here = { ctl: from.ctl, atl: from.atl, gapDays: 0, gapLoad: 0 };
+  const start = addDays(from.date, 1);
+  const end = addDays(until, -1);
+  if (end < start) return here;
+
+  const loads = planned
+    .filter(
+      (s) =>
+        s.date >= start &&
+        s.date <= end &&
+        STANDING_STATUSES.has(s.status) &&
+        !absenceCovering(absences, s.date),
+    )
+    .map((s) => ({ date: s.date, load: s.plannedLoad }));
+
+  const points = projectFrom({ ctl: from.ctl, atl: from.atl }, loads, start, end);
+  const last = points[points.length - 1];
+  if (!last) return here;
+  return {
+    ctl: last.ctl,
+    atl: last.atl,
+    gapDays: points.length,
+    gapLoad: Math.round(loads.reduce((a, l) => a + l.load, 0)),
+  };
+}
+
+/** `carryFitness` alimenté par le plan actif : ce que `rebuild_plan` appelle. */
+export async function fitnessAtPlanStart(
+  state: AthleteState,
+  planStart: string,
+): Promise<CarriedFitness> {
+  const from = { date: state.today.date, ctl: state.today.ctl, atl: state.today.atl };
+  const planned = await db.listPlannedSessions(
+    state.profile.id,
+    addDays(state.today.date, 1),
+    addDays(planStart, -1),
+  );
+  return carryFitness(from, planStart, planned, state.absences);
 }
 
 function computeWeeklyTotals(

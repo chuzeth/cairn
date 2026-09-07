@@ -81,12 +81,39 @@ export interface PeriodizationInput {
   startDate: string;
   race: RaceGoal;
   estimatedRaceDurationS: number;
-  /** CTL métabolique actuelle — point de départ de la progression. */
+  /** CTL métabolique au premier jour du plan — point de départ de la progression. */
   currentCtl: number;
   constraints: AthleteConstraints;
   /** Dénivelé positif de la course, sert à cadencer la progression verticale. */
   raceElevationGainM: number;
+  /**
+   * Profondeur de l'affûtage, en multiple de sa forme nominale. À 1, les
+   * proportions de la littérature. Le planificateur la résout pour amener le
+   * TSB de la veille de course sur sa cible : la forme nominale est un point de
+   * départ plausible, pas une garantie d'y arriver.
+   */
+  taperScale?: number;
 }
+
+/**
+ * Bornes de la profondeur d'affûtage que le planificateur a le droit de
+ * chercher. Elles existent pour que la recherche du TSB cible reste un
+ * affûtage : hors de ces bornes, on n'ajuste plus la fraîcheur, on change la
+ * nature de la fin de préparation.
+ */
+export const TAPER_SCALE_BOUNDS = { min: 0.6, max: 1.2 } as const;
+
+/**
+ * Bornes d'une semaine d'affûtage, en fraction de la semaine la plus lourde.
+ *
+ * Sous un quart du pic, la semaine n'affûte plus : la charge chronique se perd
+ * plus vite que la fatigue ne s'évacue, et la fraîcheur gagnée se paie en forme
+ * perdue. Au-dessus de 85 %, ce n'est pas un affûtage.
+ */
+const TAPER_WEEK_BOUNDS = { min: 0.25, max: 0.85 } as const;
+
+/** Décroissance nominale du volume, semaine d'affûtage par semaine d'affûtage. */
+const TAPER_SHAPE = [0.75, 0.58, 0.42] as const;
 
 /**
  * Construit le squelette de la préparation : une charge cible par semaine.
@@ -131,7 +158,11 @@ export function buildPeriodization(input: PeriodizationInput): WeekPlanSpec[] {
     if (phase === 'taper') {
       // Affûtage exponentiel : le volume chute, l'intensité est maintenue.
       const taperIndex = taper - weeksToRace; // 1 = première semaine d'affûtage
-      const factor = [0.75, 0.58, 0.42][Math.min(2, Math.max(0, taperIndex - 1))] ?? 0.5;
+      const shape = TAPER_SHAPE[Math.min(2, Math.max(0, taperIndex - 1))] ?? 0.5;
+      const factor = Math.min(
+        TAPER_WEEK_BOUNDS.max,
+        Math.max(TAPER_WEEK_BOUNDS.min, shape * (input.taperScale ?? 1)),
+      );
       load = peakLoad * factor;
       consecutiveBuild = 0;
     } else if (isDeload) {

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import * as db from '@cairn/db';
+import { directivesFor } from '@cairn/core';
 import {
   applyAdjustments, chat, describeAdjustments, evaluateAdjustments,
   executeTool, generateWeeklyReview, loadAthleteState, rebuildPhysiologyModel,
@@ -250,7 +251,12 @@ export async function buildServer() {
     try {
       const s = await loadAthleteState(A);
       return {
-        athlete: { id: s.profile.id, name: s.profile.name, constraints: s.profile.constraints },
+        athlete: {
+          id: s.profile.id,
+          name: s.profile.name,
+          constraints: s.profile.constraints,
+          ambition: s.profile.ambition ?? null,
+        },
         model: {
           ...s.model,
           criticalSpeedKmh: round2(msToKmh(s.model.criticalSpeedMs)),
@@ -280,6 +286,8 @@ export async function buildServer() {
         })),
         hasPlan: s.plan != null,
         labTest: s.profile.labTests[0] ?? null,
+        // Ce que le planificateur lit du dossier, et l'extrait qui le fonde.
+        directives: directivesFor(s.profile),
       };
     } catch (e) {
       return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });

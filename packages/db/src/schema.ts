@@ -23,6 +23,8 @@ export const athletes = sqliteTable('athletes', {
   stravaAthleteId: integer('strava_athlete_id'),
   /** AthleteConstraints, sérialisé. */
   constraints: text('constraints', { mode: 'json' }).notNull(),
+  /** AthleteAmbition — la direction visée, sans date. Distincte des courses. */
+  ambition: text('ambition', { mode: 'json' }),
   preferences: text('preferences', { mode: 'json' }).notNull(),
   createdAt: text('created_at').notNull().default(now),
   updatedAt: text('updated_at').notNull().default(now),
@@ -191,6 +193,14 @@ export const trainingPlans = sqliteTable(
     athleteId: text('athlete_id').notNull().references(() => athletes.id, { onDelete: 'cascade' }),
     goalRaceId: text('goal_race_id').notNull(),
     targetRaceDayTsb: real('target_race_day_tsb').notNull(),
+    /**
+     * TSB mesuré sur le plan produit, à la veille de la course. Nullable : les
+     * plans antérieurs à la vérification n'en portent pas, et leur en inventer
+     * un serait pire que de l'admettre.
+     */
+    projectedRaceDayTsb: real('projected_race_day_tsb'),
+    /** Ce qui a empêché d'atteindre la cible, quand elle est manquée. */
+    raceDayTsbShortfall: text('race_day_tsb_shortfall'),
     active: integer('active', { mode: 'boolean' }).notNull().default(true),
     revisionLog: text('revision_log', { mode: 'json' }).notNull(),
     createdAt: text('created_at').notNull().default(now),
@@ -223,6 +233,10 @@ export const plannedSessions = sqliteTable(
     /** Absence déclarée qui a retiré la séance — renseigné avec le statut `withdrawn`. */
     absenceId: text('absence_id'),
     rationale: text('rationale'),
+    /** Critères de réussite, tels que le dossier les formule. */
+    successCriteria: text('success_criteria', { mode: 'json' }),
+    /** Directives du dossier qui ont façonné la séance, avec leur extrait. */
+    directives: text('directives', { mode: 'json' }),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },

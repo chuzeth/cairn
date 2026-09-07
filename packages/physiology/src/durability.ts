@@ -54,6 +54,26 @@ const WINDOW_S = 600;
 const STEP_S = 120;
 
 /**
+ * Ce qu'un effort doit contenir pour qu'on puisse y *mesurer* la durabilité.
+ *
+ * Ces bornes ne sont pas un avis d'entraîneur : elles se déduisent de la
+ * fenêtre glissante ci-dessus. Un agrégat de qualité `good` réclame dix
+ * fenêtres et plus d'une heure entre la première et la dernière — soit
+ * 3 600 s d'écart entre centres, plus la largeur d'une fenêtre : 70 min
+ * d'effort aérobie continu. La pente verticale, elle, exige plus de 350 m de
+ * D+ accumulés entre ces deux centres ; 450 m sur la séance entière les
+ * couvrent avec de la marge.
+ *
+ * Elles servent au planificateur : une préparation qui ne produit jamais un
+ * effort de cette forme laisse la durabilité au repli de population, et la
+ * prédiction de course avec elle.
+ */
+export const DURABILITY_MEASURABLE = {
+  minDurationS: 70 * 60,
+  minVertM: 450,
+} as const;
+
+/**
  * Extrait les fenêtres de 10 min exploitables : effort aérobie continu, FC
  * disponible, vitesse crédible. Les fenêtres contenant des arrêts ou du travail
  * supra-seuil sont écartées — elles feraient dire n'importe quoi à la régression.

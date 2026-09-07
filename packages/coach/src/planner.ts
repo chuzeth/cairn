@@ -1,9 +1,16 @@
 import type {
-  AthleteConstraints, PhysiologyModel, PlannedSession, RaceGoal,
-  SessionType, TrainingPlan, TrainingWeek,
+  AppliedDirective, AthleteAmbition, AthleteConstraints, PhysiologyModel, PlannedSession,
+  RaceGoal, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
-import { targetDistribution, targetRaceDayTsb } from '@cairn/physiology';
-import { addDays, buildPeriodization, mondayOf, type WeekPlanSpec } from './periodization.js';
+import { DURABILITY_MEASURABLE, projectFrom, targetDistribution, targetRaceDayTsb } from '@cairn/physiology';
+import {
+  TAPER_SCALE_BOUNDS, addDays, buildPeriodization, mondayOf, type WeekPlanSpec,
+} from './periodization.js';
+import {
+  INTERVAL_FORMAT, applied, appliedAmbition, clampCadence, criteriaFor, durationDirectiveFor,
+  formatDirectiveDuration, honourWeeklyFrequency, indexDirectives, isIntervalSession,
+  nextIntervalFormat, type DirectiveSet,
+} from './directives.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
 
@@ -17,8 +24,15 @@ import type { SessionTemplate } from './sessionLibrary.js';
  *    très descendante) avant une nouvelle sollicitation du même type ;
  *  · une charge hebdomadaire qui atteint la cible sans la dépasser.
  *
+ * Il résout aussi, depuis qu'il lit le dossier entier, les consignes que le
+ * praticien a écrites en prose : plages de durée du travail foncier, fréquences
+ * hebdomadaires, cible de cadence, un seul fractionné par semaine. Elles
+ * arrivent par `directives` et sont appliquées dans `directives.ts` ; le
+ * planificateur ne les invente pas et ne peut pas en produire d'autres.
+ *
  * Le résultat est déterministe et auditable : chaque séance porte la raison de
- * sa présence à cette place dans la semaine.
+ * sa présence à cette place dans la semaine, et l'extrait du dossier qui a
+ * fixé sa forme.
  */
 
 const uid = () => `ses_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
@@ -31,62 +45,102 @@ export interface WeekBuildInput {
   race: RaceGoal;
   /** Vitesse cible de course, m/s — pour les séances à allure spécifique. */
   racePaceMs?: number;
+  /**
+   * Directives issues du dossier. Absentes, le plan retombe sur ses quatre
+   * nombres — ce qui reste possible, mais se voit.
+   */
+  directives?: TrainingDirective[];
+  /** Ambition de long terme, quand elle est au dossier. */
+  ambition?: AthleteAmbition;
+  /**
+   * Format du fractionné de la semaine. Le plan complet le fait alterner sur
+   * toute la préparation ; une semaine construite seule retombe sur la parité
+   * de son index.
+   */
+  intervalFormat?: 'short' | 'medium';
 }
 
-/** Choisit les séances de qualité de la semaine, en alternant les stimuli. */
+/** L'ambition qui change ce que le plan privilégie : la tenue dans la durée. */
+function isLongFormat(ambition?: AthleteAmbition): boolean {
+  return ambition?.format === 'trail_long' || ambition?.format === 'ultra';
+}
+
+/**
+ * Choisit les séances de qualité de la semaine.
+ *
+ * Le compte rendu limite les fractionnés à un par semaine, en alternant court
+ * et moyen, et range explicitement la résistance douce — tempo, fartlek
+ * vallonné, descente, allure spécifique — parmi les séances intenses qui
+ * restent permises à côté. La semaine porte donc au plus un fractionné ; le
+ * second créneau, quand la phase en ouvre un, reçoit un stimulus continu.
+ *
+ * L'ordre compte : le premier choisi obtient le meilleur jour. En phase
+ * spécifique, c'est l'allure de course qui passe devant — et la semaine peut
+ * alors n'avoir aucun fractionné, ce que la consigne autorise, sans que
+ * l'alternance saute un tour pour autant.
+ */
 function selectQualitySessions(input: WeekBuildInput): SessionTemplate[] {
   const { spec, model } = input;
   const i = spec.index;
-  const out: SessionTemplate[] = [];
 
   // Le nombre de créneaux vient du squelette de périodisation, mais celui-ci a
   // pu être calculé avec des contraintes désormais périmées — l'athlète change
   // ses disponibilités depuis le chat sans que tout le plan soit reconstruit.
   // Les contraintes passées à `buildWeek` font foi.
   const slots = Math.min(spec.qualitySlots, input.constraints.maxQualitySessionsPerWeek);
+  if (slots <= 0) return [];
+
+  const format = input.intervalFormat ?? (i % 2 === 0 ? 'short' : 'medium');
+  const medium = format === 'medium';
+  const longAmbition = isLongFormat(input.ambition);
 
   // En décharge, on conserve **l'intensité** mais on coupe le **volume** de
   // travail : c'est ce qui permet d'assimiler sans rien perdre. Laisser la
   // séance de qualité à pleine dose ferait dépasser la cible hebdomadaire et
   // annulerait l'intérêt de la semaine.
   if (spec.isDeload) {
-    out.push(i % 2 === 0 ? lib.threshold(model, 3, 4) : lib.vo2max(model, '30-30', 1, 8));
-    return out.slice(0, Math.max(0, slots));
+    return [medium ? lib.threshold(model, 3, 4) : lib.vo2max(model, '30-30', 1, 8)];
   }
+
+  const out: SessionTemplate[] = [];
 
   switch (spec.phase) {
     case 'base':
-      // Une seule séance intense par semaine, comme prescrit au laboratoire.
-      out.push(i % 2 === 0 ? lib.hillRepeats(model, 8, 90, 0.1) : lib.tempo(model, 20));
+      out.push(medium ? lib.threshold(model, 4, 5) : lib.hillRepeats(model, 8, 90, 0.1));
+      if (slots >= 2) out.push(lib.tempo(model, 20));
       break;
 
     case 'build':
-      // Alternance court / moyen — jamais deux fractionnés courts de suite.
-      out.push(i % 2 === 0 ? lib.vo2max(model, '30-30', 2, 10) : lib.threshold(model, 5, 5));
+      out.push(medium ? lib.threshold(model, 5, 5) : lib.vo2max(model, '30-30', 2, 10));
       if (slots >= 2) {
-        out.push(i % 4 === 1 ? lib.downhillSession(model, 6, 150) : lib.hillRepeats(model, 10, 90, 0.1));
+        // La tolérance excentrique est le facteur limitant du trail long : quand
+        // c'est là que l'athlète veut performer, la descente passe devant le
+        // tempo sur le créneau de résistance douce.
+        out.push(longAmbition || i % 2 === 1 ? lib.downhillSession(model, 6, 150) : lib.tempo(model, 25));
       }
       break;
 
     case 'specific':
       out.push(lib.racePace(model, 40, input.racePaceMs, 250));
-      if (slots >= 2) {
-        out.push(i % 2 === 0 ? lib.threshold(model, 4, 8) : lib.downhillSession(model, 6, 180));
-      }
+      if (slots >= 2) out.push(medium ? lib.threshold(model, 4, 8) : lib.vo2max(model, '1-1', 2, 8));
       break;
 
     case 'peak':
-      out.push(lib.threshold(model, 4, 6));
+      out.push(medium ? lib.threshold(model, 4, 6) : lib.vo2max(model, '30-30', 2, 8));
       if (slots >= 2) out.push(lib.racePace(model, 30, input.racePaceMs, 200));
       break;
 
     case 'taper':
       // On maintient l'intensité mais on coupe le volume : c'est ce qui préserve
-      // les adaptations tout en libérant la fraîcheur.
+      // les adaptations tout en libérant la fraîcheur. La semaine de course
+      // échappe à l'alternance — ses six répétitions sont un rappel de foulée,
+      // pas le fractionné de la semaine.
       out.push(
-        spec.weeksToRace <= 1
+        spec.weeksToRace <= 0
           ? lib.vo2max(model, '30-30', 1, 6)
-          : lib.threshold(model, 3, 5),
+          : medium
+            ? lib.threshold(model, 3, 5)
+            : lib.vo2max(model, '30-30', 1, 8),
       );
       break;
 
@@ -105,10 +159,18 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
   const raceVertPerKm =
     race.course.distanceM > 0 ? (race.course.elevationGainM / race.course.distanceM) * 1000 : 0;
   const isMountain = raceVertPerKm > 25;
+  const longAmbition = isLongFormat(input.ambition);
 
   // Le volume de la sortie longue suit la cible hebdomadaire : ~35 % du temps
-  // total en base, jusqu'à 45 % en spécifique.
-  const share = spec.phase === 'specific' ? 0.45 : spec.phase === 'taper' ? 0.3 : 0.38;
+  // total en base, jusqu'à 45 % en spécifique. L'ambition longue distance fait
+  // monter la part : la durabilité se construit — et ne se mesure — que sur un
+  // effort d'un seul tenant, jamais sur un cumul de footings de semaine.
+  const share =
+    spec.phase === 'specific'
+      ? longAmbition ? 0.5 : 0.45
+      : spec.phase === 'taper'
+        ? 0.3
+        : longAmbition ? 0.45 : 0.38;
   const durationMin = Math.round(
     Math.min((spec.targetDurationS * share) / 60, spec.phase === 'taper' ? 90 : 300),
   );
@@ -116,8 +178,24 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
     Math.min(spec.targetElevationGainM * 0.65, constraints.accessibleVertPerSession * 1.8),
   );
 
-  if (isMountain && spec.phase !== 'base') return lib.longTrail(model, Math.max(90, durationMin), Math.max(400, vert));
-  return lib.longRun(model, Math.max(60, durationMin), Math.max(0, vert));
+  // Planchers de mesurabilité : en dessous, la séance entraîne mais ne dit rien.
+  // Ils ne s'appliquent ni en décharge ni en affûtage, où la semaine a une autre
+  // fonction que de produire des données.
+  const measuring = longAmbition && !spec.isDeload && spec.phase !== 'taper';
+  const minDurationMin = measuring ? DURABILITY_MEASURABLE.minDurationS / 60 : 0;
+  const minVert = measuring ? DURABILITY_MEASURABLE.minVertM : 0;
+
+  // La rando-course est le format spécifique du compte rendu — « puis, de
+  // manière spécifique ». Elle reste hors de la phase foncière, que le même
+  // texte confie aux footings prolongés.
+  if ((isMountain || longAmbition) && spec.phase !== 'base') {
+    return lib.longTrail(
+      model,
+      Math.max(90, minDurationMin, durationMin),
+      Math.max(400, minVert, vert),
+    );
+  }
+  return lib.longRun(model, Math.max(60, minDurationMin, durationMin), Math.max(0, minVert, vert));
 }
 
 /**
@@ -211,7 +289,11 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   }
 
   // ── 4. Calibration sur la charge cible ────────────────────────────────────
-  const sessions = calibrateToTarget([...assigned.entries()], spec, model, athleteId, reasons);
+  const set = indexDirectives(input.directives);
+  const sessions = calibrateToTarget([...assigned.entries()], spec, athleteId, reasons, set);
+
+  // ── 5. Directives du dossier ──────────────────────────────────────────────
+  honourDirectives(sessions, set, input);
 
   const dist = targetDistribution(spec.phase);
   return {
@@ -229,26 +311,49 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
 }
 
 /**
- * Ajuste le volume des séances d'endurance pour atteindre la charge cible.
+ * Ajuste le volume pour atteindre la charge cible.
+ *
  * Les séances de qualité ne sont jamais étirées ni raccourcies : leur dosage
- * est physiologique, pas comptable. Seul le volume facile sert de variable
- * d'ajustement — ce que fait n'importe quel entraîneur sérieux.
+ * est physiologique, pas comptable. La sortie longue non plus, depuis que sa
+ * durée est prescrite : elle passe la première, on la borne dans la plage du
+ * dossier, et c'est le volume facile qui absorbe le reste — ce que fait
+ * n'importe quel entraîneur sérieux, et ce que le plan faisait à l'envers.
  */
 function calibrateToTarget(
   entries: [number, SessionTemplate][],
   spec: WeekPlanSpec,
-  model: PhysiologyModel,
   athleteId: string,
   reasons: Map<number, string>,
+  set: DirectiveSet,
 ): PlannedSession[] {
-  const adjustable = entries.filter(([, s]) => s.type === 'endurance' || s.type === 'long_run' || s.type === 'long_trail');
+  const isLong = (s: SessionTemplate) => s.type === 'long_run' || s.type === 'long_trail';
+  const isFiller = (s: SessionTemplate) => s.type === 'endurance';
   const fixedLoad = entries
-    .filter(([, s]) => !adjustable.some(([, a]) => a === s))
+    .filter(([, s]) => !isLong(s) && !isFiller(s))
     .reduce((a, [, s]) => a + s.plannedLoad, 0);
-  const adjustableLoad = adjustable.reduce((a, [, s]) => a + s.plannedLoad, 0);
+  const adjustableLoad = entries
+    .filter(([, s]) => isLong(s) || isFiller(s))
+    .reduce((a, [, s]) => a + s.plannedLoad, 0);
 
   const wanted = Math.max(0, spec.targetLoad - fixedLoad);
   const scale = adjustableLoad > 0 ? clamp(wanted / adjustableLoad, 0.55, 1.7) : 1;
+
+  // La sortie longue d'abord : sa durée relève de la prescription, pas du solde
+  // de la semaine.
+  const longFactors = new Map<SessionTemplate, number>();
+  for (const [, s] of entries.filter(([, x]) => isLong(x))) {
+    longFactors.set(s, longFactor(s, scale, spec, set));
+  }
+  const longLoad = [...longFactors].reduce((a, [s, f]) => a + s.plannedLoad * f, 0);
+
+  // Ce qui reste retombe sur le volume facile. Le plancher est plus bas que le
+  // facteur commun d'avant : une sortie longue prescrite doit pouvoir faire
+  // reculer les footings de semaine, sinon la plage n'est pas honorée.
+  const fillerLoad = entries
+    .filter(([, s]) => isFiller(s))
+    .reduce((a, [, s]) => a + s.plannedLoad, 0);
+  const fillerScale =
+    fillerLoad > 0 ? clamp((spec.targetLoad - fixedLoad - longLoad) / fillerLoad, 0.35, 1.7) : 1;
 
   // Filet de sécurité : quand les séances non ajustables pèsent déjà plus que
   // la cible de la semaine (décharge, affûtage, semaine très courte), le volume
@@ -262,27 +367,164 @@ function calibrateToTarget(
   return entries
     .sort(([a], [b]) => weekOrder(a) - weekOrder(b))
     .map(([day, s]) => {
-      const isAdjustable = adjustable.some(([, a]) => a === s);
-      const factor = isAdjustable ? cappedFactor(s, scale) : globalScale;
+      const scalable = isLong(s) || isFiller(s);
+      const factor = isLong(s)
+        ? (longFactors.get(s) as number)
+        : isFiller(s)
+          ? cappedFactor(s, fillerScale)
+          : globalScale;
       const date = addDays(spec.weekStart, weekOrder(day));
+      // Les blocs annexes — souplesse, respiration — ne suivent pas le facteur
+      // d'échelle : leur durée est prescrite au dossier, pas déduite de la
+      // charge de la semaine. Ramener dix minutes d'étirements à sept parce que
+      // la semaine est chargée, c'est ne plus honorer la consigne du tout.
+      const ancillaryS = s.blocks
+        .filter((b) => b.kind)
+        .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
+      const runningS = Math.max(0, s.durationS - ancillaryS);
       return {
         id: uid(),
         athleteId,
         date,
         type: s.type as SessionType,
-        title: factor !== 1 && s.durationS > 0 ? retitle(s, factor) : s.title,
+        title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS) : s.title,
         intent: s.intent,
-        blocks: isAdjustable ? s.blocks.map((b) => ({ ...b, durationS: b.durationS ? Math.round(b.durationS * factor) : undefined })) : s.blocks,
+        blocks: scalable
+          ? s.blocks.map((b) =>
+              b.kind ? b : { ...b, durationS: b.durationS ? Math.round(b.durationS * factor) : undefined },
+            )
+          : s.blocks,
         plannedLoad: Math.round(s.plannedLoad * factor),
-        plannedMechanicalLoad: Math.round(s.plannedMechanicalLoad * (isAdjustable ? factor : 1)),
-        plannedDurationS: Math.round(s.durationS * factor),
+        plannedMechanicalLoad: Math.round(s.plannedMechanicalLoad * (scalable ? factor : 1)),
+        plannedDurationS: Math.round(runningS * factor) + (scalable ? ancillaryS : 0),
         plannedDistanceM: s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined,
-        plannedElevationGainM: Math.round(s.elevationGainM * (isAdjustable ? factor : 1)),
+        plannedElevationGainM: Math.round(s.elevationGainM * (scalable ? factor : 1)),
         priority: s.priority,
         status: 'planned' as const,
         rationale: reasons.get(day),
       };
     });
+}
+
+/**
+ * Facteur d'échelle de la sortie longue.
+ *
+ * La plage prescrite prime sur le calcul de charge, sauf en décharge et en
+ * affûtage : ces semaines-là ont une autre fonction, et un plancher d'1 h 30
+ * appliqué à un affûtage n'est plus un affûtage. Le plafond, lui, tient
+ * toujours — rien ne justifie de dépasser ce que le praticien a écrit.
+ */
+function longFactor(
+  s: SessionTemplate,
+  scale: number,
+  spec: WeekPlanSpec,
+  set: DirectiveSet,
+): number {
+  const factor = cappedFactor(s, scale);
+  const directive = durationDirectiveFor(set, s.type as SessionType);
+  if (!directive || s.durationS <= 0) return factor;
+  const ceiling = Math.min(factor, directive.maxS / s.durationS);
+  if (spec.isDeload || spec.phase === 'taper') return ceiling;
+  return Math.max(ceiling, Math.min(directive.minS / s.durationS, directive.maxS / s.durationS));
+}
+
+/**
+ * Applique à la semaine ce que le dossier prescrit et ce que l'ambition
+ * privilégie, et en laisse la trace sur chaque séance concernée.
+ */
+function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: WeekBuildInput): void {
+  const longAmbition = isLongFormat(input.ambition);
+  const spec = input.spec;
+
+  for (const s of sessions) {
+    const traces: AppliedDirective[] = [...(s.directives ?? [])];
+
+    const cadence = clampCadence(s.blocks, set.cadence);
+    if (cadence.changed && set.cadence) {
+      s.blocks = cadence.blocks;
+      traces.push(applied(set.cadence));
+    }
+
+    const criteria = criteriaFor(set, s.type);
+    if (criteria.length > 0) s.successCriteria = criteria;
+
+    const duration = durationDirectiveFor(set, s.type);
+    if (duration && s.plannedDurationS > 0) {
+      const plage =
+        `${formatDirectiveDuration(duration.minS)} – ${formatDirectiveDuration(duration.maxS)}`;
+      const retenu = formatDirectiveDuration(s.plannedDurationS);
+      // Dire « plage honorée » sur une semaine qui en est dispensée serait un
+      // mensonge de plus dans une trace censée expliquer d'où vient la consigne.
+      const inside = s.plannedDurationS >= duration.minS && s.plannedDurationS <= duration.maxS;
+      traces.push(
+        applied(
+          duration,
+          inside
+            ? `Plage prescrite ${plage} : ${retenu} retenues.`
+            : `Plage prescrite ${plage} ; ${retenu} retenues — ` +
+              `${spec.isDeload ? 'semaine de décharge' : "semaine d'affûtage"}, le plancher ne s'y applique pas.`,
+        ),
+      );
+    }
+
+    if (set.intervals && isIntervalSession(s.type)) {
+      traces.push(
+        applied(
+          set.intervals,
+          `Le fractionné de la semaine, format ${INTERVAL_FORMAT[s.type] === 'short' ? 'court' : 'moyen'} — ` +
+            `le dossier n'en autorise qu'un, en alternant court et moyen.`,
+        ),
+      );
+    }
+
+    if (longAmbition && input.ambition && (s.type === 'long_run' || s.type === 'long_trail')) {
+      if (!spec.isDeload && spec.phase !== 'taper') raiseVertToMeasurable(s);
+      const measurable =
+        s.plannedDurationS >= DURABILITY_MEASURABLE.minDurationS &&
+        (s.plannedElevationGainM ?? 0) >= DURABILITY_MEASURABLE.minVertM;
+      traces.push(
+        appliedAmbition(
+          input.ambition,
+          measurable
+            ? `Sortie longue privilégiée par l'ambition trail long : ${formatDirectiveDuration(s.plannedDurationS)} ` +
+              `et ${Math.round(s.plannedElevationGainM ?? 0)} m D+ d'un seul tenant, de quoi mesurer la durabilité ` +
+              `au lieu de la supposer.`
+            : `Sortie longue privilégiée par l'ambition trail long, mais trop courte cette semaine pour produire ` +
+              `une mesure de durabilité — il y faut ${formatDirectiveDuration(DURABILITY_MEASURABLE.minDurationS)} ` +
+              `et ${DURABILITY_MEASURABLE.minVertM} m D+.`,
+        ),
+      );
+    }
+
+    if (traces.length > 0) s.directives = traces;
+  }
+
+  honourWeeklyFrequency(sessions, set);
+}
+
+/**
+ * Relève le dénivelé de la sortie longue jusqu'au seuil de mesurabilité.
+ *
+ * La calibration met le dénivelé à l'échelle de la durée : une sortie ramenée
+ * de 3 h 30 à 2 h 30 pour tenir dans la plage prescrite perd un tiers de son
+ * D+, et repasse sous ce qu'il faut pour que la régression produise une pente
+ * par 1 000 m. La séance entraînerait quand même — mais elle ne dirait rien,
+ * et c'est exactement le défaut qu'on corrige : une durabilité jamais mesurée
+ * parce que rien dans le plan n'a la forme qui la mesure.
+ */
+function raiseVertToMeasurable(s: PlannedSession): void {
+  const floor = DURABILITY_MEASURABLE.minVertM;
+  const current = s.plannedElevationGainM ?? 0;
+  const carriers = s.blocks.filter((b) => b.elevationGainM);
+  const carried = carriers.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM as number), 0);
+  if (current >= floor || carried <= 0) return;
+
+  const k = floor / carried;
+  s.blocks = s.blocks.map((b) =>
+    b.elevationGainM ? { ...b, elevationGainM: Math.round(b.elevationGainM * k) } : b,
+  );
+  s.plannedMechanicalLoad = Math.round(s.plannedMechanicalLoad * (current > 0 ? floor / current : 1));
+  s.plannedElevationGainM = floor;
 }
 
 /**
@@ -293,8 +535,8 @@ function calibrateToTarget(
  * pire qu'un titre vague — il donne une consigne fausse. Les mentions ajoutées
  * en aval (« + renforcement ») sont préservées.
  */
-function retitle(s: SessionTemplate, factor: number): string {
-  const minutes = Math.round((s.durationS * factor) / 60);
+function retitle(s: SessionTemplate, factor: number, runningS = s.durationS): string {
+  const minutes = Math.round((runningS * factor) / 60);
   const durationLabel = minutes >= 90 ? `${(minutes / 60).toFixed(1)} h` : `${minutes} min`;
   const vert = Math.round(s.elevationGainM * factor);
 
@@ -368,11 +610,65 @@ export interface BuildPlanInput {
   model: PhysiologyModel;
   constraints: AthleteConstraints;
   race: RaceGoal;
+  /**
+   * Charge chronique **au premier jour du plan**, pas au jour où on le
+   * construit. Onze jours de coupure entre les deux dates suffisent à faire
+   * proposer une semaine de reprise que l'athlète ne peut plus tenir.
+   */
   currentCtl: number;
+  /**
+   * Charge aiguë au premier jour du plan. Absente, on la suppose égale à la
+   * chronique — TSB nul au départ. C'est neutre, et c'est faux après une
+   * coupure : l'appelant la calcule dès qu'il en a les moyens.
+   */
+  currentAtl?: number;
   estimatedRaceDurationS: number;
   racePaceMs?: number;
   startDate?: string;
+  /** Directives issues du dossier de l'athlète. */
+  directives?: TrainingDirective[];
+  /** Ambition de long terme, distincte de la course cible. */
+  ambition?: AthleteAmbition;
 }
+
+/**
+ * Ce que le plan produit, mesuré contre la cible qu'il s'est donnée.
+ *
+ * La mesure se lit **la veille de la course**, pas le jour J : la charge de la
+ * course elle-même entre dans le calcul du jour J, et ce qu'on y lirait serait
+ * l'état d'arrivée, pas celui du départ.
+ *
+ * Elle porte sur les charges des séances effectivement produites — plafonds de
+ * durée, plages du dossier et planchers de calibration compris — et non sur les
+ * charges cibles des semaines, qu'aucune séance n'est tenue d'atteindre.
+ */
+export interface RaceDayTsbCheck {
+  /** Veille de course : le dernier jour dont la charge pèse sur le matin du départ. */
+  date: string;
+  /** TSB visé, fonction de la durée de l'épreuve. */
+  target: number;
+  /** TSB que les charges du plan produisent à cette date. */
+  projected: number;
+  /** Projeté moins cible. Négatif : l'athlète prend le départ encore chargé. */
+  gap: number;
+  onTarget: boolean;
+  /** Profondeur d'affûtage retenue, en multiple de sa forme nominale. */
+  taperScale: number;
+  /**
+   * Ce qui a empêché d'atteindre la cible, en clair. `null` quand elle est
+   * atteinte — une cible manquée sans explication est une cible manquée en
+   * silence, c'est-à-dire le défaut lui-même.
+   */
+  shortfall: string | null;
+}
+
+/**
+ * Tolérance sur la cible de TSB.
+ *
+ * Un demi-point de TSB ne correspond à aucune différence lisible sur le
+ * terrain : viser plus fin donnerait une précision inventée.
+ */
+const TSB_TOLERANCE = 0.5;
 
 /**
  * Charge chronique de départ présumée quand l'historique est vide ou trop mince.
@@ -391,35 +687,183 @@ export function assumedCtl(constraints: AthleteConstraints): number {
   return Math.round((realizedHours * 50) / 7);
 }
 
-export function buildTrainingPlan(input: BuildPlanInput): { plan: TrainingPlan; weeks: TrainingWeek[] } {
-  const startDate = input.startDate ?? new Date().toISOString().slice(0, 10);
+/** Une tentative de plan et ce qu'elle produit à la veille de la course. */
+interface PlanAttempt {
+  weeks: TrainingWeek[];
+  taperScale: number;
+  projectedTsb: number;
+}
 
-  const estimated = assumedCtl(input.constraints);
-  const ctlIsAssumed = input.currentCtl < estimated * 0.45;
-  const effectiveCtl = ctlIsAssumed ? estimated : input.currentCtl;
-
+/** Construit les semaines pour une profondeur d'affûtage donnée. */
+function buildWeeks(input: BuildPlanInput, startDate: string, ctl: number, taperScale: number): TrainingWeek[] {
   const specs = buildPeriodization({
     startDate,
     race: input.race,
     estimatedRaceDurationS: input.estimatedRaceDurationS,
-    currentCtl: effectiveCtl,
+    currentCtl: ctl,
     constraints: input.constraints,
     raceElevationGainM: input.race.course.elevationGainM,
+    taperScale,
   });
 
-  const weeks = specs.map((spec) =>
-    buildWeek({
+  // L'alternance court / moyen porte sur les fractionnés effectivement
+  // prescrits, pas sur les semaines : une semaine sans fractionné — la phase
+  // spécifique donne la priorité à l'allure de course — ne fait pas sauter un
+  // tour à l'alternance.
+  const policy = indexDirectives(input.directives).intervals;
+  let intervals = 0;
+  return specs.map((spec) => {
+    const week = buildWeek({
       spec,
       model: input.model,
       constraints: input.constraints,
       athleteId: input.athleteId,
       race: input.race,
       racePaceMs: input.racePaceMs,
-    }),
+      directives: input.directives,
+      ambition: input.ambition,
+      intervalFormat: nextIntervalFormat(policy, intervals),
+    });
+    if (week.sessions.some((s) => isIntervalSession(s.type))) intervals++;
+    return week;
+  });
+}
+
+/**
+ * Résout la profondeur d'affûtage qui amène le TSB de la veille sur sa cible.
+ *
+ * Alléger l'affûtage monte la fraîcheur, l'alourdir la fait baisser : la
+ * fonction est monotone, une dichotomie suffit. Quand la cible reste hors
+ * d'atteinte à l'une des deux bornes, on rend la tentative la plus proche —
+ * c'est elle qui portera l'explication de l'écart, plutôt que de laisser croire
+ * à une cible tenue.
+ */
+function solveTaperScale(attempt: (k: number) => PlanAttempt, target: number): PlanAttempt {
+  const distance = (a: PlanAttempt) => Math.abs(a.projectedTsb - target);
+
+  // Affûtage le plus profond permis : c'est lui qui donne le TSB le plus haut.
+  let lo = attempt(TAPER_SCALE_BOUNDS.min);
+  if (lo.projectedTsb <= target + TSB_TOLERANCE) return lo;
+  // Affûtage le plus léger permis : le TSB le plus bas.
+  let hi = attempt(TAPER_SCALE_BOUNDS.max);
+  if (hi.projectedTsb >= target - TSB_TOLERANCE) return hi;
+
+  let best = distance(lo) <= distance(hi) ? lo : hi;
+  for (let i = 0; i < 12 && distance(best) > TSB_TOLERANCE; i++) {
+    const mid = attempt((lo.taperScale + hi.taperScale) / 2);
+    if (distance(mid) < distance(best)) best = mid;
+    if (mid.projectedTsb > target) lo = mid;
+    else hi = mid;
+  }
+  return best;
+}
+
+/**
+ * Explique un écart à la cible de TSB, quand il en reste un.
+ *
+ * Les deux directions ne se corrigent pas de la même façon : trop chargé, il
+ * manque du temps ou l'affûtage bute sur son plancher ; trop frais, c'est la
+ * charge disponible qui n'a pas suffi à construire la forme que la cible
+ * suppose.
+ */
+function tsbShortfall(
+  gap: number,
+  target: number,
+  taperScale: number,
+  weeks: number,
+  taper: number,
+  startCtl: number,
+  maxWeeklyHours: number,
+): string {
+  const atFloor = taperScale <= TAPER_SCALE_BOUNDS.min + 1e-6;
+  const atCeiling = taperScale >= TAPER_SCALE_BOUNDS.max - 1e-6;
+  const depth = `L'affûtage est à ${Math.round(taperScale * 100)} % de sa profondeur nominale`;
+  const frame =
+    `${weeks} semaine${weeks > 1 ? 's' : ''} dont ${taper} d'affûtage, ` +
+    `charge chronique de départ ${Math.round(startCtl)}`;
+
+  if (gap < 0) {
+    return (
+      `Cible manquée par le bas : l'athlète prendrait le départ encore chargé. ` +
+      (atFloor
+        ? `${depth}, son plancher — en dessous, la charge chronique se perdrait plus vite que la ` +
+          `fatigue ne s'évacue, et la fraîcheur gagnée coûterait la forme. `
+        : `${depth}. `) +
+      `${frame} : il n'y a pas la place d'aller chercher les ${Math.abs(gap).toFixed(1)} points qui manquent.`
+    );
+  }
+  return (
+    `Cible dépassée par le haut : l'athlète prendrait le départ plus frais que visé, donc moins entraîné. ` +
+    (atCeiling
+      ? `${depth}, son plafond — au-delà, la fin de préparation ne serait plus un affûtage. `
+      : `${depth}. `) +
+    `${frame}, plafond de ${maxWeeklyHours} h par semaine : la charge disponible ne construit pas ` +
+    `la forme qu'un TSB de ${signed(target)} suppose.`
   );
+}
+
+const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
+
+export function buildTrainingPlan(input: BuildPlanInput): {
+  plan: TrainingPlan;
+  weeks: TrainingWeek[];
+  tsbCheck: RaceDayTsbCheck;
+} {
+  const startDate = input.startDate ?? new Date().toISOString().slice(0, 10);
+
+  const estimated = assumedCtl(input.constraints);
+  const ctlIsAssumed = input.currentCtl < estimated * 0.45;
+  const effectiveCtl = ctlIsAssumed ? estimated : input.currentCtl;
+  // Une charge chronique supposée ne peut pas s'accompagner d'une charge aiguë
+  // mesurée : la paire n'aurait plus de sens, et le TSB de départ non plus.
+  const seed = {
+    ctl: effectiveCtl,
+    atl: ctlIsAssumed ? effectiveCtl : input.currentAtl ?? effectiveCtl,
+  };
+
+  // ── Cible de TSB, et mesure de ce que le plan en fait ──────────────────────
+  const tsb = targetRaceDayTsb(input.estimatedRaceDurationS);
+  const raceDate = input.race.date.slice(0, 10);
+  const eve = addDays(raceDate, -1);
+  const planStart = mondayOf(startDate);
+
+  const attempt = (taperScale: number): PlanAttempt => {
+    const built = buildWeeks(input, startDate, effectiveCtl, taperScale);
+    const loads = built.flatMap((w) => w.sessions.map((s) => ({ date: s.date, load: s.plannedLoad })));
+    const points = projectFrom(seed, loads, planStart, eve);
+    return {
+      weeks: built,
+      taperScale,
+      projectedTsb: points[points.length - 1]?.tsb ?? Math.round((seed.ctl - seed.atl) * 10) / 10,
+    };
+  };
+
+  const solved = solveTaperScale(attempt, tsb.metabolic);
+  const weeks = solved.weeks;
+  const gap = Math.round((solved.projectedTsb - tsb.metabolic) * 10) / 10;
+  const taperCount = weeks.filter((w) => w.phase === 'taper').length;
+  const tsbCheck: RaceDayTsbCheck = {
+    date: eve,
+    target: tsb.metabolic,
+    projected: solved.projectedTsb,
+    gap,
+    onTarget: Math.abs(gap) <= TSB_TOLERANCE,
+    taperScale: Math.round(solved.taperScale * 100) / 100,
+    shortfall:
+      Math.abs(gap) <= TSB_TOLERANCE
+        ? null
+        : tsbShortfall(
+            gap,
+            tsb.metabolic,
+            solved.taperScale,
+            weeks.length,
+            taperCount,
+            effectiveCtl,
+            input.constraints.maxWeeklyHours,
+          ),
+  };
 
   // La course elle-même remplace la séance du jour.
-  const raceDate = input.race.date.slice(0, 10);
   const raceWeek = weeks.find((w) => w.sessions.some((s) => s.date === raceDate));
   if (raceWeek) {
     raceWeek.sessions = raceWeek.sessions.filter((s) => s.date !== raceDate);
@@ -443,7 +887,6 @@ export function buildTrainingPlan(input: BuildPlanInput): { plan: TrainingPlan; 
     raceWeek.sessions.sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  const tsb = targetRaceDayTsb(input.estimatedRaceDurationS);
   const now = new Date().toISOString();
 
   return {
@@ -455,13 +898,25 @@ export function buildTrainingPlan(input: BuildPlanInput): { plan: TrainingPlan; 
       goalRaceId: input.race.id,
       weeks,
       targetRaceDayTsb: tsb.metabolic,
+      projectedRaceDayTsb: tsbCheck.projected,
+      raceDayTsbShortfall: tsbCheck.shortfall ?? undefined,
       revisionLog: [
         {
           at: now,
           trigger: 'initial',
           summary:
             `Plan construit sur ${weeks.length} semaines jusqu'à « ${input.race.name} » (${input.race.date.slice(0, 10)}). ` +
-            `Départ de CTL ${Math.round(effectiveCtl)}, cible de TSB à J−0 : +${tsb.metabolic}.` +
+            `Départ de CTL ${Math.round(effectiveCtl)}. Cible de TSB à la veille de course (${eve}) : ` +
+            `${signed(tsb.metabolic)} ; les charges du plan y amènent ${signed(tsbCheck.projected)} ` +
+            `(écart ${signed(gap)}, affûtage à ${Math.round(solved.taperScale * 100)} % de sa profondeur nominale).` +
+            (tsbCheck.shortfall ? ` ⚠ ${tsbCheck.shortfall}` : '') +
+            (input.directives?.length
+              ? ` ${input.directives.length} directives du dossier honorées (durées du travail foncier, ` +
+                `critère de dérive cardiaque, fréquences hebdomadaires, cadence, un fractionné par semaine).`
+              : ' Aucune directive au dossier : le plan ne repose que sur les paramètres physiologiques.') +
+            (input.ambition
+              ? ` Ambition portée au modèle : ${input.ambition.format.replace('_', ' ')}, depuis le ${input.ambition.since}.`
+              : '') +
             (ctlIsAssumed
               ? ` ⚠ Historique d'entraînement insuffisant : la charge de départ est estimée depuis ` +
                 `les ${input.constraints.maxWeeklyHours} h/semaine déclarées, et non mesurée. ` +
@@ -472,6 +927,7 @@ export function buildTrainingPlan(input: BuildPlanInput): { plan: TrainingPlan; 
       ],
     },
     weeks,
+    tsbCheck,
   };
 }
 

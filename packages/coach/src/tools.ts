@@ -1,14 +1,18 @@
 import type { AbsenceKind, CourseProfile, PlannedSession, RaceGoal, SessionBlock } from '@cairn/core';
+import { directivesFor } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   describeZone, formatClock, formatDuration, formatPace, goalProbability,
   interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
+import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import { renderSession, sessionTotals } from './sessionLibrary.js';
-import { currentCriticalSpeed, loadAthleteState, rebuildPhysiologyModel } from './state.js';
+import {
+  currentCriticalSpeed, fitnessAtPlanStart, loadAthleteState, rebuildPhysiologyModel,
+} from './state.js';
 
 /**
  * Outils du coach.
@@ -237,7 +241,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'array',
           minItems: 1,
           description:
-            "Remplace intégralement le contenu prescrit. Durée, charge, distance et dénivelé de la séance sont recalculés depuis ces blocs, par la formule du planificateur. Exclusif de scale_load, qui multiplie le contenu existant au lieu de le remplacer.",
+            "Remplace intégralement le contenu prescrit. Durée, charge métabolique, distance, dénivelé et charge mécanique de la séance sont recalculés depuis ces blocs, par la formule du planificateur — la charge mécanique en supposant un parcours en boucle, le dénivelé négatif valant le positif. Exclusif de scale_load, qui multiplie le contenu existant au lieu de le remplacer.",
           items: BLOCK_SCHEMA,
         },
         rationale: str('Justification de la modification. Obligatoire.'),
@@ -316,6 +320,8 @@ const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
 const isDay = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
 const midnight = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 const arg = <T>(input: Record<string, unknown>, key: string): T | undefined => input[key] as T | undefined;
+/** Un TSB se lit signé : « 8,8 » et « −8,8 » ne décrivent pas le même athlète. */
+const signedTsb = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
 
 export interface ToolResult {
   content: unknown;
@@ -384,6 +390,28 @@ export async function executeTool(
               }
             : null,
           contraintes: profile.constraints,
+          // L'ambition n'est pas une course : elle n'a pas de date, elle oriente
+          // ce que le plan privilégie.
+          ambition: profile.ambition
+            ? {
+                format: profile.ambition.format,
+                depuis: profile.ambition.since,
+                fondements: profile.ambition.origin.map((o) => ({
+                  source: o.source,
+                  date: o.date,
+                  extrait: o.quote,
+                })),
+              }
+            : null,
+          // Ce que le planificateur lit du dossier, et d'où chaque consigne vient.
+          directives: directivesFor(profile).map((d) => ({
+            id: d.id,
+            nature: d.kind,
+            extrait: d.origin.quote,
+            source: d.origin.source,
+            date_document: d.origin.date,
+            part_du_planificateur: d.derived ?? null,
+          })),
         },
       };
     }
@@ -574,7 +602,11 @@ export async function executeTool(
             ? {
                 id: plan.plan.id,
                 course_cible: plan.plan.goalRaceId,
-                tsb_cible_jour_j: plan.plan.targetRaceDayTsb,
+                tsb_cible_veille: plan.plan.targetRaceDayTsb,
+                // Mesuré sur le plan tel qu'il est sorti du planificateur ; les
+                // séances retouchées depuis ne sont pas dans ce chiffre.
+                tsb_projete_veille_a_la_construction: plan.plan.projectedRaceDayTsb ?? null,
+                cible_manquee_parce_que: plan.plan.raceDayTsbShortfall ?? null,
                 revisions: plan.plan.revisionLog.slice(-4),
                 apercu_semaines: plan.weeks
                   .filter((w) => w.weekStart >= from.slice(0, 10) || w.sessions.some((s) => s.date >= from))
@@ -596,6 +628,18 @@ export async function executeTool(
             statut: s.status,
             activite_rattachee: s.completedActivityId ?? null,
             justification_placement: s.rationale,
+            criteres_de_reussite: s.successCriteria?.map((c) => ({
+              grandeur: c.metric,
+              borne: c.maxValue ?? null,
+              extrait: c.origin.quote,
+              date_document: c.origin.date,
+            })) ?? null,
+            directives_appliquees: s.directives?.map((d) => ({
+              directive: d.directiveId,
+              effet: d.effect,
+              extrait: d.origin.quote,
+              date_document: d.origin.date,
+            })) ?? null,
             ...(detailed ? { detail: renderSession(s) } : {}),
           })),
         },
@@ -755,15 +799,25 @@ export async function executeTool(
       const racePaceMs =
         prediction.predictedTimeS > 0 ? race.course.distanceM / prediction.predictedTimeS : undefined;
 
-      const { plan, weeks } = buildTrainingPlan({
+      // La charge de départ est celle du **premier jour du plan**, pas celle
+      // d'aujourd'hui : entre les deux, la forme continue de vivre.
+      const startDate = arg<string>(input, 'start_date');
+      const planStart = mondayOf(startDate ?? iso(new Date()));
+      const start = await fitnessAtPlanStart(state, planStart);
+
+      const { plan, weeks, tsbCheck } = buildTrainingPlan({
         athleteId,
         model: state.model,
         constraints: state.profile.constraints,
         race,
-        currentCtl: state.today.ctl,
+        currentCtl: start.ctl,
+        currentAtl: start.atl,
         estimatedRaceDurationS: prediction.predictedTimeS,
         racePaceMs,
-        startDate: arg<string>(input, 'start_date'),
+        startDate,
+        // Le dossier au complet, pas seulement ses quatre nombres.
+        directives: directivesFor(state.profile),
+        ambition: state.profile.ambition,
       });
 
       // L'historique des décisions survit à la reconstruction : on reporte le
@@ -777,17 +831,51 @@ export async function executeTool(
 
       await db.savePlan(plan, weeks);
 
+      const assumed = assumedCtl(state.profile.constraints);
+      const ctlIsAssumed = start.ctl < assumed * 0.45;
+
       return {
-        summary: `Plan reconstruit : ${weeks.length} semaines jusqu'à « ${race.name} »`,
+        summary:
+          `Plan reconstruit : ${weeks.length} semaines jusqu'à « ${race.name} » — ` +
+          `TSB projeté à la veille ${signedTsb(tsbCheck.projected)} pour une cible de ` +
+          `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}`,
         content: {
           plan_id: plan.id,
           course: race.name,
           date_course: race.date,
           semaines: weeks.length,
-          tsb_cible_jour_j: plan.targetRaceDayTsb,
+          // La cible et sa vérification vont ensemble : une cible seule ne dit
+          // pas si le plan l'atteint.
+          tsb_cible_veille: tsbCheck.target,
+          tsb_projete_veille: tsbCheck.projected,
+          date_veille: tsbCheck.date,
+          ecart_a_la_cible: tsbCheck.gap,
+          cible_atteinte: tsbCheck.onTarget,
+          profondeur_affutage: tsbCheck.taperScale,
+          cible_manquee_parce_que: tsbCheck.shortfall,
           temps_predit: formatClock(prediction.predictedTimeS),
-          charge_de_depart: Math.round(Math.max(state.today.ctl, assumedCtl(state.profile.constraints) * (state.today.ctl < assumedCtl(state.profile.constraints) * 0.45 ? 1 : 0))),
-          charge_de_depart_estimee: state.today.ctl < assumedCtl(state.profile.constraints) * 0.45,
+          charge_de_depart: Math.round(start.ctl),
+          charge_de_depart_estimee: ctlIsAssumed,
+          // Ce que la forme est devenue entre aujourd'hui et le départ du plan.
+          charge_de_depart_reportee_depuis: {
+            date_aujourdhui: state.today.date,
+            ctl_aujourdhui: state.today.ctl,
+            atl_aujourdhui: state.today.atl,
+            premier_jour_du_plan: planStart,
+            jours_intercalaires: start.gapDays,
+            charge_prevue_dans_lintervalle: start.gapLoad,
+            ctl_au_depart: Math.round(start.ctl * 10) / 10,
+            atl_au_depart: Math.round(start.atl * 10) / 10,
+          },
+          directives_honorees: directivesFor(state.profile).map((d) => ({
+            id: d.id,
+            nature: d.kind,
+            extrait: d.origin.quote,
+            source: d.origin.source,
+            date_document: d.origin.date,
+            part_du_planificateur: d.derived ?? null,
+          })),
+          ambition: state.profile.ambition ?? null,
           apercu: weeks.map(summarizeWeek),
         },
       };
@@ -836,6 +924,9 @@ export async function executeTool(
         patch.plannedLoad = Math.round(totals.load);
         patch.plannedDistanceM = Math.round(totals.distanceM);
         patch.plannedElevationGainM = Math.round(totals.elevationGainM);
+        // La charge mécanique aussi : laissée en place, elle décrirait la séance
+        // d'avant et fausserait le PMC mécanique, donc les règles de descente.
+        patch.plannedMechanicalLoad = Math.round(totals.mechanicalLoad);
       }
 
       if (target && scale && scale > 0) {

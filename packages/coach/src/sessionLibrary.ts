@@ -1,4 +1,6 @@
-import type { PhysiologyModel, SessionBlock, SessionType, ZoneKey } from '@cairn/core';
+import type {
+  PhysiologyModel, SessionBlock, SessionSuccessCriterion, SessionType, ZoneKey,
+} from '@cairn/core';
 import { buildZones, formatPace, msToKmh, speedForMetabolicPower, vam } from '@cairn/physiology';
 
 /**
@@ -64,6 +66,7 @@ function block(
     speedRangeMs: [lo, hi],
     paceRange: paceRange(lo, hi),
   };
+  if (opts.kind) b.kind = opts.kind;
   if (opts.repeat) b.repeat = opts.repeat;
   if (opts.recovery) b.recovery = opts.recovery;
   if (opts.notes) b.notes = opts.notes;
@@ -82,6 +85,9 @@ function block(
 function estimateLoad(model: PhysiologyModel, blocks: SessionBlock[]): number {
   let tss = 0;
   for (const b of blocks) {
+    // Un bloc annexe — souplesse, respiration — n'est pas couru : lui prêter la
+    // vitesse de sa zone lui ferait produire une charge qui n'existe pas.
+    if (b.kind) continue;
     const reps = b.repeat ?? 1;
     const dur = b.durationS ?? 0;
     const mid = b.speedRangeMs ? (b.speedRangeMs[0] + b.speedRangeMs[1]) / 2 : model.vt1.speedMs * 0.8;
@@ -111,6 +117,7 @@ function totalDuration(blocks: SessionBlock[]): number {
 /** Distance estimée depuis la vitesse moyenne pondérée des blocs. */
 function totalDistance(blocks: SessionBlock[]): number {
   return blocks.reduce((a, b) => {
+    if (b.kind) return a;
     const reps = b.repeat ?? 1;
     const mid = b.speedRangeMs ? (b.speedRangeMs[0] + b.speedRangeMs[1]) / 2 : 2.8;
     const rec = b.recovery ? b.recovery.durationS * (b.recovery.active ? 2.4 : 0.5) : 0;
@@ -121,20 +128,38 @@ function totalDistance(blocks: SessionBlock[]): number {
 /**
  * Totaux d'une séance, déduits de ses blocs.
  *
- * Une séance dont les blocs sont remplacés doit voir sa durée et sa charge
- * suivre : des totaux figés en face d'un contenu neuf, c'est la même
- * contradiction, un cran plus haut. La charge mécanique n'en fait pas partie —
- * elle dépend du dénivelé négatif, que les blocs ne portent pas.
+ * Une séance dont les blocs sont remplacés doit voir *tous* ses totaux suivre —
+ * durée, charge, distance, dénivelé et charge mécanique. Des totaux figés en
+ * face d'un contenu neuf, c'est la même contradiction, un cran plus haut : une
+ * sortie longue ramenée à 350 m D+ qui continue d'afficher la charge mécanique
+ * des 700 m d'avant fausse le PMC mécanique, donc la règle qui protège les
+ * quadriceps.
+ *
+ * Les blocs ne portent pas le dénivelé négatif : à défaut de `elevationLossM`,
+ * on suppose un parcours en boucle, ce que descend l'athlète étant ce qu'il a
+ * monté. La bibliothèque, elle, connaît le terrain des séances qu'elle écrit et
+ * passe sa propre valeur — une séance de descente ne monte pas ce qu'elle
+ * descend.
  */
 export function sessionTotals(
   model: PhysiologyModel,
   blocks: SessionBlock[],
-): { durationS: number; distanceM: number; elevationGainM: number; load: number } {
+  elevationLossM?: number,
+): {
+  durationS: number;
+  distanceM: number;
+  elevationGainM: number;
+  load: number;
+  mechanicalLoad: number;
+} {
+  const distanceM = totalDistance(blocks);
+  const elevationGainM = blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0);
   return {
     durationS: totalDuration(blocks),
-    distanceM: totalDistance(blocks),
-    elevationGainM: blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0),
+    distanceM,
+    elevationGainM,
     load: estimateLoad(model, blocks),
+    mechanicalLoad: estimateMechanical(elevationLossM ?? elevationGainM, distanceM),
   };
 }
 
@@ -143,13 +168,17 @@ function finalize(
   base: Omit<SessionTemplate, 'durationS' | 'plannedLoad' | 'plannedMechanicalLoad'>,
   elevationLossM = 0,
 ): SessionTemplate {
-  const { durationS, distanceM, load } = sessionTotals(c.model, base.blocks);
+  const { durationS, distanceM, load, mechanicalLoad } = sessionTotals(
+    c.model,
+    base.blocks,
+    elevationLossM,
+  );
   return {
     ...base,
     durationS,
     plannedDistanceM: Math.round(distanceM),
     plannedLoad: load,
-    plannedMechanicalLoad: estimateMechanical(elevationLossM, distanceM),
+    plannedMechanicalLoad: mechanicalLoad,
   };
 }
 
@@ -300,7 +329,10 @@ export function threshold(model: PhysiologyModel, reps = 5, repMin = 5): Session
       "Repousser le seuil anaérobie : élever la vitesse maximale soutenable, donc l'allure tenable sur 1 à 3 h. Le levier n°1 sur les formats trail courts et moyens.",
     elevationGainM: 80,
     priority: 'key',
-    phases: ['build', 'specific', 'peak'],
+    // Le « fractionné moyen 3-12 min » du compte rendu : rien ne le réserve à
+    // la phase de développement, et l'alternance court/moyen en a besoin dès la
+    // construction foncière.
+    phases: ['base', 'build', 'specific', 'peak'],
     blocks: [
       block(c, 'Échauffement', 'Z2', 20 * 60, {}),
       block(c, 'Gammes (montées de genou, talons-fesses, foulées bondissantes)', 'Z2', 5 * 60, {
@@ -474,6 +506,7 @@ export function strength(model: PhysiologyModel, durationMin = 40): SessionTempl
           'soulevés de terre unilatéraux 8/jambe · mollets excentriques 12/jambe · gainage ventral et latéral 45 s.',
       }),
       block(c, 'Souplesse chaîne postérieure (10 min)', 'Z1', 10 * 60, {
+        kind: 'mobility',
         notes:
           'Ischio-jambiers, mollets, chaîne postérieure du rachis. Maintiens de 45 s, deux passages. ' +
           'C\'est le point faible identifié au test : à faire deux fois par semaine, sans exception.',
@@ -498,9 +531,31 @@ export function restDay(): SessionTemplate {
   };
 }
 
-/** Rend une séance lisible en texte, pour le chat et l'export. */
-export function renderSession(s: SessionTemplate | { title: string; intent: string; blocks: SessionBlock[] }): string {
+/**
+ * Rend une séance lisible en texte, pour le chat et l'export.
+ *
+ * Le critère de réussite y figure quand il y en a un : une séance dont on ne
+ * sait pas ce qui la réussit n'est qu'une durée à passer dehors.
+ */
+export function renderSession(
+  s:
+    | SessionTemplate
+    | {
+        title: string;
+        intent: string;
+        blocks: SessionBlock[];
+        successCriteria?: SessionSuccessCriterion[];
+      },
+): string {
   const lines = [`**${s.title}**`, `_${s.intent}_`, ''];
+  const criteria = 'successCriteria' in s ? s.successCriteria : undefined;
+  if (criteria?.length) {
+    for (const c of criteria) {
+      lines.push(`Réussite : ${CRITERION_LABEL[c.metric]}${c.maxValue != null ? ` ≤ ${c.maxValue}` : ''}`);
+      lines.push(`  ↳ « ${c.origin.quote} » — ${c.origin.source === 'lab_test' ? 'test d\'effort' : 'dossier'} du ${c.origin.date}`);
+    }
+    lines.push('');
+  }
   for (const b of s.blocks) {
     const reps = b.repeat ? `${b.repeat} × ` : '';
     const dur = b.durationS ? formatBlockDuration(b.durationS) : b.distanceM ? `${b.distanceM} m` : '';
@@ -513,6 +568,10 @@ export function renderSession(s: SessionTemplate | { title: string; intent: stri
   }
   return lines.join('\n');
 }
+
+const CRITERION_LABEL: Record<SessionSuccessCriterion['metric'], string> = {
+  hr_drift: 'pas de dérive cardiaque (Pa:HR) sur la séance',
+};
 
 function formatBlockDuration(s: number): string {
   if (s >= 3600) return `${Math.round((s / 3600) * 10) / 10} h`;

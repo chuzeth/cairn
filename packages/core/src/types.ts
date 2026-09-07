@@ -67,6 +67,132 @@ export interface LabTest {
   interpretation?: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Directives — la prose du dossier, rendue exécutable
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * D'où vient une directive.
+ *
+ * Même exigence que la provenance d'un paramètre physiologique : une consigne
+ * dont on ne peut pas remonter à la source est une consigne qu'on demande à
+ * l'athlète de croire. L'extrait est littéral et tranché dans le document (cf.
+ * `verbatim`), jamais reformulé.
+ */
+export interface DirectiveOrigin {
+  source: 'lab_test' | 'athlete_notes' | 'athlete';
+  /** Document d'où l'extrait est tiré, quand il en existe un. */
+  documentId?: string;
+  /** Date du document ou de la déclaration (ISO). */
+  date: string;
+  /** Auteur, tel qu'il figure au dossier. */
+  author?: string;
+  /** Extrait littéral. */
+  quote: string;
+}
+
+interface DirectiveBase {
+  id: string;
+  origin: DirectiveOrigin;
+  /**
+   * Ce que le document ne dit pas et que le planificateur a tranché.
+   * Une directive sans `derived` est intégralement portée par sa citation.
+   */
+  derived?: string;
+}
+
+/** Plage de durée imposée à un type de séance. */
+export interface SessionDurationDirective extends DirectiveBase {
+  kind: 'session_duration';
+  appliesTo: SessionType[];
+  minS: number;
+  maxS: number;
+  /** Zone de travail, quand le document la précise. */
+  zone?: ZoneKey;
+}
+
+/** Ce qui fait qu'une séance a atteint son but — vérifiable sur le réalisé. */
+export interface SuccessCriterionDirective extends DirectiveBase {
+  kind: 'success_criterion';
+  appliesTo: SessionType[];
+  /** Grandeur que le moteur sait mesurer. */
+  metric: 'hr_drift';
+  /**
+   * Borne explicite, dans l'unité de la grandeur. Absente, c'est la tolérance
+   * du moteur — fonction de la durée — qui fait foi.
+   */
+  maxValue?: number;
+}
+
+/** Nature d'un bloc non couru, dont la fréquence hebdomadaire est prescrite. */
+export type BlockKind = 'mobility' | 'respiratory';
+
+/** Fréquence hebdomadaire d'un travail annexe. */
+export interface WeeklyFrequencyDirective extends DirectiveBase {
+  kind: 'weekly_frequency';
+  block: BlockKind;
+  timesPerWeek: number;
+  /** Durée d'un bloc, s. */
+  durationS: number;
+}
+
+/** Fenêtre de cadence prescrite, en pas par minute. */
+export interface CadenceDirective extends DirectiveBase {
+  kind: 'cadence_target';
+  minSpm: number;
+  maxSpm: number;
+}
+
+/** Politique de fractionné : combien par semaine, et dans quel ordre. */
+export interface IntervalPolicyDirective extends DirectiveBase {
+  kind: 'interval_policy';
+  maxPerWeek: number;
+  /** Formats alternés, dans l'ordre où ils se succèdent. */
+  alternate: ('short' | 'medium')[];
+}
+
+export type TrainingDirective =
+  | SessionDurationDirective
+  | SuccessCriterionDirective
+  | WeeklyFrequencyDirective
+  | CadenceDirective
+  | IntervalPolicyDirective;
+
+/** Trace de l'application d'une directive à une séance. */
+export interface AppliedDirective {
+  /**
+   * Identifiant de la directive appliquée, ou `ambition` quand c'est l'ambition
+   * de l'athlète — et non une consigne du dossier — qui a façonné la séance.
+   */
+  directiveId: string;
+  /** Ce que la directive a changé à cette séance, en une phrase. */
+  effect: string;
+  origin: DirectiveOrigin;
+}
+
+/** Critère de réussite attaché à une séance prescrite. */
+export interface SessionSuccessCriterion {
+  metric: SuccessCriterionDirective['metric'];
+  maxValue?: number;
+  origin: DirectiveOrigin;
+}
+
+/**
+ * Ambition de long terme, distincte des courses inscrites au calendrier.
+ *
+ * Une course est une date ; une ambition est une direction. Les confondre fait
+ * construire toute la préparation autour du prochain dossard, alors que
+ * l'athlète vise un format que ce dossard ne fait qu'approcher — et fait passer
+ * à côté des qualités qui décident de ce format-là.
+ */
+export interface AthleteAmbition {
+  format: 'trail_long' | 'trail_court' | 'route' | 'ultra';
+  /** Depuis quand elle est au dossier (ISO). */
+  since: string;
+  /** Ce sur quoi elle s'appuie — le dossier et l'athlète, mot pour mot. */
+  origin: DirectiveOrigin[];
+}
+
 /** Contraintes de vie qui bornent la planification. */
 export interface AthleteConstraints {
   /** Jours disponibles pour s'entraîner (0 = dimanche … 6 = samedi). */
@@ -162,6 +288,11 @@ export interface AthleteProfile {
   stravaAthleteId?: number;
   labTests: LabTest[];
   constraints: AthleteConstraints;
+  /**
+   * Ce que l'athlète cherche à devenir, indépendamment de son prochain dossard.
+   * Elle pèse sur ce que le plan privilégie ; elle ne fixe aucune date.
+   */
+  ambition?: AthleteAmbition;
   /** Préférences narratives : ton du coach, langue, unités. */
   preferences: {
     locale: 'fr' | 'en';
@@ -612,6 +743,11 @@ export type SessionType =
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */
 export interface SessionBlock {
   label: string;
+  /**
+   * Nature d'un bloc non couru dont la fréquence est prescrite au dossier.
+   * Absente sur les blocs de course : c'est ce qui permet de les compter.
+   */
+  kind?: BlockKind;
   repeat?: number;
   /** Durée cible, s (ou distance si `distanceM` est fourni). */
   durationS?: number;
@@ -674,6 +810,10 @@ export interface PlannedSession {
   absenceId?: string;
   /** Justification produite par le coach lors de la (re)planification. */
   rationale?: string;
+  /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
+  successCriteria?: SessionSuccessCriterion[];
+  /** Directives du dossier qui ont façonné cette séance, avec leur origine. */
+  directives?: AppliedDirective[];
 }
 
 export type TrainingPhase =
@@ -704,6 +844,16 @@ export interface TrainingPlan {
   weeks: TrainingWeek[];
   /** TSB visé le jour de la course. */
   targetRaceDayTsb: number;
+  /**
+   * TSB que les charges du plan produisent à la veille de la course, mesuré sur
+   * le plan effectivement construit. Une cible déclarée sans cette mesure n'est
+   * qu'une intention : c'est ce couple qui rend l'affûtage vérifiable.
+   *
+   * Absent des plans construits avant que la vérification n'existe.
+   */
+  projectedRaceDayTsb?: number;
+  /** Ce qui a empêché d'atteindre la cible. Absent quand elle est atteinte. */
+  raceDayTsbShortfall?: string;
   /** Chaîne de décisions ayant abouti au plan, pour l'auditabilité. */
   revisionLog: PlanRevision[];
 }

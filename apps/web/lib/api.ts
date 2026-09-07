@@ -175,7 +175,11 @@ export function markdown(src: string): string {
 // ── Types partagés avec l'API ────────────────────────────────────────────────
 
 export interface StateResponse {
-  athlete: { id: string; name: string; constraints: Record<string, unknown> };
+  athlete: {
+    id: string; name: string; constraints: Record<string, unknown>;
+    /** L'ambition n'a pas de date : elle oriente, elle ne se coche pas. */
+    ambition: { format: string; since: string; origin: DirectiveOriginRow[] } | null;
+  };
   model: {
     asOf: string; bodyMassKg: number; hrMax: number; hrRest: number;
     criticalSpeedMs: number; criticalSpeedKmh: number; criticalPace: string;
@@ -207,6 +211,10 @@ export interface StateResponse {
   upcomingRaces: RaceRow[];
   hasPlan: boolean;
   labTest: Record<string, unknown> | null;
+  /** Ce que le planificateur lit du dossier, au-delà des quatre nombres. */
+  directives: {
+    id: string; kind: string; origin: DirectiveOriginRow; derived?: string;
+  }[];
 }
 
 /** Provenance d'une composante de disponibilité — miroir de `ReadinessSource`. */
@@ -313,21 +321,43 @@ export interface InsightRow {
 }
 
 export interface PlanResponse {
-  plan: { id: string; goalRaceId: string; targetRaceDayTsb: number; revisionLog: { at: string; trigger: string; summary: string }[] } | null;
+  plan: {
+    id: string;
+    goalRaceId: string;
+    targetRaceDayTsb: number;
+    /** Ce que les charges du plan produisent la veille de la course. */
+    projectedRaceDayTsb?: number;
+    raceDayTsbShortfall?: string;
+    revisionLog: { at: string; trigger: string; summary: string }[];
+  } | null;
   weekSummaries: string[];
   sessions: SessionRow[];
   absences: DeclaredAbsence[];
   completedByDate: Record<string, { id: string; name: string }>;
 }
 
+/** D'où vient une consigne : le document, sa date, l'extrait littéral. */
+export interface DirectiveOriginRow {
+  source: 'lab_test' | 'athlete_notes' | 'athlete';
+  date: string;
+  author?: string;
+  quote: string;
+}
+
 export interface SessionRow {
   id: string; date: string; type: string; title: string; intent: string;
   blocks: {
     label: string; zone: string; repeat?: number; durationS?: number; distanceM?: number;
+    /** Bloc non couru dont la fréquence est prescrite au dossier. */
+    kind?: 'mobility' | 'respiratory';
     hrRange?: [number, number]; paceRange?: [string, string]; vamTargetMh?: number;
     cadenceTargetSpm?: number; notes?: string;
     recovery?: { durationS: number; zone: string; active: boolean };
   }[];
+  /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
+  successCriteria?: { metric: 'hr_drift'; maxValue?: number; origin: DirectiveOriginRow }[];
+  /** Directives du dossier qui ont façonné la séance. */
+  directives?: { directiveId: string; effect: string; origin: DirectiveOriginRow }[];
   plannedLoad: number; plannedMechanicalLoad: number; plannedDurationS: number;
   plannedElevationGainM?: number; plannedDistanceM?: number;
   priority: 'key' | 'support' | 'optional';
