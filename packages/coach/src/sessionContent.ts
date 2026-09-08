@@ -1,5 +1,7 @@
-import type { PhysiologyModel, SessionBlock, ZoneDefinition, ZoneKey } from '@cairn/core';
-import { ZONE_KEYS, buildZones, formatPace } from '@cairn/physiology';
+import type {
+  EccentricMovement, PhysiologyModel, SessionBlock, StrengthCircuit, ZoneDefinition, ZoneKey,
+} from '@cairn/core';
+import { ECCENTRIC_MOVEMENTS, ZONE_KEYS, buildZones, formatPace } from '@cairn/physiology';
 import { sessionTotals } from './sessionLibrary.js';
 
 /**
@@ -32,13 +34,19 @@ const MAX_ELEVATION_GAIN_M = 5_000;
 const MAX_VAM_MH = 2_500;
 const MAX_LABEL_CHARS = 80;
 const MAX_NOTES_CHARS = 400;
+const MAX_ROUNDS = 10;
+const MAX_EXERCISES = 12;
+const MAX_REPS = 200;
 
 const BLOCK_FIELDS = new Set([
   'label', 'zone', 'durationS', 'distanceM', 'repeat', 'elevationGainM',
-  'hrRange', 'speedRangeMs', 'vamTargetMh', 'cadenceTargetSpm', 'recovery', 'notes',
+  'hrRange', 'speedRangeMs', 'vamTargetMh', 'cadenceTargetSpm', 'recovery', 'circuit', 'notes',
 ]);
 
 const RECOVERY_FIELDS = new Set(['durationS', 'zone', 'active']);
+const CIRCUIT_FIELDS = new Set(['rounds', 'exercises']);
+const EXERCISE_FIELDS = new Set(['movement', 'reps']);
+const MOVEMENTS = Object.keys(ECCENTRIC_MOVEMENTS) as EccentricMovement[];
 
 /**
  * Valide un contenu de séance et le complète depuis les zones de l'athlète.
@@ -129,6 +137,9 @@ function parseBlock(
   if (raw.recovery !== undefined) {
     block.recovery = parseRecovery(raw.recovery, `${at}.recovery`);
   }
+  if (raw.circuit !== undefined) {
+    block.circuit = parseCircuit(raw.circuit, `${at}.circuit`);
+  }
   if (raw.notes !== undefined) {
     block.notes = text(raw.notes, `${at}.notes`, MAX_NOTES_CHARS);
   }
@@ -148,6 +159,49 @@ function parseRecovery(raw: unknown, at: string): NonNullable<SessionBlock['reco
     zone: zoneKey(r.zone, `${at}.zone`),
     active: r.active === undefined ? true : boolean(r.active, `${at}.active`),
   };
+}
+
+/**
+ * Valide un circuit de renforcement.
+ *
+ * La liste des mouvements est fermée, et c'est la condition pour que le contenu
+ * atteigne le chiffre : un mouvement inventé n'a ni course de freinage ni
+ * sévérité, donc pas de charge. Le refuser vaut mieux que le compter zéro
+ * pendant que l'athlète le fait.
+ */
+function parseCircuit(raw: unknown, at: string): StrengthCircuit {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${at} : objet attendu.`);
+  }
+  const c = raw as Record<string, unknown>;
+  for (const key of Object.keys(c)) {
+    if (!CIRCUIT_FIELDS.has(key)) throw new Error(`${at}.${key} : champ inconnu.`);
+  }
+  const rounds = Math.round(number(c.rounds, `${at}.rounds`, 1, MAX_ROUNDS));
+  if (!Array.isArray(c.exercises) || c.exercises.length === 0) {
+    throw new Error(`${at}.exercises : un tableau d'au moins un exercice est attendu.`);
+  }
+  if (c.exercises.length > MAX_EXERCISES) {
+    throw new Error(`${at}.exercises : ${c.exercises.length} exercices, maximum ${MAX_EXERCISES}.`);
+  }
+  const exercises = c.exercises.map((entry, i) => {
+    const where = `${at}.exercises[${i}]`;
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`${where} : objet attendu.`);
+    }
+    const e = entry as Record<string, unknown>;
+    for (const key of Object.keys(e)) {
+      if (!EXERCISE_FIELDS.has(key)) throw new Error(`${where}.${key} : champ inconnu.`);
+    }
+    if (typeof e.movement !== 'string' || !(MOVEMENTS as string[]).includes(e.movement)) {
+      throw new Error(`${where}.movement : mouvement attendu parmi ${MOVEMENTS.join(', ')}.`);
+    }
+    return {
+      movement: e.movement as EccentricMovement,
+      reps: Math.round(number(e.reps, `${where}.reps`, 1, MAX_REPS)),
+    };
+  });
+  return { rounds, exercises };
 }
 
 // ─── Primitives ──────────────────────────────────────────────────────────────

@@ -353,6 +353,8 @@ export interface SessionRow {
     hrRange?: [number, number]; paceRange?: [string, string]; vamTargetMh?: number;
     cadenceTargetSpm?: number; notes?: string;
     recovery?: { durationS: number; zone: string; active: boolean };
+    /** Contenu excentrique du bloc : c'est lui qui porte la charge mécanique. */
+    circuit?: { rounds: number; exercises: { movement: string; reps: number }[] };
   }[];
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: { metric: 'hr_drift'; maxValue?: number; origin: DirectiveOriginRow }[];

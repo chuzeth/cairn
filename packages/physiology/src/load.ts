@@ -1,4 +1,6 @@
-import type { PhysiologyModel, TrainingLoad } from '@cairn/core';
+import type {
+  EccentricMovement, MechanicalLoadCoverage, PhysiologyModel, StrengthCircuit, TrainingLoad,
+} from '@cairn/core';
 import { gradeAdjustedSpeed, metabolicPower } from './grade.js';
 import { clamp, G, movingAverage, powerMean } from './units.js';
 
@@ -35,6 +37,12 @@ export interface LoadSample {
 const MECHANICAL_SCALE = 300;
 /** Charge mécanique de l'appui à plat, par mètre parcouru. */
 const FLAT_IMPACT_PER_M = 1 / 2500;
+/**
+ * Sévérité moyenne d'une descente d'entraînement, quand on ne dispose que du
+ * dénivelé négatif : la pondération pente × vitesse que `mechanicalLoad`
+ * applique échantillon par échantillon vaut ≈ 1,25 sur un terrain roulant.
+ */
+const DESCENT_SEVERITY = 1.25;
 
 /** TRIMP de Banister (pondération exponentielle masculine, Morton et al. 1990). */
 export function trimp(samples: readonly LoadSample[], model: PhysiologyModel, sex: 'M' | 'F' = 'M'): number {
@@ -95,17 +103,25 @@ export function heartRateTss(samples: readonly LoadSample[], model: PhysiologyMo
 }
 
 /**
- * Charge mécanique excentrique.
+ * Charge mécanique excentrique **mesurée sur un flux d'activité**.
  *
  * Le travail négatif absorbé vaut m·g·Δh, mais tous les mètres de descente ne
  * se valent pas : une pente raide concentre la même énergie sur moins d'appuis
  * (force par appui plus élevée), et une descente rapide augmente la vitesse
  * d'impact. Les deux pondérations sont appliquées échantillon par échantillon.
+ *
+ * Ce que cette fonction ne voit pas, et ne verra jamais : l'excentrique produit
+ * hors descente courue. Un circuit de force n'est pas dans Strava ; il n'a ni
+ * pente, ni vitesse, ni flux. Le résultat porte donc `coverage`, et tout ce qui
+ * l'affiche doit le dire — un zéro par cécité n'est pas un zéro mesuré.
+ * Le côté prescrit, lui, sait ce qu'il a prescrit : voir
+ * {@link prescribedMechanicalLoad}.
  */
 export function mechanicalLoad(samples: readonly LoadSample[]): {
   score: number;
   eccentricWorkKjPerKg: number;
   descentM: number;
+  coverage: MechanicalLoadCoverage;
 } {
   let weighted = 0;
   let rawJPerKg = 0;
@@ -138,7 +154,104 @@ export function mechanicalLoad(samples: readonly LoadSample[]): {
     score: weighted / MECHANICAL_SCALE + flatDistance * FLAT_IMPACT_PER_M,
     eccentricWorkKjPerKg: rawJPerKg / 1000,
     descentM,
+    coverage: 'running_descent',
   };
+}
+
+/**
+ * Catalogue des mouvements excentriques prescriptibles.
+ *
+ * Chaque mouvement est décrit par ce qu'il freine — la fraction de masse
+ * corporelle réellement retenue, et la course sur laquelle elle l'est — puis
+ * par sa `severity` : les dégâts par joule absorbé, relativement à un appui de
+ * descente courue qui vaut 1 par définition. Une répétition lente, en fin
+ * d'amplitude, sur une jambe, abîme davantage qu'un appui de course qui absorbe
+ * la même énergie en 150 ms ; c'est tout ce que dit ce coefficient.
+ *
+ * Ces valeurs ne sont pas mesurées sur l'athlète : ce sont des ordres de
+ * grandeur, écrits ici pour être discutés plutôt que devinés. Ce qu'elles
+ * rendent vrai n'est pas le niveau absolu — c'est que trois tours pèsent trois
+ * fois un tour, que des mollets excentriques ne pèsent pas comme des squats
+ * bulgares, et que du gainage ne pèse rien.
+ */
+export const ECCENTRIC_MOVEMENTS: Record<
+  EccentricMovement,
+  {
+    label: string;
+    /** Fraction de la masse corporelle effectivement freinée. */
+    bodyFraction: number;
+    /** Course du freinage, m. */
+    rangeM: number;
+    /** Dégâts par joule absorbé, relativement à un appui de descente courue. */
+    severity: number;
+    /** Le mouvement se compte par côté : les répétitions prescrites sont doublées. */
+    unilateral: boolean;
+  }
+> = {
+  split_squat:         { label: 'squats bulgares',              bodyFraction: 0.85, rangeM: 0.40, severity: 3.0, unilateral: true },
+  step_down:           { label: 'descentes lentes de marche',   bodyFraction: 0.90, rangeM: 0.30, severity: 3.0, unilateral: true },
+  single_leg_deadlift: { label: 'soulevés de terre unilatéraux', bodyFraction: 0.68, rangeM: 0.45, severity: 2.5, unilateral: true },
+  eccentric_calf:      { label: 'mollets excentriques',         bodyFraction: 0.95, rangeM: 0.12, severity: 3.0, unilateral: true },
+  nordic_curl:         { label: 'nordic hamstring',             bodyFraction: 0.60, rangeM: 0.55, severity: 5.0, unilateral: false },
+  drop_jump:           { label: 'sauts en contrebas',           bodyFraction: 1.00, rangeM: 0.35, severity: 2.0, unilateral: false },
+  // Le gainage n'a pas de phase de freinage : il tient la position. Il a sa
+  // place dans le circuit, aucune dans la charge excentrique.
+  isometric:           { label: 'gainage',                      bodyFraction: 0,    rangeM: 0,    severity: 0,   unilateral: false },
+};
+
+/** Travail négatif absorbé par répétition et par côté, J/kg. */
+export function eccentricWorkPerRep(movement: EccentricMovement): number {
+  const m = ECCENTRIC_MOVEMENTS[movement];
+  return m.bodyFraction * G * m.rangeM;
+}
+
+/** Charge mécanique d'un ou plusieurs circuits de renforcement. */
+export function eccentricStrengthLoad(circuits: readonly StrengthCircuit[]): {
+  score: number;
+  negativeWorkJPerKg: number;
+  reps: number;
+} {
+  let weighted = 0;
+  let raw = 0;
+  let reps = 0;
+  for (const c of circuits) {
+    const rounds = Number.isFinite(c.rounds) ? Math.max(0, c.rounds) : 0;
+    for (const e of c.exercises) {
+      const spec = ECCENTRIC_MOVEMENTS[e.movement];
+      if (!spec) continue;
+      const n = rounds * (Number.isFinite(e.reps) ? Math.max(0, e.reps) : 0) * (spec.unilateral ? 2 : 1);
+      const work = n * eccentricWorkPerRep(e.movement);
+      raw += work;
+      weighted += work * spec.severity;
+      if (spec.severity > 0) reps += n;
+    }
+  }
+  return { score: weighted / MECHANICAL_SCALE, negativeWorkJPerKg: raw, reps };
+}
+
+/**
+ * Charge mécanique **prescrite** — l'unique formule du côté plan.
+ *
+ * Même échelle que `mechanicalLoad`, mêmes constantes, et les deux composantes
+ * séparées parce qu'elles ne se vérifient pas de la même façon :
+ *
+ * — `descent` est ce que le réalisé confirmera ou démentira, le flux Strava
+ *   portant la pente et la vitesse ;
+ * — `eccentricStrength` ne sera jamais confirmé par rien. Le circuit n'est pas
+ *   dans le flux. Le chiffre prescrit est tout ce qui existe de ce travail-là,
+ *   et une comparaison prévu/réalisé qui l'ignore lit un manque là où il y a
+ *   une cécité.
+ */
+export function prescribedMechanicalLoad(input: {
+  elevationLossM: number;
+  distanceM?: number;
+  circuits?: readonly StrengthCircuit[];
+}): { total: number; descent: number; eccentricStrength: number } {
+  const lossM = Math.max(0, input.elevationLossM || 0);
+  const distanceM = Math.max(0, input.distanceM ?? 0);
+  const descent = (lossM * G * DESCENT_SEVERITY) / MECHANICAL_SCALE + distanceM * FLAT_IMPACT_PER_M;
+  const eccentricStrength = input.circuits?.length ? eccentricStrengthLoad(input.circuits).score : 0;
+  return { total: descent + eccentricStrength, descent, eccentricStrength };
 }
 
 /** Travail vertical positif, kJ/kg. */
@@ -245,6 +358,7 @@ export function computeTrainingLoad(
   return {
     metabolic: round1(primary),
     mechanical: round1(mech.score),
+    mechanicalCoverage: mech.coverage,
     trimp: round1(trimpValue),
     hrTss: round1(hrTssValue),
     primary: round1(primary),

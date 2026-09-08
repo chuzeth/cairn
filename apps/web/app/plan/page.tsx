@@ -26,6 +26,28 @@ const CRITERION_LABELS: Record<string, string> = {
   hr_drift: 'pas de dérive cardiaque (Pa:HR) sur la séance',
 };
 
+const MOVEMENT_LABELS: Record<string, { label: string; perSide: boolean; seconds?: boolean }> = {
+  split_squat: { label: 'squats bulgares', perSide: true },
+  step_down: { label: 'descentes lentes de marche', perSide: true },
+  single_leg_deadlift: { label: 'soulevés de terre unilatéraux', perSide: true },
+  eccentric_calf: { label: 'mollets excentriques', perSide: true },
+  nordic_curl: { label: 'nordic hamstring', perSide: false },
+  drop_jump: { label: 'sauts en contrebas', perSide: false },
+  isometric: { label: 'gainage', perSide: false, seconds: true },
+};
+
+/**
+ * Le circuit s'écrit depuis sa structure, jamais à côté d'elle : c'est la même
+ * structure qui produit la charge mécanique affichée en haut de la séance.
+ */
+function circuitText(c: NonNullable<SessionRow['blocks'][number]['circuit']>): string {
+  const items = c.exercises.map((e) => {
+    const m = MOVEMENT_LABELS[e.movement] ?? { label: e.movement, perSide: false };
+    return `${m.label} ${e.reps}${m.seconds ? ' s' : m.perSide ? '/jambe' : ''}`;
+  });
+  return `${c.rounds} tour${c.rounds > 1 ? 's' : ''} : ${items.join(' · ')}.`;
+}
+
 /** Nomme le document d'où l'extrait est tiré, et sa date. */
 function originLabel(o: DirectiveOriginRow): string {
   const what =
@@ -210,10 +232,17 @@ export default function PlanPage() {
                     <div className="row" style={{ gap: 6 }}>
                       <Badge tone={s.priority === 'key' ? 'good' : undefined}>{s.priority === 'key' ? 'séance clef' : s.priority === 'support' ? 'soutien' : 'facultative'}</Badge>
                       <Badge tone="metabolic">{s.plannedLoad} pts</Badge>
-                      {s.plannedMechanicalLoad > 10 && <Badge tone="mechanical">{s.plannedMechanicalLoad} méca</Badge>}
+                      {s.plannedMechanicalLoad > 0 && <Badge tone="mechanical">{s.plannedMechanicalLoad} méca</Badge>}
                     </div>
                   </div>
                   <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
+
+                  {s.blocks.some((b) => b.circuit) && (
+                    <div className="tiny faint" style={{ marginTop: 6 }}>
+                      Une part de ces {s.plannedMechanicalLoad} points méca vient du renforcement excentrique :
+                      aucun flux d’activité ne le porte, le réalisé mesuré y affichera 0.
+                    </div>
+                  )}
 
                   {s.successCriteria?.map((c, i) => (
                     <div
@@ -260,6 +289,9 @@ export default function PlanPage() {
                             </span>
                           )}
                         </div>
+                        {b.circuit && (
+                          <div className="tiny" style={{ marginTop: 3 }}>{circuitText(b.circuit)}</div>
+                        )}
                         {b.notes && <div className="tiny muted" style={{ marginTop: 3 }}>{b.notes}</div>}
                       </div>
                     ))}

@@ -192,6 +192,24 @@ describe('Construction de la semaine', () => {
     }
   });
 
+  it('ne pose plus de forfait mécanique sur le renforcement', () => {
+    // La séance « endurance + renforcement » valait `mécanique + 8`, quel que
+    // soit le circuit. Elle vaut désormais ce que ses blocs prescrivent, par la
+    // même fonction que tout le reste du plan.
+    let seen = 0;
+    for (const spec of specs) {
+      const week = buildWeek({ spec, model, constraints: PIERRE.constraints, athleteId: 'pierre', race: RACE });
+      for (const s of week.sessions.filter((x) => x.blocks.some((b) => b.circuit))) {
+        seen++;
+        expect(s.plannedMechanicalLoad).toBe(
+          lib.sessionTotals(model, s.blocks, s.plannedElevationGainM ?? 0).mechanicalLoad,
+        );
+        expect(lib.eccentricStrengthOf(s.blocks)).toBeGreaterThan(0);
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
   it('n\'utilise que des jours disponibles', () => {
     const constraints = { ...PIERRE.constraints, availableDays: [1, 3, 5, 6], longRunDays: [6] };
     const week = buildWeek({ spec: specs[2]!, model, constraints, athleteId: 'pierre', race: RACE });
@@ -652,6 +670,62 @@ describe('Remplacement du contenu d\'une séance', () => {
     expect(() => lib.parseSessionBlocks([], model)).toThrow(/au moins un bloc/);
   });
 
+  it('accepte un circuit déclaré et refuse un mouvement qu\'il ne sait pas peser', () => {
+    const withCircuit = (circuit: unknown) =>
+      lib.parseSessionBlocks([{ label: 'Circuit force', zone: 'Z2', durationS: 1200, circuit }], model);
+
+    const [b] = withCircuit({
+      rounds: 2,
+      exercises: [{ movement: 'step_down', reps: 10 }, { movement: 'eccentric_calf', reps: 12 }],
+    });
+    expect(b!.circuit!.rounds).toBe(2);
+    expect(lib.sessionTotals(model, [b!]).mechanical.eccentricStrength).toBeGreaterThan(0);
+
+    // Un mouvement libre n'a ni course de freinage ni sévérité : le compter
+    // zéro en silence ferait exactement le défaut qu'on corrige.
+    expect(() => withCircuit({ rounds: 2, exercises: [{ movement: 'burpees', reps: 10 }] }))
+      .toThrow(/mouvement attendu parmi/);
+    expect(() => withCircuit({ rounds: 2, exercises: [] })).toThrow(/au moins un exercice/);
+    expect(() => withCircuit({ rounds: 0, exercises: [{ movement: 'step_down', reps: 10 }] }))
+      .toThrow(/hors bornes/);
+    expect(() => withCircuit({ rounds: 2, exercises: [{ movement: 'step_down', reps: 10, tempo: 3 }] }))
+      .toThrow(/champ inconnu/);
+  });
+
+  it('fait varier la charge mécanique prescrite avec le nombre de tours', () => {
+    // Le palier de réintroduction de l'excentrique : 1 tour, puis 2, puis 3.
+    // Sans cela, il n'existe que dans le texte d'une séance.
+    const tour = (rounds: number) =>
+      lib.sessionTotals(
+        model,
+        lib.parseSessionBlocks(
+          [
+            { label: 'Footing', zone: 'Z2', durationS: 1260, elevationGainM: 156 },
+            {
+              label: 'Circuit force', zone: 'Z2', durationS: 420,
+              circuit: {
+                rounds,
+                exercises: [
+                  { movement: 'split_squat', reps: 8 },
+                  { movement: 'step_down', reps: 10 },
+                  { movement: 'single_leg_deadlift', reps: 8 },
+                  { movement: 'eccentric_calf', reps: 12 },
+                  { movement: 'isometric', reps: 45 },
+                ],
+              },
+            },
+          ],
+          model,
+        ),
+        156,
+      );
+    const [un, deux, trois] = [tour(1), tour(2), tour(3)];
+    expect(un.mechanicalLoad).toBeLessThan(deux.mechanicalLoad);
+    expect(deux.mechanicalLoad).toBeLessThan(trois.mechanicalLoad);
+    // La part descente ne bouge pas : c'est bien le circuit qui porte le palier.
+    expect(un.mechanical.descent).toBe(trois.mechanical.descent);
+  });
+
   it('fait suivre les totaux de la séance au contenu remplacé', () => {
     const replaced = lib.parseSessionBlocks(
       [
@@ -719,6 +793,48 @@ describe('Remplacement du contenu d\'une séance', () => {
          { label: 'Progression finale', zone: 'Z3', durationS: 1200 }], model,
       ), 350).mechanicalLoad,
     );
+  });
+
+  it('fait porter la charge mécanique par le contenu du circuit', () => {
+    const un = lib.strength(model, 35, 1);
+    const deux = lib.strength(model, 35, 2);
+    const trois = lib.strength(model, 35, 3);
+
+    // Le défaut : un forfait de 8 points, quel que soit le circuit. Un tour et
+    // trois tours pesaient pareil, et un palier de réintroduction de
+    // l'excentrique n'existait que dans le texte d'une séance.
+    expect(un.plannedMechanicalLoad).toBeGreaterThan(0);
+    expect(deux.plannedMechanicalLoad).toBeGreaterThan(un.plannedMechanicalLoad);
+    expect(trois.plannedMechanicalLoad).toBeGreaterThan(deux.plannedMechanicalLoad);
+
+    // C'est bien le circuit qui fait bouger le chiffre, et lui seul.
+    const mech = (t: { blocks: typeof trois.blocks }) => lib.sessionTotals(model, t.blocks).mechanical;
+    expect(mech(un).eccentricStrength).toBeLessThan(mech(deux).eccentricStrength);
+    expect(mech(deux).eccentricStrength).toBeLessThan(mech(trois).eccentricStrength);
+    expect(lib.eccentricStrengthOf(trois.blocks)).toBe(mech(trois).eccentricStrength);
+
+    // Un renforcement ne descend rien : la part que le réalisé saurait
+    // confirmer est négligeable, tout le reste est hors flux.
+    expect(mech(trois).descent).toBeLessThan(1);
+  });
+
+  it('donne la même charge mécanique par la bibliothèque et par les blocs', () => {
+    // Deux chemins pour une même séance donnaient deux valeurs : celle que
+    // l'athlète lisait dépendait de quel code l'avait touchée en dernier.
+    for (const rounds of [1, 2, 3]) {
+      const s = lib.strength(model, 35, rounds);
+      expect(lib.sessionTotals(model, s.blocks).mechanicalLoad).toBe(s.plannedMechanicalLoad);
+    }
+  });
+
+  it('décrit le circuit depuis sa structure, jamais à côté', () => {
+    const s = lib.strength(model, 35, 2);
+    const circuit = s.blocks.find((b) => b.circuit)!.circuit!;
+    expect(circuit.rounds).toBe(2);
+    expect(lib.describeCircuit(circuit)).toContain('2 tours');
+    // Le texte des notes n'annonce aucun décompte : une seule source, donc
+    // aucune occasion d'annoncer trois tours et d'en compter un.
+    expect(s.blocks.every((b) => !/\d+\s*tours?/.test(b.notes ?? ''))).toBe(true);
   });
 
   it('laisse la bibliothèque imposer sa descente quand elle la connaît', () => {

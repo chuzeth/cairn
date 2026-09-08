@@ -9,7 +9,7 @@ import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
 import { parseSessionBlocks } from './sessionContent.js';
-import { renderSession, sessionTotals } from './sessionLibrary.js';
+import { eccentricStrengthOf, renderSession, sessionTotals } from './sessionLibrary.js';
 import {
   currentCriticalSpeed, fitnessAtPlanStart, loadAthleteState, rebuildPhysiologyModel,
 } from './state.js';
@@ -622,6 +622,11 @@ export async function executeTool(
             intention: s.intent,
             charge_prevue: s.plannedLoad,
             charge_mecanique_prevue: s.plannedMechanicalLoad,
+            // Ce que la charge mécanique prescrite doit à un travail hors course.
+            // Le réalisé affichera 0 dessus quoi qu'il arrive : les flux Strava
+            // ne portent pas un circuit en salle. Le taire ferait lire un
+            // manquement là où il n'y a qu'une cécité de la mesure.
+            ...mechanicalBlindSpot(s),
             duree_prevue: formatDuration(s.plannedDurationS),
             denivele_prevu_m: s.plannedElevationGainM ?? 0,
             priorite: s.priority,
@@ -1167,6 +1172,25 @@ export async function refreshModel(athleteId: string) {
   return {
     summary: `Modèle recalculé (confiance ${Math.round(model.confidence * 100)} %)`,
     content: model,
+  };
+}
+
+/**
+ * Ce que la charge mécanique prescrite doit à un excentrique hors course.
+ *
+ * Renvoie un objet vide quand il n'y en a pas : une séance de descente n'a rien
+ * à déclarer, son chiffre sera confronté au flux. Quand il y en a, la part est
+ * nommée — même exigence de provenance que pour un paramètre physiologique.
+ */
+function mechanicalBlindSpot(s: PlannedSession): Record<string, unknown> {
+  const ecc = eccentricStrengthOf(s.blocks);
+  if (ecc <= 0) return {};
+  return {
+    charge_mecanique_hors_flux: ecc,
+    charge_mecanique_hors_flux_note:
+      `${ecc} des ${s.plannedMechanicalLoad} points viennent du renforcement excentrique, qui n'est dans aucun ` +
+      `flux d'activité. Le réalisé mesuré affichera 0 sur cette part quoi qu'il arrive : c'est une cécité de la ` +
+      `mesure, pas une séance non faite. Le reste est du dénivelé négatif couru, que le réalisé confirmera.`,
   };
 }
 

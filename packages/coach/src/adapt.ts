@@ -1,6 +1,7 @@
 import type { DeclaredAbsence, PlannedSession } from '@cairn/core';
 import * as db from '@cairn/db';
 import { formatDuration } from '@cairn/physiology';
+import { eccentricStrengthOf } from './sessionLibrary.js';
 import type { AthleteState } from './state.js';
 
 /**
@@ -282,10 +283,17 @@ export async function applyAdjustments(
 
       case 'scale': {
         const f = adj.factor ?? 1;
+        // Alléger raccourcit les blocs courus ; ça ne retire aucun tour au
+        // circuit. Seule la part descente suit le facteur — mettre le total à
+        // l'échelle ferait disparaître d'un chiffre un excentrique qui reste
+        // intégralement prescrit.
+        const eccentric = eccentricStrengthOf(session.blocks);
         await db.updateSession(adj.sessionId, {
           plannedLoad: Math.round(session.plannedLoad * f),
           plannedDurationS: Math.round(session.plannedDurationS * f),
-          plannedMechanicalLoad: Math.round(session.plannedMechanicalLoad * f),
+          plannedMechanicalLoad: Math.round(
+            (session.plannedMechanicalLoad - eccentric) * f + eccentric,
+          ),
           blocks: session.blocks.map((b) => ({
             ...b,
             durationS: b.durationS ? Math.round(b.durationS * f) : b.durationS,

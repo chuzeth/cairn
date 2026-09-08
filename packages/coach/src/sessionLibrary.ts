@@ -1,7 +1,11 @@
 import type {
-  PhysiologyModel, SessionBlock, SessionSuccessCriterion, SessionType, ZoneKey,
+  PhysiologyModel, SessionBlock, SessionSuccessCriterion, SessionType, StrengthCircuit,
+  StrengthExercise, ZoneKey,
 } from '@cairn/core';
-import { buildZones, formatPace, msToKmh, speedForMetabolicPower, vam } from '@cairn/physiology';
+import {
+  ECCENTRIC_MOVEMENTS, buildZones, eccentricStrengthLoad, formatPace, msToKmh,
+  prescribedMechanicalLoad, speedForMetabolicPower, vam,
+} from '@cairn/physiology';
 
 /**
  * Bibliothèque de séances.
@@ -27,6 +31,14 @@ export interface SessionTemplate {
   durationS: number;
   /** Dénivelé positif requis, m. */
   elevationGainM: number;
+  /**
+   * Dénivelé négatif de la séance, m — la part de la charge mécanique que le
+   * réalisé pourra vérifier. La bibliothèque connaît le terrain qu'elle écrit :
+   * une séance de descente ne monte pas ce qu'elle descend, et un fractionné
+   * sur piste ne descend rien. À défaut, 0 : mieux vaut ne rien prêter à une
+   * séance que lui prêter un dénivelé qu'elle n'a pas.
+   */
+  elevationLossM: number;
   priority: 'key' | 'support' | 'optional';
   /** Phases où la séance a du sens. */
   phases: string[];
@@ -67,6 +79,7 @@ function block(
     paceRange: paceRange(lo, hi),
   };
   if (opts.kind) b.kind = opts.kind;
+  if (opts.circuit) b.circuit = opts.circuit;
   if (opts.repeat) b.repeat = opts.repeat;
   if (opts.recovery) b.recovery = opts.recovery;
   if (opts.notes) b.notes = opts.notes;
@@ -101,10 +114,73 @@ function estimateLoad(model: PhysiologyModel, blocks: SessionBlock[]): number {
   return Math.round(tss);
 }
 
-/** Charge mécanique prévisionnelle : dominée par le dénivelé négatif. */
-function estimateMechanical(elevationLossM: number, distanceM: number): number {
-  // Calibration identique à `mechanicalLoad` : ~40 pts pour 1 000 m de D−.
-  return Math.round((elevationLossM * 9.80665 * 1.25) / 300 + distanceM / 2500);
+/**
+ * Circuits excentriques portés par les blocs, tours déjà multipliés par `repeat`.
+ *
+ * Un bloc répété est autant de circuits : c'est la seule façon que `repeat` et
+ * `rounds` disent la même chose au calcul qu'à l'athlète.
+ */
+export function circuitsOf(blocks: readonly SessionBlock[]): StrengthCircuit[] {
+  const out: StrengthCircuit[] = [];
+  for (const b of blocks) {
+    if (!b.circuit) continue;
+    out.push({ ...b.circuit, rounds: b.circuit.rounds * (b.repeat ?? 1) });
+  }
+  return out;
+}
+
+/**
+ * Charge mécanique prévisionnelle — le seul chemin du côté plan.
+ *
+ * Descente et renforcement excentrique sont rendus séparément : le premier sera
+ * confronté au réalisé, le second jamais, faute de flux. Confondre les deux
+ * dans un total muet, c'est reperdre ce qu'on vient de gagner.
+ */
+export function mechanicalFor(
+  blocks: readonly SessionBlock[],
+  elevationLossM: number,
+  distanceM?: number,
+): { total: number; descent: number; eccentricStrength: number } {
+  const m = prescribedMechanicalLoad({
+    elevationLossM,
+    distanceM: distanceM ?? totalDistance(blocks),
+    circuits: circuitsOf(blocks),
+  });
+  // Le total est arrondi à l'entier — c'est le chiffre enregistré et affiché ;
+  // les deux parts au dixième, parce qu'un renforcement seul pèse quelques
+  // points et qu'un arrondi à l'entier en effacerait le palier.
+  return {
+    total: Math.round(m.total),
+    descent: Math.round(m.descent * 10) / 10,
+    eccentricStrength: Math.round(m.eccentricStrength * 10) / 10,
+  };
+}
+
+/**
+ * Part de la charge mécanique prescrite qu'aucun flux d'activité ne verra.
+ *
+ * Elle se relit sur les blocs, jamais sur le total enregistré : c'est ce qui
+ * permet de dire, en face d'un réalisé à zéro, si l'athlète n'a rien fait ou si
+ * c'est la mesure qui est aveugle.
+ */
+export function eccentricStrengthOf(blocks: readonly SessionBlock[]): number {
+  return Math.round(eccentricStrengthLoad(circuitsOf(blocks)).score * 10) / 10;
+}
+
+/**
+ * Décrit un circuit en toutes lettres, depuis sa structure.
+ *
+ * Le texte est dérivé, comme l'allure l'est de la vitesse : c'est ce qui
+ * empêche une séance d'annoncer trois tours à l'athlète pendant qu'elle en
+ * compte un dans la charge.
+ */
+export function describeCircuit(c: StrengthCircuit): string {
+  const items = c.exercises.map((e) => {
+    const spec = ECCENTRIC_MOVEMENTS[e.movement];
+    if (e.movement === 'isometric') return `${spec.label} ${e.reps} s`;
+    return `${spec.label} ${e.reps}${spec.unilateral ? '/jambe' : ''}`;
+  });
+  return `${c.rounds} tour${c.rounds > 1 ? 's' : ''} : ${items.join(' · ')}.`;
 }
 
 function totalDuration(blocks: SessionBlock[]): number {
@@ -115,9 +191,12 @@ function totalDuration(blocks: SessionBlock[]): number {
 }
 
 /** Distance estimée depuis la vitesse moyenne pondérée des blocs. */
-function totalDistance(blocks: SessionBlock[]): number {
+function totalDistance(blocks: readonly SessionBlock[]): number {
   return blocks.reduce((a, b) => {
-    if (b.kind) return a;
+    // Un bloc annexe ou un circuit de force ne se parcourt pas. Lui prêter la
+    // vitesse de sa zone lui ferait produire des kilomètres qui n'existent pas,
+    // et par eux une charge d'impact à plat tout aussi inventée.
+    if (b.kind || b.circuit) return a;
     const reps = b.repeat ?? 1;
     const mid = b.speedRangeMs ? (b.speedRangeMs[0] + b.speedRangeMs[1]) / 2 : 2.8;
     const rec = b.recovery ? b.recovery.durationS * (b.recovery.active ? 2.4 : 0.5) : 0;
@@ -151,21 +230,25 @@ export function sessionTotals(
   elevationGainM: number;
   load: number;
   mechanicalLoad: number;
+  /** Ce que recouvre `mechanicalLoad`, dont la part qu'aucun flux ne verra. */
+  mechanical: { total: number; descent: number; eccentricStrength: number };
 } {
   const distanceM = totalDistance(blocks);
   const elevationGainM = blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0);
+  const mechanical = mechanicalFor(blocks, elevationLossM ?? elevationGainM, distanceM);
   return {
     durationS: totalDuration(blocks),
     distanceM,
     elevationGainM,
     load: estimateLoad(model, blocks),
-    mechanicalLoad: estimateMechanical(elevationLossM ?? elevationGainM, distanceM),
+    mechanicalLoad: mechanical.total,
+    mechanical,
   };
 }
 
 function finalize(
   c: Ctx,
-  base: Omit<SessionTemplate, 'durationS' | 'plannedLoad' | 'plannedMechanicalLoad'>,
+  base: Omit<SessionTemplate, 'durationS' | 'plannedLoad' | 'plannedMechanicalLoad' | 'elevationLossM'>,
   elevationLossM = 0,
 ): SessionTemplate {
   const { durationS, distanceM, load, mechanicalLoad } = sessionTotals(
@@ -175,6 +258,7 @@ function finalize(
   );
   return {
     ...base,
+    elevationLossM,
     durationS,
     plannedDistanceM: Math.round(distanceM),
     plannedLoad: load,
@@ -485,12 +569,29 @@ export function racePace(model: PhysiologyModel, blockMin = 40, targetSpeedMs?: 
   }, vertM);
 }
 
-export function strength(model: PhysiologyModel, durationMin = 40): SessionTemplate {
+/**
+ * Le circuit du dossier : chaîne postérieure et tolérance excentrique.
+ *
+ * Il est déclaré, pas raconté. Le nombre de tours est le paramètre par lequel
+ * on réintroduit l'excentrique après une coupure, et c'est lui qui doit
+ * atteindre la charge mécanique prescrite — sans quoi un palier de reprise
+ * n'existe que dans le texte d'une séance.
+ */
+const STRENGTH_CIRCUIT: StrengthExercise[] = [
+  { movement: 'split_squat', reps: 8 },
+  { movement: 'step_down', reps: 10 },
+  { movement: 'single_leg_deadlift', reps: 8 },
+  { movement: 'eccentric_calf', reps: 12 },
+  { movement: 'isometric', reps: 45 },
+];
+
+export function strength(model: PhysiologyModel, durationMin = 40, rounds = 3): SessionTemplate {
   const c = ctxOf(model);
+  const circuit: StrengthCircuit = { rounds, exercises: STRENGTH_CIRCUIT.map((e) => ({ ...e })) };
   return finalize(c, {
     key: 'strength',
     type: 'strength',
-    title: `Renforcement spécifique ${durationMin} min`,
+    title: `Renforcement spécifique ${durationMin} min · ${rounds} tour${rounds > 1 ? 's' : ''}`,
     intent:
       "Renforcer la chaîne postérieure et la tolérance excentrique, et corriger le déficit de souplesse relevé au test (flexion avant à −1 cm). Prévention et économie de course.",
     elevationGainM: 0,
@@ -500,10 +601,14 @@ export function strength(model: PhysiologyModel, durationMin = 40): SessionTempl
       block(c, 'Activation (10 min)', 'Z1', 10 * 60, {
         notes: 'Mobilité hanches/chevilles, fentes marchées, ponts fessiers.',
       }),
+      // Le contenu du circuit n'est pas dans les notes : il est dans `circuit`,
+      // d'où sortent à la fois le texte affiché et la charge mécanique. Les
+      // écrire deux fois, c'est se donner deux occasions de se contredire.
       block(c, 'Circuit force (20 min)', 'Z2', 20 * 60, {
+        circuit,
         notes:
-          '3 tours : squats bulgares 8/jambe · descentes lentes de marche 10/jambe (excentrique quadriceps) · ' +
-          'soulevés de terre unilatéraux 8/jambe · mollets excentriques 12/jambe · gainage ventral et latéral 45 s.',
+          'Descentes lentes et mollets excentriques sont le cœur de la séance : la charge se prend en ' +
+          'freinant, jamais en poussant. Deux minutes de récupération entre les tours.',
       }),
       block(c, 'Souplesse chaîne postérieure (10 min)', 'Z1', 10 * 60, {
         kind: 'mobility',
@@ -523,6 +628,7 @@ export function restDay(): SessionTemplate {
     intent: "L'adaptation se produit au repos, pas à l'entraînement. Ce jour fait partie du plan.",
     durationS: 0,
     elevationGainM: 0,
+    elevationLossM: 0,
     priority: 'support',
     phases: ['base', 'build', 'specific', 'peak', 'taper', 'race', 'recovery', 'transition'],
     blocks: [],
@@ -564,6 +670,7 @@ export function renderSession(
     const vamText = b.vamTargetMh ? ` · ${b.vamTargetMh} m D+/h` : '';
     const rec = b.recovery ? ` — récup ${formatBlockDuration(b.recovery.durationS)} ${b.recovery.active ? 'active' : 'passive'}` : '';
     lines.push(`• ${reps}${dur} — ${b.label} (${b.zone})${hr}${pace}${vamText}${rec}`);
+    if (b.circuit) lines.push(`  ↳ ${describeCircuit(b.circuit)}`);
     if (b.notes) lines.push(`  ↳ ${b.notes}`);
   }
   return lines.join('\n');

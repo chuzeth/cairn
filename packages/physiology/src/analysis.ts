@@ -449,6 +449,12 @@ export function summarizeForCoach(
     denivele_negatif_m: Math.round(activity.totalElevationLossM),
     charge_metabolique: analysis.load.metabolic,
     charge_mecanique: analysis.load.mechanical,
+    // Un zéro mécanique peut vouloir dire « rien de descendant » comme
+    // « rien de visible » : le flux ne porte que de la course.
+    charge_mecanique_couvre:
+      analysis.load.mechanicalCoverage === 'running_descent'
+        ? 'descente courue seulement — un circuit de force ou toute autre charge excentrique hors course y vaut zéro, faute de flux'
+        : analysis.load.mechanicalCoverage,
     source_charge: analysis.load.primarySource,
     intensite_relative: analysis.load.intensityFactor,
     vitesse_graduee_normalisee_kmh: Math.round(analysis.load.normalizedGradedSpeedMs * 36) / 10,

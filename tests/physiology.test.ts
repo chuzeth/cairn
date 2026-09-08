@@ -12,6 +12,7 @@ import {
   csPriorFromThresholds, maximalEffortSupport, projectFrom, type DurabilityResult,
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
   matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
+  eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -124,6 +125,75 @@ describe('Charge d\'entraînement', () => {
     const flat = Array.from({ length: 1800 }, () => ({ dt: 1, speedMs: 3.2, grade: 0, hr: 150 }));
     const down = Array.from({ length: 1800 }, () => ({ dt: 1, speedMs: 3.8, grade: -0.12, hr: 150 }));
     expect(mechanicalLoad(flat).score).toBeLessThan(mechanicalLoad(down).score);
+  });
+
+  it('déclare ce que la charge mécanique mesurée couvre', () => {
+    // Un circuit de force ne produit aucun échantillon : la mesure n'y voit
+    // rien, et un zéro par cécité doit pouvoir se distinguer d'un zéro mesuré.
+    const flat = Array.from({ length: 600 }, () => ({ dt: 1, speedMs: 3.0, grade: 0, hr: 140 }));
+    expect(mechanicalLoad(flat).coverage).toBe('running_descent');
+  });
+});
+
+describe('Charge mécanique prescrite', () => {
+  const CIRCUIT = {
+    rounds: 1,
+    exercises: [
+      { movement: 'split_squat' as const, reps: 8 },
+      { movement: 'step_down' as const, reps: 10 },
+      { movement: 'single_leg_deadlift' as const, reps: 8 },
+      { movement: 'eccentric_calf' as const, reps: 12 },
+      { movement: 'isometric' as const, reps: 45 },
+    ],
+  };
+
+  it('fait varier la charge avec le nombre de tours', () => {
+    const un = eccentricStrengthLoad([{ ...CIRCUIT, rounds: 1 }]).score;
+    const deux = eccentricStrengthLoad([{ ...CIRCUIT, rounds: 2 }]).score;
+    const trois = eccentricStrengthLoad([{ ...CIRCUIT, rounds: 3 }]).score;
+    expect(un).toBeGreaterThan(0);
+    expect(deux).toBeCloseTo(un * 2, 10);
+    expect(trois).toBeCloseTo(un * 3, 10);
+  });
+
+  it('ne prête aucune charge excentrique au gainage', () => {
+    const gainage = eccentricStrengthLoad([
+      { rounds: 5, exercises: [{ movement: 'isometric', reps: 60 }] },
+    ]);
+    expect(gainage.score).toBe(0);
+    expect(gainage.reps).toBe(0);
+  });
+
+  it('compte deux fois un mouvement unilatéral', () => {
+    // 10 répétitions par jambe font 20 freinages, pas 10.
+    const uni = eccentricStrengthLoad([
+      { rounds: 1, exercises: [{ movement: 'step_down', reps: 10 }] },
+    ]);
+    expect(ECCENTRIC_MOVEMENTS.step_down.unilateral).toBe(true);
+    expect(uni.reps).toBe(20);
+  });
+
+  it('garde la calibration de la descente : ~40 pts pour 1 000 m de D−', () => {
+    const m = prescribedMechanicalLoad({ elevationLossM: 1000 });
+    expect(m.descent).toBeGreaterThan(37);
+    expect(m.descent).toBeLessThan(43);
+    expect(m.eccentricStrength).toBe(0);
+    expect(m.total).toBeCloseTo(m.descent, 10);
+  });
+
+  it('isole la part qu\'aucun flux ne pourra confirmer', () => {
+    // La séparation n'est pas cosmétique : c'est elle qui permet de dire, en
+    // face d'un réalisé à zéro, si l'athlète n'a rien fait ou si la mesure est
+    // aveugle. Confondues dans un total muet, les deux se lisent pareil.
+    const m = prescribedMechanicalLoad({
+      elevationLossM: 200,
+      distanceM: 10000,
+      circuits: [{ ...CIRCUIT, rounds: 3 }],
+    });
+    const sansCircuit = prescribedMechanicalLoad({ elevationLossM: 200, distanceM: 10000 });
+    expect(m.eccentricStrength).toBeGreaterThan(0);
+    expect(m.descent).toBeCloseTo(sansCircuit.total, 10);
+    expect(m.total).toBeCloseTo(m.descent + m.eccentricStrength, 10);
   });
 });
 

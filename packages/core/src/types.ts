@@ -405,12 +405,25 @@ export interface ZoneDistribution {
   polarizationIndex: number;
 }
 
+/**
+ * Ce que couvre une charge mécanique mesurée.
+ *
+ * `running_descent` : le flux d'activité ne porte que de la course. Tout
+ * excentrique produit ailleurs — circuit de force, pliométrie, mollets
+ * excentriques, descentes lentes de marche — y vaut zéro. Le déclarer est la
+ * seule façon d'empêcher qu'une cécité se lise comme une mesure à zéro : c'est
+ * la même exigence que la provenance d'un paramètre physiologique.
+ */
+export type MechanicalLoadCoverage = 'running_descent';
+
 /** Les charges d'entraînement, calculées en parallèle sur deux filières. */
 export interface TrainingLoad {
   /** Charge métabolique/cardiovasculaire (rTSS sur vitesse corrigée de la pente). */
   metabolic: number;
   /** Charge mécanique excentrique — la fatigue « descente », propre au trail. */
   mechanical: number;
+  /** Ce que ce chiffre couvre, et ce qu'il ne peut pas voir. */
+  mechanicalCoverage: MechanicalLoadCoverage;
   /** TRIMP de Banister (pondération exponentielle de la FC de réserve). */
   trimp: number;
   /** TSS cardiaque, filet de sécurité quand la vitesse GPS est douteuse. */
@@ -740,6 +753,35 @@ export type SessionType =
   | 'race'
   | 'rest';
 
+/**
+ * Mouvement excentrique prescriptible dans un circuit de renforcement.
+ *
+ * Une liste fermée, et c'est le point : la charge mécanique d'un circuit se
+ * calcule sur ce que le mouvement freine et sur la manière dont il le freine.
+ * Un mouvement libre en texte ne se calcule pas — il se lit, et il finit par
+ * peser zéro pendant que l'athlète a mal aux cuisses pendant trois jours.
+ */
+export type EccentricMovement =
+  | 'split_squat'          // squat bulgare
+  | 'step_down'            // descente lente de marche
+  | 'single_leg_deadlift'  // soulevé de terre unilatéral
+  | 'eccentric_calf'       // mollet excentrique
+  | 'nordic_curl'          // ischio-jambiers, nordic hamstring
+  | 'drop_jump'            // saut en contrebas, pliométrie
+  | 'isometric';           // gainage — aucun freinage, aucune charge excentrique
+
+export interface StrengthExercise {
+  movement: EccentricMovement;
+  /** Répétitions par tour et par côté (pour `isometric` : secondes de maintien). */
+  reps: number;
+}
+
+/** Un circuit de renforcement : N tours d'une même liste d'exercices. */
+export interface StrengthCircuit {
+  rounds: number;
+  exercises: StrengthExercise[];
+}
+
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */
 export interface SessionBlock {
   label: string;
@@ -765,6 +807,14 @@ export interface SessionBlock {
   vamTargetMh?: number;
   cadenceTargetSpm?: number;
   recovery?: { durationS: number; zone: ZoneKey; active: boolean };
+  /**
+   * Contenu excentrique du bloc, quand il y en a.
+   *
+   * C'est ce qui fait que la charge mécanique prescrite décrit la prescription :
+   * tant que le circuit n'existait qu'en toutes lettres dans `notes`, un tour et
+   * trois tours pesaient le même forfait.
+   */
+  circuit?: StrengthCircuit;
   notes?: string;
 }
 

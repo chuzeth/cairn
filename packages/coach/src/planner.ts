@@ -2,7 +2,10 @@ import type {
   AppliedDirective, AthleteAmbition, AthleteConstraints, PhysiologyModel, PlannedSession,
   RaceGoal, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
-import { DURABILITY_MEASURABLE, projectFrom, targetDistribution, targetRaceDayTsb } from '@cairn/physiology';
+import {
+  DURABILITY_MEASURABLE, prescribedMechanicalLoad, projectFrom, targetDistribution,
+  targetRaceDayTsb,
+} from '@cairn/physiology';
 import {
   TAPER_SCALE_BOUNDS, addDays, buildPeriodization, mondayOf, type WeekPlanSpec,
 } from './periodization.js';
@@ -277,13 +280,17 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   if (strengthDay != null && spec.phase !== 'taper') {
     const existing = assigned.get(strengthDay)!;
     const s = lib.strength(model, 35);
+    const blocks = [...existing.blocks, ...s.blocks];
+    // La charge mécanique se relit sur les blocs fusionnés, jamais par forfait :
+    // un forfait fait peser un tour de circuit comme trois, et c'est justement
+    // par le nombre de tours qu'on réintroduit l'excentrique après une coupure.
     assigned.set(strengthDay, {
       ...existing,
       title: `${existing.title} + renforcement`,
-      blocks: [...existing.blocks, ...s.blocks],
+      blocks,
       durationS: existing.durationS + s.durationS,
       plannedLoad: existing.plannedLoad + s.plannedLoad,
-      plannedMechanicalLoad: existing.plannedMechanicalLoad + 8,
+      plannedMechanicalLoad: lib.mechanicalFor(blocks, existing.elevationLossM).total,
       intent: `${existing.intent} Le renforcement suit immédiatement : chaîne postérieure et souplesse, le point faible identifié au test.`,
     });
   }
@@ -382,6 +389,14 @@ function calibrateToTarget(
         .filter((b) => b.kind)
         .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
       const runningS = Math.max(0, s.durationS - ancillaryS);
+      const blocks = scalable
+        ? s.blocks.map((b) =>
+            b.kind ? b : { ...b, durationS: b.durationS ? Math.round(b.durationS * factor) : undefined },
+          )
+        : s.blocks;
+      const elevationGainM = Math.round(s.elevationGainM * (scalable ? factor : 1));
+      const elevationLossM = Math.round(s.elevationLossM * (scalable ? factor : 1));
+      const distanceM = s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined;
       return {
         id: uid(),
         athleteId,
@@ -389,16 +404,16 @@ function calibrateToTarget(
         type: s.type as SessionType,
         title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS) : s.title,
         intent: s.intent,
-        blocks: scalable
-          ? s.blocks.map((b) =>
-              b.kind ? b : { ...b, durationS: b.durationS ? Math.round(b.durationS * factor) : undefined },
-            )
-          : s.blocks,
+        blocks,
         plannedLoad: Math.round(s.plannedLoad * factor),
-        plannedMechanicalLoad: Math.round(s.plannedMechanicalLoad * (scalable ? factor : 1)),
+        // Relue sur les blocs mis à l'échelle : le dénivelé et les durées
+        // suivent le facteur, le nombre de tours du circuit non. Mettre le
+        // total à l'échelle ferait varier un contenu que la calibration n'a pas
+        // touché — et le chiffre ne se referait plus depuis la séance écrite.
+        plannedMechanicalLoad: lib.mechanicalFor(blocks, elevationLossM).total,
         plannedDurationS: Math.round(runningS * factor) + (scalable ? ancillaryS : 0),
-        plannedDistanceM: s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined,
-        plannedElevationGainM: Math.round(s.elevationGainM * (scalable ? factor : 1)),
+        plannedDistanceM: distanceM,
+        plannedElevationGainM: elevationGainM,
         priority: s.priority,
         status: 'planned' as const,
         rationale: reasons.get(day),
@@ -523,7 +538,7 @@ function raiseVertToMeasurable(s: PlannedSession): void {
   s.blocks = s.blocks.map((b) =>
     b.elevationGainM ? { ...b, elevationGainM: Math.round(b.elevationGainM * k) } : b,
   );
-  s.plannedMechanicalLoad = Math.round(s.plannedMechanicalLoad * (current > 0 ? floor / current : 1));
+  s.plannedMechanicalLoad = lib.mechanicalFor(s.blocks, floor).total;
   s.plannedElevationGainM = floor;
 }
 
@@ -876,7 +891,9 @@ export function buildTrainingPlan(input: BuildPlanInput): {
       intent: `Objectif ${input.race.priority}. ${Math.round(input.race.course.distanceM / 100) / 10} km, ${input.race.course.elevationGainM} m D+.`,
       blocks: [],
       plannedLoad: Math.round((input.estimatedRaceDurationS / 3600) * 85),
-      plannedMechanicalLoad: Math.round((input.race.course.elevationLossM * 9.80665 * 1.3) / 300),
+      plannedMechanicalLoad: Math.round(
+        prescribedMechanicalLoad({ elevationLossM: input.race.course.elevationLossM }).total,
+      ),
       plannedDurationS: input.estimatedRaceDurationS,
       plannedDistanceM: input.race.course.distanceM,
       plannedElevationGainM: input.race.course.elevationGainM,
