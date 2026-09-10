@@ -1,6 +1,6 @@
 import type {
   AppliedDirective, AthleteAmbition, AthleteConstraints, PhysiologyModel, PlannedSession,
-  RaceGoal, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
+  RaceGoal, SessionBlock, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import {
   DURABILITY_MEASURABLE, prescribedMechanicalLoad, projectFrom, targetDistribution,
@@ -389,12 +389,15 @@ function calibrateToTarget(
         .filter((b) => b.kind)
         .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
       const runningS = Math.max(0, s.durationS - ancillaryS);
+      // Le dénivelé suit le facteur **dans les blocs**. Il y était figé pendant
+      // que l'en-tête, lui, le suivait : une rando-course ramenée à 3 h
+      // annonçait 1 384 m et prescrivait 1 092 m de montées, et c'est le second
+      // chiffre que l'athlète exécute. Mis à l'échelle ici, il n'y a plus qu'un
+      // dénivelé, et l'en-tête se relit dessus.
       const blocks = scalable
-        ? s.blocks.map((b) =>
-            b.kind ? b : { ...b, durationS: b.durationS ? Math.round(b.durationS * factor) : undefined },
-          )
+        ? s.blocks.map((b) => (b.kind ? b : scaleBlock(b, factor)))
         : s.blocks;
-      const elevationGainM = Math.round(s.elevationGainM * (scalable ? factor : 1));
+      const elevationGainM = lib.elevationGainOf(blocks);
       const elevationLossM = Math.round(s.elevationLossM * (scalable ? factor : 1));
       const distanceM = s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined;
       return {
@@ -402,7 +405,7 @@ function calibrateToTarget(
         athleteId,
         date,
         type: s.type as SessionType,
-        title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS) : s.title,
+        title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS, elevationGainM) : s.title,
         intent: s.intent,
         blocks,
         plannedLoad: Math.round(s.plannedLoad * factor),
@@ -419,6 +422,21 @@ function calibrateToTarget(
         rationale: reasons.get(day),
       };
     });
+}
+
+/**
+ * Met un bloc couru à l'échelle de la calibration.
+ *
+ * Durée et dénivelé ensemble : ce sont les deux étendues du bloc, et n'en
+ * réduire qu'une donne une séance qui monte autant en moins de temps. Le reste
+ * — cibles, cadence, tours de circuit — décrit *comment* le bloc se court, pas
+ * combien : la calibration n'a rien à y changer.
+ */
+function scaleBlock(b: SessionBlock, factor: number): SessionBlock {
+  const out = { ...b };
+  if (b.durationS) out.durationS = Math.round(b.durationS * factor);
+  if (b.elevationGainM) out.elevationGainM = Math.round(b.elevationGainM * factor);
+  return out;
 }
 
 /**
@@ -529,31 +547,48 @@ function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: 
  */
 function raiseVertToMeasurable(s: PlannedSession): void {
   const floor = DURABILITY_MEASURABLE.minVertM;
-  const current = s.plannedElevationGainM ?? 0;
-  const carriers = s.blocks.filter((b) => b.elevationGainM);
-  const carried = carriers.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM as number), 0);
-  if (current >= floor || carried <= 0) return;
+  const carried = lib.elevationGainOf(s.blocks);
+  if (carried >= floor || carried <= 0) return;
 
+  // Arrondi au-dessus : le plancher est une condition à remplir, et un bloc
+  // arrondi vers le bas ferait rater de deux mètres la mesure qu'on veut rendre
+  // possible.
   const k = floor / carried;
   s.blocks = s.blocks.map((b) =>
-    b.elevationGainM ? { ...b, elevationGainM: Math.round(b.elevationGainM * k) } : b,
+    b.elevationGainM ? { ...b, elevationGainM: Math.ceil(b.elevationGainM * k) } : b,
   );
-  s.plannedMechanicalLoad = lib.mechanicalFor(s.blocks, floor).total;
-  s.plannedElevationGainM = floor;
+  // Le plancher est visé, pas décrété : ce qui est enregistré est ce que les
+  // blocs portent. Écrire `floor` ici rendrait à la séance le second chiffre
+  // qu'on vient de lui retirer — et le plancher se lirait sur un dénivelé que
+  // l'athlète n'exécute pas. Le titre suit, faute de quoi les deux nombres
+  // reparaissent à l'endroit précis où l'athlète les lit.
+  const raised = lib.elevationGainOf(s.blocks);
+  s.plannedElevationGainM = raised;
+  s.plannedMechanicalLoad = lib.mechanicalFor(s.blocks, raised).total;
+  s.title = restateVert(s.title, raised);
+}
+
+const VERT_MENTION = / · \d+ m D\+/;
+
+/** Réécrit le dénivelé qu'un titre annonce, sans toucher au reste. */
+function restateVert(title: string, vert: number): string {
+  const mention = ` · ${vert} m D+`;
+  if (VERT_MENTION.test(title)) return title.replace(VERT_MENTION, mention);
+  const suffix = title.indexOf(' + ');
+  return suffix < 0 ? title + mention : title.slice(0, suffix) + mention + title.slice(suffix);
 }
 
 /**
  * Reconstruit le titre après calibration.
  *
- * La durée **et** le dénivelé sont mis à l'échelle : un titre qui annonce
- * « 48 min · 499 m D+ » alors que le bloc a été ramené à 48 min et 299 m est
- * pire qu'un titre vague — il donne une consigne fausse. Les mentions ajoutées
- * en aval (« + renforcement ») sont préservées.
+ * Le dénivelé qu'il annonce est celui des blocs mis à l'échelle, pas un troisième
+ * calcul : un titre qui annonce « 48 min · 499 m D+ » alors que le bloc a été
+ * ramené à 48 min et 299 m est pire qu'un titre vague — il donne une consigne
+ * fausse. Les mentions ajoutées en aval (« + renforcement ») sont préservées.
  */
-function retitle(s: SessionTemplate, factor: number, runningS = s.durationS): string {
+function retitle(s: SessionTemplate, factor: number, runningS: number, vert: number): string {
   const minutes = Math.round((runningS * factor) / 60);
   const durationLabel = minutes >= 90 ? `${(minutes / 60).toFixed(1)} h` : `${minutes} min`;
-  const vert = Math.round(s.elevationGainM * factor);
 
   const suffixMatch = / \+ .+$/.exec(s.title);
   const suffix = suffixMatch ? suffixMatch[0] : '';
@@ -896,10 +931,16 @@ export function buildTrainingPlan(input: BuildPlanInput): {
       ),
       plannedDurationS: input.estimatedRaceDurationS,
       plannedDistanceM: input.race.course.distanceM,
+      // Le seul dénivelé du plan qui ne se relit pas sur des blocs : une course
+      // ne se prescrit pas en blocs, elle se subit telle que le parcours est
+      // tracé. Il porte donc sa provenance, faute de quoi il serait le dernier
+      // chiffre du plan qu'aucun contenu ne peut refaire — et rien ne le dirait.
       plannedElevationGainM: input.race.course.elevationGainM,
       priority: 'key',
       status: 'planned',
-      rationale: 'Jour J.',
+      rationale:
+        `Jour J. Distance et dénivelé sont ceux du parcours (${input.race.course.elevationGainM} m D+), ` +
+        `relevés sur la course et non prescrits : une course n'a pas de blocs à exécuter.`,
     });
     raceWeek.sessions.sort((a, b) => a.date.localeCompare(b.date));
   }

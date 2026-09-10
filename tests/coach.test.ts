@@ -241,6 +241,30 @@ describe('Plan complet', () => {
     expect(plan.revisionLog[0]!.summary).toContain('estimée');
   });
 
+  it('ne laisse à aucune séance deux dénivelés', () => {
+    // L'invariant : le chiffre d'en-tête se refait depuis le contenu, ou la
+    // séance dit d'où il vient. Vingt séances sur trente-cinq annonçaient un D+
+    // que leurs blocs ne portaient pas — dans les deux sens, jusqu'à 540 m — et
+    // c'est le contenu que l'athlète exécute. La course est le seul cas qui ne
+    // se dérive pas : elle n'a pas de blocs, et son parcours est un relevé.
+    const all = weeks.flatMap((w) => w.sessions);
+    expect(all.length).toBeGreaterThan(30);
+    let releves = 0;
+    for (const s of all) {
+      const annonce = Math.round(s.plannedElevationGainM ?? 0);
+      if (s.blocks.length === 0 && annonce > 0) {
+        releves++;
+        expect(s.rationale ?? '', s.date).toMatch(/parcours/);
+        continue;
+      }
+      expect(lib.elevationGainOf(s.blocks), `${s.date} ${s.title}`).toBe(annonce);
+      // Et le titre annonce le même, quand il l'annonce.
+      const dansLeTitre = / · (\d+) m D\+/.exec(s.title);
+      if (dansLeTitre) expect(Number(dansLeTitre[1]), s.date).toBe(annonce);
+    }
+    expect(releves).toBe(1);
+  });
+
   it('ne produit aucune date en double', () => {
     const all = weeks.flatMap((w) => w.sessions).map((s) => s.date);
     expect(new Set(all).size).toBe(all.length);
@@ -659,6 +683,46 @@ describe('Remplacement du contenu d\'une séance', () => {
     ).toThrow(/hors bornes/);
   });
 
+  it('préserve le marqueur d\'un bloc annexe, et ne lui prête aucune allure', () => {
+    // Le défaut : `kind` inexprimable à l'écriture, donc effacé au premier
+    // remplacement de blocs. Le contenu restait, mais la fréquence « 2 ×/semaine »
+    // du praticien ne comptait plus qu'une séance sur les deux qui la portaient.
+    const [b] = lib.parseSessionBlocks(
+      [{ label: 'Souplesse chaîne postérieure', zone: 'Z1', durationS: 600, kind: 'mobility' }],
+      model,
+    );
+    expect(b!.kind).toBe('mobility');
+    // Un bloc qui ne se court pas n'affiche ni allure ni FC : les déduire de la
+    // zone donnerait à des étirements une allure au kilomètre.
+    expect(b!.paceRange).toBeUndefined();
+    expect(b!.hrRange).toBeUndefined();
+    expect(lib.sessionTotals(model, [b!]).load).toBe(0);
+
+    const bad = (over: Record<string, unknown>) => () =>
+      lib.parseSessionBlocks(
+        [{ label: 'Souplesse', zone: 'Z1', durationS: 600, kind: 'mobility', ...over }],
+        model,
+      );
+    expect(bad({ speedRangeMs: [1, 2] })).toThrow(/ne se court pas/);
+    expect(bad({ cadenceTargetSpm: 175 })).toThrow(/ne se court pas/);
+    // Et un champ inconnu reste inconnu, même s'il porte le nom d'une méthode
+    // d'Object : la table des champs est un ensemble, pas un objet interrogé.
+    expect(bad({ toString: 'x' })).toThrow(/champ inconnu/);
+    expect(bad({ kind: 'meditation' })).toThrow(/nature attendue/);
+    expect(bad({ durationS: undefined })).toThrow(/durationS/);
+  });
+
+  it('rend au coach une séance réécrite sans rien lui retirer', () => {
+    // Le cas réel : le renforcement du 14/09 réécrit par le coach, revenu sans
+    // le `kind` de son bloc de souplesse. Un aller-retour ne doit rien perdre —
+    // seul `paceRange` s'en va, parce qu'il se déduit et se refait.
+    const avant = lib.strength(model, 40, 2).blocks;
+    const ecrit = avant.map(({ paceRange, ...reste }) => reste as Record<string, unknown>);
+    const apres = lib.parseSessionBlocks(ecrit, model);
+    expect(apres).toEqual(avant);
+    expect(apres.filter((b) => b.kind === 'mobility')).toHaveLength(1);
+  });
+
   it('refuse une allure saisie à la main, un champ inconnu, un bloc sans étendue', () => {
     const bad = (b: Record<string, unknown>) => () => lib.parseSessionBlocks([b], model);
     expect(bad({ label: 'x', zone: 'Z3', durationS: 600, paceRange: ['4:00', '4:30'] })).toThrow(/déduite/);
@@ -837,12 +901,31 @@ describe('Remplacement du contenu d\'une séance', () => {
     expect(s.blocks.every((b) => !/\d+\s*tours?/.test(b.notes ?? ''))).toBe(true);
   });
 
-  it('laisse la bibliothèque imposer sa descente quand elle la connaît', () => {
-    // Une séance de descente ne monte pas ce qu'elle descend : ses blocs ne
-    // portent aucun D+, et la boucle supposée sous-estimerait la contrainte.
+  it('fait porter aux blocs le dénivelé que la séance annonce', () => {
+    // Le défaut : la descente annonçait 540 m D+ que pas un bloc ne portait, et
+    // les côtes 208 m de même. Une navette remonte ce qu'elle descend — c'est
+    // la récupération de chaque répétition — et une côte monte ce que ses
+    // répétitions montent. Les deux chiffres se refont depuis le contenu.
     const descente = lib.downhillSession(model, 6, 150);
-    expect(descente.plannedMechanicalLoad).toBeGreaterThan(
-      lib.sessionTotals(model, descente.blocks).mechanicalLoad,
+    expect(descente.elevationGainM).toBe(540);
+    expect(lib.elevationGainOf(descente.blocks)).toBe(descente.elevationGainM);
+
+    const cotes = lib.hillRepeats(model, 8, 90, 0.1);
+    expect(cotes.elevationGainM).toBeGreaterThan(0);
+    expect(lib.elevationGainOf(cotes.blocks)).toBe(cotes.elevationGainM);
+    expect(lib.hillRepeats(model, 4, 90, 0.1).elevationGainM).toBe(cotes.elevationGainM / 2);
+  });
+
+  it('laisse la bibliothèque imposer sa descente quand elle la connaît', () => {
+    // Le tempo monte ses cent mètres en s'échauffant mais ne descend rien qui
+    // compte : la boucle supposée lui prêterait une contrainte excentrique
+    // qu'il n'a pas. Le D− déclaré prime sur ce que les blocs laisseraient
+    // deviner — c'est la raison d'être du paramètre.
+    const t = lib.tempo(model, 25);
+    expect(t.elevationGainM).toBe(100);
+    expect(t.elevationLossM).toBe(0);
+    expect(t.plannedMechanicalLoad).toBeLessThan(
+      lib.sessionTotals(model, t.blocks).mechanicalLoad,
     );
   });
 });

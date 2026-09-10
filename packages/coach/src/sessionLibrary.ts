@@ -29,7 +29,15 @@ export interface SessionTemplate {
   intent: string;
   /** Durée totale approximative, s — sert au placement dans la semaine. */
   durationS: number;
-  /** Dénivelé positif requis, m. */
+  /**
+   * Dénivelé positif requis, m — **lu sur les blocs**, jamais déclaré.
+   *
+   * Une séance n'a qu'un dénivelé. Quand ce chiffre était posé à part, il
+   * finissait par contredire le contenu : des côtes qui annonçaient 208 m dont
+   * aucun bloc ne portait un mètre, une rando-course calibrée sur 1 384 m dont
+   * les blocs en décrivaient 1 092. C'est le second chiffre que l'athlète
+   * exécute, et le premier sur lequel le plancher de mesurabilité était posé.
+   */
   elevationGainM: number;
   /**
    * Dénivelé négatif de la séance, m — la part de la charge mécanique que le
@@ -60,6 +68,17 @@ const zoneOf = (c: Ctx, key: ZoneKey) => c.zones.find((z) => z.key === key)!;
 /** Fourchette d'allure lisible, à partir d'une fourchette de vitesse. */
 const paceRange = (lo: number, hi: number): [string, string] => [formatPace(hi), formatPace(lo)];
 
+/**
+ * Dénivelé de terrain des séances qui ne montent rien en propre.
+ *
+ * Un tempo, un seuil, une PMA se courent sur du roulant : le bloc de qualité a
+ * besoin d'un profil plat pour que l'allure prescrite veuille dire quelque
+ * chose, et ce qui monte, ce sont les kilomètres d'échauffement pour y aller.
+ * Ces mètres-là existent — les ignorer sous-estimerait le D+ de la semaine —
+ * mais ils appartiennent à un bloc, pas à l'en-tête de la séance.
+ */
+const TERRAIN_VERT_M = { tempo: 100, threshold: 80, vo2max: 40 } as const;
+
 function block(
   c: Ctx,
   label: string,
@@ -70,15 +89,17 @@ function block(
   const z = zoneOf(c, zone);
   const lo = opts.speedLo ?? z.speedMinMs;
   const hi = opts.speedHi ?? z.speedMaxMs;
-  const b: SessionBlock = {
-    label,
-    zone,
-    durationS,
-    hrRange: [Math.round(z.hrMin), Math.round(z.hrMax)],
-    speedRangeMs: [lo, hi],
-    paceRange: paceRange(lo, hi),
-  };
+  const b: SessionBlock = { label, zone, durationS };
+  // Un bloc annexe ne se court pas : lui donner la FC et l'allure de sa zone
+  // affichait une consigne intenable — dix minutes d'étirements prescrites
+  // « 5:34-6:47/km ». `directives.ts` écrivait déjà les siens sans, les deux
+  // chemins produisent enfin le même bloc.
   if (opts.kind) b.kind = opts.kind;
+  else {
+    b.hrRange = [Math.round(z.hrMin), Math.round(z.hrMax)];
+    b.speedRangeMs = [lo, hi];
+    b.paceRange = paceRange(lo, hi);
+  }
   if (opts.circuit) b.circuit = opts.circuit;
   if (opts.repeat) b.repeat = opts.repeat;
   if (opts.recovery) b.recovery = opts.recovery;
@@ -183,6 +204,17 @@ export function describeCircuit(c: StrengthCircuit): string {
   return `${c.rounds} tour${c.rounds > 1 ? 's' : ''} : ${items.join(' · ')}.`;
 }
 
+/**
+ * Dénivelé positif d'un contenu de séance.
+ *
+ * Seule origine du chiffre d'en-tête, partout : bibliothèque, calibration du
+ * planificateur, remplacement de blocs par le coach. Un en-tête calculé
+ * ailleurs redeviendrait une seconde vérité, et c'est de là que venait l'écart.
+ */
+export function elevationGainOf(blocks: readonly SessionBlock[]): number {
+  return blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0);
+}
+
 function totalDuration(blocks: SessionBlock[]): number {
   return blocks.reduce((a, b) => {
     const reps = b.repeat ?? 1;
@@ -234,7 +266,7 @@ export function sessionTotals(
   mechanical: { total: number; descent: number; eccentricStrength: number };
 } {
   const distanceM = totalDistance(blocks);
-  const elevationGainM = blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0);
+  const elevationGainM = elevationGainOf(blocks);
   const mechanical = mechanicalFor(blocks, elevationLossM ?? elevationGainM, distanceM);
   return {
     durationS: totalDuration(blocks),
@@ -246,18 +278,29 @@ export function sessionTotals(
   };
 }
 
+/**
+ * Ferme une séance sur ses totaux, tous relus sur ses blocs.
+ *
+ * `elevationGainM` n'est plus un paramètre : une séance qui pourrait l'annoncer
+ * à part pourrait l'annoncer faux. Ce que la séance monte est ce que ses blocs
+ * montent, et rien d'autre ne peut l'écrire.
+ */
 function finalize(
   c: Ctx,
-  base: Omit<SessionTemplate, 'durationS' | 'plannedLoad' | 'plannedMechanicalLoad' | 'elevationLossM'>,
+  base: Omit<
+    SessionTemplate,
+    'durationS' | 'elevationGainM' | 'plannedLoad' | 'plannedMechanicalLoad' | 'elevationLossM'
+  >,
   elevationLossM = 0,
 ): SessionTemplate {
-  const { durationS, distanceM, load, mechanicalLoad } = sessionTotals(
+  const { durationS, distanceM, elevationGainM, load, mechanicalLoad } = sessionTotals(
     c.model,
     base.blocks,
     elevationLossM,
   );
   return {
     ...base,
+    elevationGainM,
     elevationLossM,
     durationS,
     plannedDistanceM: Math.round(distanceM),
@@ -278,7 +321,6 @@ export function recovery(model: PhysiologyModel, durationMin = 40): SessionTempl
     title: `Décrassage ${durationMin} min`,
     intent:
       "Accélérer la clairance métabolique sans ajouter la moindre contrainte. Le seul indicateur qui compte : la FC doit rester basse même si l'allure paraît ridicule.",
-    elevationGainM: 0,
     priority: 'optional',
     phases: ['base', 'build', 'specific', 'peak', 'taper', 'recovery', 'transition'],
     blocks: [
@@ -299,7 +341,6 @@ export function endurance(model: PhysiologyModel, durationMin = 60, vertM = 0): 
     title: `Endurance fondamentale ${durationMin} min${vertM ? ` · ${vertM} m D+` : ''}`,
     intent:
       'Développer la densité capillaire et la capacité oxydative : c\'est la zone qui construit le moteur des trails longs. Aisance respiratoire permanente, aucune dérive cardiaque.',
-    elevationGainM: vertM,
     priority: 'support',
     phases: ['base', 'build', 'specific', 'peak', 'taper', 'transition'],
     blocks: [
@@ -320,7 +361,6 @@ export function longRun(model: PhysiologyModel, durationMin = 105, vertM = 300):
     title: `Sortie longue ${Math.round(durationMin / 60 * 10) / 10} h · ${vertM} m D+`,
     intent:
       'Étendre la durabilité : maintenir un rendement stable sur la durée. C\'est ici que se gagne la seconde moitié des courses.',
-    elevationGainM: vertM,
     priority: 'key',
     phases: ['base', 'build', 'specific', 'peak'],
     blocks: [
@@ -351,7 +391,6 @@ export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 120
     title: `Rando-course ${Math.round(durationMin / 60 * 10) / 10} h · ${vertM} m D+`,
     intent:
       "Spécificité trail pure : alterner marche et course selon la pente, tenir plusieurs heures sans dérive, et habituer les quadriceps à la descente. C'est la séance qui différencie un coureur de route d'un traileur.",
-    elevationGainM: vertM,
     priority: 'key',
     phases: ['base', 'build', 'specific'],
     blocks: [
@@ -382,11 +421,14 @@ export function tempo(model: PhysiologyModel, blockMin = 25): SessionTemplate {
     title: `Tempo ${blockMin} min en résistance douce`,
     intent:
       'Travailler la zone transitionnelle entre les deux seuils — l\'allure réelle des trails courts et moyens. Développe la capacité à recycler le lactate plutôt qu\'à l\'éviter.',
-    elevationGainM: 100,
     priority: 'support',
     phases: ['base', 'build', 'specific', 'peak'],
     blocks: [
-      block(c, 'Échauffement progressif', 'Z2', 20 * 60, {}),
+      // Le dénivelé de la séance est celui du terrain parcouru en s'échauffant :
+      // le bloc de tempo se court sur du roulant, sans quoi l'allure prescrite
+      // ne veut plus rien dire. Porté ici, il se relit ; posé sur l'en-tête, il
+      // ne se refaisait depuis aucun bloc.
+      block(c, 'Échauffement progressif', 'Z2', 20 * 60, { elevationGainM: TERRAIN_VERT_M.tempo }),
       block(c, `Tempo continu`, 'Z3', blockMin * 60, {
         speedLo: z3.speedMinMs * 1.02,
         speedHi: z3.speedMaxMs * 0.97,
@@ -411,14 +453,13 @@ export function threshold(model: PhysiologyModel, reps = 5, repMin = 5): Session
     title: `${reps} × ${repMin} min au seuil`,
     intent:
       "Repousser le seuil anaérobie : élever la vitesse maximale soutenable, donc l'allure tenable sur 1 à 3 h. Le levier n°1 sur les formats trail courts et moyens.",
-    elevationGainM: 80,
     priority: 'key',
     // Le « fractionné moyen 3-12 min » du compte rendu : rien ne le réserve à
     // la phase de développement, et l'alternance court/moyen en a besoin dès la
     // construction foncière.
     phases: ['base', 'build', 'specific', 'peak'],
     blocks: [
-      block(c, 'Échauffement', 'Z2', 20 * 60, {}),
+      block(c, 'Échauffement', 'Z2', 20 * 60, { elevationGainM: TERRAIN_VERT_M.threshold }),
       block(c, 'Gammes (montées de genou, talons-fesses, foulées bondissantes)', 'Z2', 5 * 60, {
         notes: 'Trois passages de 20 s de chaque éducatif, récupération en marchant.',
       }),
@@ -452,11 +493,10 @@ export function vo2max(model: PhysiologyModel, format: '30-30' | '1-1' | '15-15'
     title: `PMA — ${sets} × ${repsPerSet} × ${spec.label}`,
     intent:
       `Solliciter VO2max au plus près du plafond. À ${Math.round(spec.pct * 100)} % de VMA, le temps passé à haute fraction de VO2max est maximal — c'est le stimulus, pas la vitesse elle-même.`,
-    elevationGainM: 40,
     priority: 'key',
     phases: ['build', 'specific', 'peak'],
     blocks: [
-      block(c, 'Échauffement', 'Z2', 20 * 60, {}),
+      block(c, 'Échauffement', 'Z2', 20 * 60, { elevationGainM: TERRAIN_VERT_M.vo2max }),
       block(c, 'Gammes + 3 lignes droites progressives', 'Z3', 8 * 60, {}),
       block(c, `Série ${spec.label}`, 'Z5', spec.work, {
         repeat: sets * repsPerSet,
@@ -488,7 +528,6 @@ export function hillRepeats(model: PhysiologyModel, reps = 8, repS = 90, grade =
     title: `Côtes — ${reps} × ${repS} s à ${Math.round(grade * 100)} %`,
     intent:
       'Puissance spécifique en montée avec une contrainte articulaire réduite : la pente permet une intensité cardiaque élevée pour des forces d\'impact bien plus faibles qu\'à plat.',
-    elevationGainM: gainPerRep * reps,
     priority: 'key',
     phases: ['base', 'build', 'specific'],
     blocks: [
@@ -497,6 +536,11 @@ export function hillRepeats(model: PhysiologyModel, reps = 8, repS = 90, grade =
         repeat: reps,
         speedLo: speed * 0.95,
         speedHi: speed * 1.05,
+        // Le dénivelé de la séance *est* celui des répétitions : une côte qui
+        // annonçait 208 m dont aucun bloc ne portait un mètre laissait le
+        // chiffre d'en-tête vivre sa vie. Porté par la répétition, il suit le
+        // nombre de répétitions sans que personne ait à le recalculer.
+        elevationGainM: gainPerRep,
         vamTargetMh: targetVam,
         recovery: { durationS: repS, zone: 'Z1', active: true },
         cadenceTargetSpm: 180,
@@ -522,13 +566,15 @@ export function downhillSession(model: PhysiologyModel, reps = 6, repS = 150): S
     title: `Descente technique — ${reps} × ${Math.round(repS / 60 * 10) / 10} min`,
     intent:
       "Conditionner les quadriceps à la contrainte excentrique et automatiser le pilotage en descente. Effet de séance répétée : trois semaines de ce travail réduisent nettement les dégâts musculaires du jour J.",
-    elevationGainM: lossPerRep * reps,
     priority: 'support',
     phases: ['build', 'specific'],
     blocks: [
       block(c, 'Échauffement', 'Z2', 20 * 60, {}),
       block(c, 'Descentes contrôlées', 'Z3', repS, {
         repeat: reps,
+        // Ce qui se descend se remonte : la récupération de chaque répétition
+        // est la montée, et c'est elle qui fait le D+ de la séance.
+        elevationGainM: lossPerRep,
         recovery: { durationS: Math.round(repS * 1.4), zone: 'Z2', active: true },
         cadenceTargetSpm: 182,
         notes:
@@ -551,7 +597,6 @@ export function racePace(model: PhysiologyModel, blockMin = 40, targetSpeedMs?: 
     title: `Allure spécifique — ${blockMin} min`,
     intent:
       "Ancrer l'allure de course dans les sensations et vérifier que le couple allure/FC tient sur terrain réel. Séance de répétition générale, pas de développement.",
-    elevationGainM: vertM,
     priority: 'key',
     phases: ['specific', 'peak', 'taper'],
     blocks: [
@@ -594,7 +639,6 @@ export function strength(model: PhysiologyModel, durationMin = 40, rounds = 3): 
     title: `Renforcement spécifique ${durationMin} min · ${rounds} tour${rounds > 1 ? 's' : ''}`,
     intent:
       "Renforcer la chaîne postérieure et la tolérance excentrique, et corriger le déficit de souplesse relevé au test (flexion avant à −1 cm). Prévention et économie de course.",
-    elevationGainM: 0,
     priority: 'support',
     phases: ['base', 'build', 'specific', 'transition', 'recovery'],
     blocks: [

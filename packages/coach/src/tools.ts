@@ -52,6 +52,7 @@ const num = (description: string, extra: Record<string, unknown> = {}) => ({ typ
 const bool = (description: string) => ({ type: 'boolean', description });
 
 const ZONES = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
+const BLOCK_KINDS = ['mobility', 'respiratory'];
 const ABSENCE_KINDS: AbsenceKind[] = ['chosen', 'illness', 'injury', 'unavailable'];
 
 const pair = (description: string) => ({
@@ -69,6 +70,11 @@ const pair = (description: string) => ({
  * déduit de la zone ; `paceRange` n'y figure pas parce qu'il se déduit de
  * `speedRangeMs` — un affichage qui pourrait contredire ses propres nombres
  * n'est pas une prescription.
+ *
+ * Le schéma expose tout ce que le bloc sait porter, `kind` compris : un champ
+ * que le coach ne peut pas écrire est un champ qu'un remplacement de blocs
+ * efface, et c'est ainsi qu'une séance a perdu le marqueur par lequel se
+ * comptait une fréquence hebdomadaire prescrite au dossier.
  */
 const BLOCK_SCHEMA = {
   type: 'object',
@@ -77,10 +83,20 @@ const BLOCK_SCHEMA = {
   properties: {
     label: str('Intitulé du bloc, ex. « Contre-la-montre 20 min ».'),
     zone: str('Zone dominante du bloc.', { enum: ZONES }),
+    kind: str(
+      "Nature d'un bloc annexe, non couru, dont la fréquence hebdomadaire est prescrite au dossier. " +
+        "À conserver sur un bloc qui le porte : c'est par lui que la fréquence se compte. " +
+        "Un bloc annexe n'admet ni allure, ni FC, ni cadence, ni distance.",
+      { enum: BLOCK_KINDS },
+    ),
     durationS: num('Durée du bloc, en secondes. Requis, sauf si distanceM est fourni.'),
     distanceM: num('Étendue du bloc en mètres, à la place d\'une durée.'),
     repeat: num('Nombre de répétitions du bloc (défaut 1).'),
-    elevationGainM: num('Dénivelé positif du bloc, en mètres.'),
+    elevationGainM: num(
+      "Dénivelé positif du bloc, en mètres — par répétition si le bloc en porte. " +
+        "Le D+ de la séance en est la somme : il ne se saisit nulle part ailleurs, " +
+        "et une séance qui monte doit le dire dans un bloc.",
+    ),
     hrRange: pair(
       "Fourchette de FC cible [min, max]. Omise, celle de la zone s'applique. À renseigner dès que la prescription sort de la bande — un test maximal vise au-delà du plafond de Z4.",
     ),
