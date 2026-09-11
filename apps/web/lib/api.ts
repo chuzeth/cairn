@@ -1,7 +1,11 @@
-export const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
-
+/**
+ * Les appels partent de l'origine qui a servi la page — `/api/...`, jamais
+ * `http://hôte:4000/api/...`. Next relaie vers l'API (voir `next.config.ts`) :
+ * c'est ce qui permet d'ouvrir Cairn depuis le téléphone sans rien configurer,
+ * et ce qui fait qu'aucun appel ne traverse d'origine.
+ */
 export async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`, { cache: 'no-store' });
+  const res = await fetch(path, { cache: 'no-store' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((body as { error?: string }).error ?? `Erreur ${res.status}`);
@@ -10,7 +14,7 @@ export async function get<T>(path: string): Promise<T> {
 }
 
 export async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
@@ -23,7 +27,7 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export async function del<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`, { method: 'DELETE' });
+  const res = await fetch(path, { method: 'DELETE' });
   if (!res.ok) throw new Error(`Erreur ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -77,6 +81,14 @@ export function blockDuration(seconds: number | null | undefined): string {
   }
   return `${Math.round(seconds)} s`;
 }
+
+/**
+ * Ponctuation française : l'espace qui précède « : » ou ferme un guillemet ne
+ * doit pas se retrouver en début de ligne. À 390 px, une ligne sur trois casse
+ * à cet endroit.
+ */
+export const nbsp = (text: string): string =>
+  text.replace(/ ([:;!?»])/g, '\u00a0$1').replace(/«\u0020/g, '«\u00a0');
 
 const DAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];

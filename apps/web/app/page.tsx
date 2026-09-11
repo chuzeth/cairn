@@ -3,13 +3,15 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   duration, frDate, get, post, signed, shortDate,
-  type ActivityRow, type InsightRow, type PmcResponse, type SessionRow, type StateResponse,
+  type ActivityRow, type InsightRow, type PlanResponse, type PmcResponse, type StateResponse,
 } from '@/lib/api';
+import { useIsPhone } from '@/lib/viewport';
 import {
   AbsenceNotice, Badge, Card, ErrorBox, Loading, Metric, MISSING_LABEL,
   ReadinessBasis, ThreeZoneBar, unweighed,
 } from '@/components/ui';
 import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
+import { Morning } from '@/components/Morning';
 
 interface Health {
   stravaConnected: boolean;
@@ -19,41 +21,63 @@ interface Health {
 }
 
 export default function Dashboard() {
+  const phone = useIsPhone();
   const [state, setState] = useState<StateResponse | null>(null);
+  const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [pmc, setPmc] = useState<PmcResponse | null>(null);
   const [insights, setInsights] = useState<InsightRow[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [filing, setFiling] = useState<string | null>(null);
 
+  /** Ce sans quoi aucun des deux écrans ne peut rien dire. */
   const load = useCallback(async () => {
     setError(null);
     try {
-      const h = await get<Health>('/health');
-      setHealth(h);
-      const [s, p, i, a, pl] = await Promise.all([
+      const [h, s, pl] = await Promise.all([
+        get<Health>('/health'),
         get<StateResponse>('/api/state'),
+        get<PlanResponse>('/api/plan?weeks=2'),
+      ]);
+      setHealth(h); setState(s); setPlan(pl);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  /**
+   * Ce que seul le tableau de bord affiche. Cent quatre-vingts jours de PMC
+   * n'ont rien à faire sur le réseau d'un téléphone à sept heures du matin,
+   * pour finir dans un graphique que cet écran ne montre pas.
+   */
+  const loadDeskOnly = useCallback(async () => {
+    try {
+      const [p, i, a] = await Promise.all([
         get<PmcResponse>('/api/pmc?days=180'),
         get<InsightRow[]>('/api/insights?limit=6'),
         get<ActivityRow[]>('/api/activities?limit=6'),
-        get<{ sessions: SessionRow[] }>('/api/plan?weeks=2'),
       ]);
-      setState(s); setPmc(p); setInsights(i); setActivities(a); setSessions(pl.sessions);
+      setPmc(p); setInsights(i); setActivities(a);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (phone === false && !pmc) void loadDeskOnly(); }, [phone, pmc, loadDeskOnly]);
+
+  const reload = useCallback(async () => {
+    await load();
+    if (phone === false) await loadDeskOnly();
+  }, [load, loadDeskOnly, phone]);
 
   const runSync = async () => {
     setSyncing(true);
     try {
       await post('/api/sync', { maxActivities: 40 });
-      await load();
+      await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -68,7 +92,7 @@ export default function Dashboard() {
     setFiling(date);
     try {
       await post(`/api/checkins/${date}/note/handled`, {});
-      await load();
+      await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -77,13 +101,30 @@ export default function Dashboard() {
   };
 
   if (error && !state) return <ErrorBox error={error} onRetry={load} />;
-  if (!state || !pmc) return <Loading label="Chargement de ton état de forme…" />;
+  if (phone === null || !state || !plan) return <Loading label="Chargement de ton état de forme…" />;
+
+  // Au téléphone, le premier écran répond à la question du matin ; le tableau
+  // de bord reste ce qu'il est, une console d'analyse, sur l'écran qui va avec.
+  if (phone) {
+    return (
+      <Morning
+        state={state}
+        plan={plan}
+        stravaConnected={health?.stravaConnected ?? true}
+        onReload={reload}
+        onFileNote={(d) => { void fileNote(d); }}
+        filing={filing}
+      />
+    );
+  }
+
+  if (!pmc) return <Loading label="Chargement de ton état de forme…" />;
 
   const today = state.today;
   // Une séance retirée par une absence déclarée n'est pas à venir : elle n'est
   // plus au programme. L'annoncer ici demanderait de faire ce qu'on a accepté
   // qu'il ne fasse pas.
-  const upcoming = sessions
+  const upcoming = plan.sessions
     .filter((s) => s.date >= state.today.date && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled')
     .slice(0, 4);
   const nextRace = state.upcomingRaces[0];
@@ -165,7 +206,7 @@ export default function Dashboard() {
             </div>
           </div>
           {health.missingConfig.length === 0 && (
-            <a className="btn" data-variant="primary" href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/auth/strava`}>
+            <a className="btn" data-variant="primary" href="/auth/strava">
               Connecter Strava
             </a>
           )}

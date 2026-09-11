@@ -21,6 +21,8 @@ npm run dev
 ```
 
 L'application est sur **http://localhost:3000**, l'API sur **http://localhost:4000**.
+Depuis le téléphone, sur le même réseau : `http://<ip-du-mac>:3000`, sans rien
+configurer — le site relaie lui-même les appels vers l'API.
 
 Avant de lancer, copie `.env.example` vers `.env` et renseigne au minimum
 `ANTHROPIC_API_KEY`. Pour Strava, suis [docs/strava.md](docs/strava.md).

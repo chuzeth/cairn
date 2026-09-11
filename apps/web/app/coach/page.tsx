@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { API, get, markdown } from '@/lib/api';
+import { get, markdown } from '@/lib/api';
 import { Card } from '@/components/ui';
 
 interface ToolCall { name: string; summary?: string; state: 'running' | 'done' | 'error' }
@@ -78,7 +78,7 @@ export default function CoachPage() {
       });
 
     try {
-      const res = await fetch(`${API}/api/chat`, {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),

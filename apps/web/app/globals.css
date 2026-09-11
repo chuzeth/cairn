@@ -125,13 +125,60 @@ button { font-family: inherit; font-size: inherit; }
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .grid-3 { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+
+/* ── Navigation du téléphone ──────────────────────────────────────────────── */
+
+.tabbar {
+  display: none;
+  grid-auto-flow: column; grid-auto-columns: 1fr;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  /* Opaque, pas translucide : la page défile dessous, et un flou qui ne se
+     calcule pas rendrait la barre illisible au lieu de la rendre discrète. */
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 56px; padding: 8px 4px 7px;
+  font-size: 10.5px; font-weight: 550;
+  color: var(--text-faint); background: none; border: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.tab .nav-icon { width: 21px; height: 21px; color: inherit; }
+.tab[data-active="true"] { color: var(--text); }
+.tab[data-active="true"] .nav-icon { color: var(--accent); }
+
+.sheet-veil { display: none; position: fixed; inset: 0; z-index: 50; background: rgba(4, 5, 8, 0.62); }
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: var(--bg-elev); border-top: 1px solid var(--border-strong);
+  border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
+  padding: 6px 12px calc(74px + env(safe-area-inset-bottom));
+  animation: sheet-in 160ms ease-out;
+}
+@keyframes sheet-in { from { transform: translateY(18px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+.sheet-grip { width: 34px; height: 4px; border-radius: 2px; background: var(--border-strong); margin: 6px auto 10px; }
+.sheet-link {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 50px; padding: 0 10px; border-radius: var(--radius-sm);
+  color: var(--text-dim); font-size: 15px; font-weight: 500;
+}
+.sheet-link .nav-icon { width: 18px; height: 18px; }
+.sheet-link[data-active="true"] { background: var(--bg-elev-2); color: var(--text); }
+.sheet-link[data-active="true"] .nav-icon { color: var(--accent); }
+.sheet-foot { margin-top: 8px; padding: 12px 10px 0; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }
+
+/* Au téléphone, la barre latérale disparaît au profit d'une barre d'onglets
+   sous le pouce : le haut de l'écran appartient à la réponse du jour, pas au
+   menu. Cf. `.tabbar`. */
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; flex-direction: row; overflow-x: auto; padding: 8px 10px; gap: 2px; }
-  .nav-link { white-space: nowrap; font-size: 13px; padding: 8px 9px; }
-  .brand { display: none; }
-  .main { padding: 20px 16px 48px; }
+  .sidebar { display: none; }
+  .main { padding: 18px 16px calc(76px + env(safe-area-inset-bottom)); }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .tabbar { display: grid; }
+  .sheet-veil { display: block; }
 }
 
 /* ── Métriques ────────────────────────────────────────────────────────────── */
@@ -354,11 +401,92 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   /* L'envoi reste sous le pouce : répondre à une seule question et envoyer ne
      doit pas demander de redescendre la page. */
   .checkin-send {
-    position: sticky; bottom: 0; z-index: 5;
-    margin: 18px -16px 0; padding: 11px 16px calc(11px + env(safe-area-inset-bottom));
+    position: sticky; bottom: calc(57px + env(safe-area-inset-bottom)); z-index: 5;
+    margin: 18px -16px 0; padding: 11px 16px;
     background: var(--bg); border-top: 1px solid var(--border);
   }
   .checkin-send p { font-size: 11px; }
+}
+
+/* ── Le chemin du matin ───────────────────────────────────────────────────── */
+
+/* Une colonne, lue de haut en bas : la séance du jour, la réserve du système,
+   puis les chiffres. Les gros boutons de réponse (`.q-*`) sont ceux du point du
+   jour — même geste, même échelle, mêmes valeurs enregistrées. */
+.morning { max-width: 560px; display: flex; flex-direction: column; gap: 12px; }
+.morning .card { padding: 15px 16px; }
+
+.morning-head { margin-bottom: 2px; }
+.morning-date { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); font-weight: 600; }
+.morning-title { font-size: 27px; line-height: 1.16; letter-spacing: -0.03em; font-weight: 650; margin: 7px 0 0; }
+.morning-lede { font-size: 14px; line-height: 1.5; color: var(--text-dim); margin: 9px 0 0; }
+.morning-inline { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.morning-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600; margin-top: 6px; }
+.morning-after { font-size: 12.5px; line-height: 1.5; color: var(--text-faint); margin: 2px 2px 0; }
+.morning-done { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 550; }
+
+/* ── La séance, telle qu'on la fait ───────────────────────────────────────── */
+
+.session-blocks { display: flex; flex-direction: column; gap: 13px; }
+.block { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 12px; align-items: start; }
+.block-time { font-size: 13px; font-weight: 600; text-align: right; padding-top: 1px; }
+.block-repeat { display: block; font-size: 11px; font-weight: 500; color: var(--text-faint); }
+.block-label { font-size: 14px; font-weight: 550; line-height: 1.3; }
+.block-targets { display: flex; flex-wrap: wrap; gap: 3px 9px; margin-top: 4px; color: var(--text-faint); }
+.block-zone { font-weight: 700; color: var(--text-dim); }
+.block-zone[data-zone="Z1"] { color: var(--z1); }
+.block-zone[data-zone="Z2"] { color: var(--z2); }
+.block-zone[data-zone="Z3"] { color: var(--z3); }
+.block-zone[data-zone="Z4"] { color: var(--z4); }
+.block-zone[data-zone="Z5"] { color: var(--z5); }
+.block-note { font-size: 12px; line-height: 1.45; color: var(--text-dim); margin-top: 5px; }
+
+.session-success {
+  margin: 13px 0 0; padding: 8px 11px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 12.5px; color: var(--text-dim);
+  background: color-mix(in srgb, var(--good) 8%, transparent); border-left: 2px solid var(--good);
+}
+.session-success strong { color: var(--text); font-weight: 600; }
+.session-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border);
+}
+.disclose {
+  background: none; border: none; padding: 4px 0; cursor: pointer;
+  font-size: 12px; color: var(--text-dim);
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong);
+}
+.session-why { display: flex; flex-direction: column; gap: 9px; margin-top: 11px; color: var(--text-dim); line-height: 1.5; }
+.session-why p { margin: 0; }
+
+/* ── La réserve du jour ───────────────────────────────────────────────────── */
+
+.avail-score { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.avail-value { font-size: 34px; font-weight: 650; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.avail-reco { font-size: 14px; line-height: 1.5; margin: 9px 0 0; }
+.avail-ask { margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border); }
+.avail-ask .q-head { margin-bottom: 9px; }
+.avail-after { margin-top: 13px; }
+.avail-adjust {
+  margin-top: 9px; padding: 10px 12px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--bg-inset); border-left: 2px solid var(--accent);
+}
+.avail-adjust .msg-content p:last-child { margin-bottom: 0; }
+.avail-more {
+  display: inline-block; margin-top: 13px; padding: 6px 0;
+  font-size: 13px; font-weight: 550; color: var(--accent);
+}
+
+/* ── Les chiffres, en dernier ─────────────────────────────────────────────── */
+
+.figures { display: flex; flex-direction: column; gap: 12px; }
+.figure { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: baseline; }
+.figure-name { font-size: 13px; color: var(--text-dim); }
+.figure-value { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; }
+.figure-note { grid-column: 1 / -1; }
+.figure-race {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
 }
 
 /* ── Divers ───────────────────────────────────────────────────────────────── */

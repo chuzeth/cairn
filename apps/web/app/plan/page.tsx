@@ -3,57 +3,10 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   blockDuration, duration, frDate, get, todayIso,
-  type DirectiveOriginRow, type PlanResponse, type SessionRow,
+  type PlanResponse, type SessionRow,
 } from '@/lib/api';
+import { circuitText, CRITERION_LABELS, originLabel, TYPE_COLORS, TYPE_LABELS } from '@/lib/sessions';
 import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
-
-const TYPE_LABELS: Record<string, string> = {
-  recovery: 'Récupération', endurance: 'Endurance', long_run: 'Sortie longue',
-  long_trail: 'Rando-course', tempo: 'Tempo', threshold: 'Seuil', vo2max: 'PMA',
-  hill_repeats: 'Côtes', downhill: 'Descente', fartlek: 'Fartlek',
-  race_pace: 'Allure course', strength: 'Renforcement', mobility: 'Mobilité',
-  cross_training: 'Cross-training', race: 'Course', rest: 'Repos',
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  recovery: 'var(--z1)', endurance: 'var(--z2)', long_run: 'var(--z2)', long_trail: 'var(--accent)',
-  tempo: 'var(--z3)', threshold: 'var(--z4)', vo2max: 'var(--z5)', hill_repeats: 'var(--z4)',
-  downhill: 'var(--mechanical)', race_pace: 'var(--z3)', strength: 'var(--text-faint)',
-  race: 'var(--good)', rest: 'var(--border-strong)',
-};
-
-const CRITERION_LABELS: Record<string, string> = {
-  hr_drift: 'pas de dérive cardiaque (Pa:HR) sur la séance',
-};
-
-const MOVEMENT_LABELS: Record<string, { label: string; perSide: boolean; seconds?: boolean }> = {
-  split_squat: { label: 'squats bulgares', perSide: true },
-  step_down: { label: 'descentes lentes de marche', perSide: true },
-  single_leg_deadlift: { label: 'soulevés de terre unilatéraux', perSide: true },
-  eccentric_calf: { label: 'mollets excentriques', perSide: true },
-  nordic_curl: { label: 'nordic hamstring', perSide: false },
-  drop_jump: { label: 'sauts en contrebas', perSide: false },
-  isometric: { label: 'gainage', perSide: false, seconds: true },
-};
-
-/**
- * Le circuit s'écrit depuis sa structure, jamais à côté d'elle : c'est la même
- * structure qui produit la charge mécanique affichée en haut de la séance.
- */
-function circuitText(c: NonNullable<SessionRow['blocks'][number]['circuit']>): string {
-  const items = c.exercises.map((e) => {
-    const m = MOVEMENT_LABELS[e.movement] ?? { label: e.movement, perSide: false };
-    return `${m.label} ${e.reps}${m.seconds ? ' s' : m.perSide ? '/jambe' : ''}`;
-  });
-  return `${c.rounds} tour${c.rounds > 1 ? 's' : ''} : ${items.join(' · ')}.`;
-}
-
-/** Nomme le document d'où l'extrait est tiré, et sa date. */
-function originLabel(o: DirectiveOriginRow): string {
-  const what =
-    o.source === 'lab_test' ? "test d'effort" : o.source === 'athlete_notes' ? 'notes du dossier' : 'toi';
-  return `${what}, ${frDate(o.date)}`;
-}
 
 /** Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. */
 const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v)}`;

@@ -1,16 +1,36 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
-const LINKS = [
-  { href: '/', label: 'Tableau de bord', icon: 'grid' },
-  { href: '/point', label: 'Point du jour', icon: 'sun' },
-  { href: '/coach', label: 'Coach', icon: 'chat' },
+/**
+ * Deux navigations pour un seul site.
+ *
+ * Sur un écran large, la barre latérale : sept destinations visibles en
+ * permanence, elle ne coûte rien. Sur un téléphone, elle coûterait le haut du
+ * premier écran — l'endroit exact où doit se trouver la réponse à « qu'est-ce
+ * que je fais aujourd'hui ». Au téléphone, la navigation passe donc sous le
+ * pouce : trois destinations du matin, et le reste dans une feuille.
+ */
+
+interface NavLink { href: string; label: string; short?: string; icon: string }
+
+const LINKS: NavLink[] = [
+  { href: '/', label: 'Tableau de bord', short: "Aujourd'hui", icon: 'grid' },
+  { href: '/point', label: 'Point du jour', short: 'Point', icon: 'sun' },
+  { href: '/coach', label: 'Coach', short: 'Coach', icon: 'chat' },
   { href: '/plan', label: 'Plan', icon: 'calendar' },
   { href: '/activities', label: 'Séances', icon: 'activity' },
   { href: '/races', label: 'Objectifs', icon: 'flag' },
   { href: '/physiology', label: 'Physiologie', icon: 'pulse' },
 ];
+
+/** Ce qu'on ouvre au réveil ; le reste se consulte, il ne se surveille pas. */
+const TABS = LINKS.filter((l) => l.short);
+const SHEET = LINKS.filter((l) => !l.short);
+
+const isActive = (href: string, pathname: string) =>
+  href === '/' ? pathname === '/' : pathname.startsWith(href);
 
 function Icon({ name }: { name: string }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
@@ -22,45 +42,84 @@ function Icon({ name }: { name: string }) {
     activity: <path d="M3 12h4l3-8 4 16 3-8h4" {...common} />,
     flag: <><path d="M4 21V4M4 4h11l-1.6 3.5L15 11H4" {...common} /></>,
     pulse: <><circle cx="12" cy="12" r="9" {...common} /><path d="M7.5 12h2l1.5-3.5 2 7 1.5-3.5h2" {...common} /></>,
+    more: <><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" /></>,
   };
   return <svg viewBox="0 0 24 24" className="nav-icon">{paths[name]}</svg>;
 }
 
 export function Nav() {
   const pathname = usePathname();
+  const [sheet, setSheet] = useState(false);
+
+  // Une feuille qui survit à la navigation recouvrirait la page qu'on vient
+  // d'ouvrir.
+  useEffect(() => { setSheet(false); }, [pathname]);
+
+  const sheetActive = SHEET.some((l) => isActive(l.href, pathname));
+
   return (
-    <nav className="sidebar">
-      <Link href="/" className="brand">
-        <svg viewBox="0 0 32 32" className="brand-mark" aria-hidden>
-          {/* Un cairn : les pierres empilées qui balisent un sentier. */}
-          <ellipse cx="16" cy="27" rx="9" ry="2.6" fill="#1c212c" />
-          <path d="M8.5 24.5h15l-2-3.6h-11z" fill="#4b5768" />
-          <path d="M10.5 20.5h11l-1.8-3.6h-7.4z" fill="#66748a" />
-          <path d="M12.2 16.5h7.6l-1.5-3.4h-4.6z" fill="#8b9bb0" />
-          <path d="M14 12.8h4l-2-4.4z" fill="#7dd3a0" />
-        </svg>
-        <span>
-          <div className="brand-name">Cairn</div>
-          <div className="brand-sub">Performance trail</div>
-        </span>
-      </Link>
-
-      {LINKS.map((l) => (
-        <Link
-          key={l.href}
-          href={l.href}
-          className="nav-link"
-          data-active={l.href === '/' ? pathname === '/' : pathname.startsWith(l.href)}
-        >
-          <Icon name={l.icon} />
-          {l.label}
+    <>
+      <nav className="sidebar">
+        <Link href="/" className="brand">
+          <svg viewBox="0 0 32 32" className="brand-mark" aria-hidden>
+            {/* Un cairn : les pierres empilées qui balisent un sentier. */}
+            <ellipse cx="16" cy="27" rx="9" ry="2.6" fill="#1c212c" />
+            <path d="M8.5 24.5h15l-2-3.6h-11z" fill="#4b5768" />
+            <path d="M10.5 20.5h11l-1.8-3.6h-7.4z" fill="#66748a" />
+            <path d="M12.2 16.5h7.6l-1.5-3.4h-4.6z" fill="#8b9bb0" />
+            <path d="M14 12.8h4l-2-4.4z" fill="#7dd3a0" />
+          </svg>
+          <span>
+            <div className="brand-name">Cairn</div>
+            <div className="brand-sub">Performance trail</div>
+          </span>
         </Link>
-      ))}
 
-      <div className="sidebar-foot">
-        <div>Pierre Chuzeville</div>
-        <div style={{ marginTop: 3 }}>Test d'effort du 24/07/2025</div>
-      </div>
-    </nav>
+        {LINKS.map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            className="nav-link"
+            data-active={isActive(l.href, pathname)}
+          >
+            <Icon name={l.icon} />
+            {l.label}
+          </Link>
+        ))}
+
+        <div className="sidebar-foot">
+          <div>Pierre Chuzeville</div>
+          <div style={{ marginTop: 3 }}>Test d'effort du 24/07/2025</div>
+        </div>
+      </nav>
+
+      {sheet && (
+        <div className="sheet-veil" onClick={() => setSheet(false)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Le reste du site">
+            <div className="sheet-grip" />
+            {SHEET.map((l) => (
+              <Link key={l.href} href={l.href} className="sheet-link" data-active={isActive(l.href, pathname)}>
+                <Icon name={l.icon} />
+                {l.label}
+              </Link>
+            ))}
+            <div className="sheet-foot">Pierre Chuzeville · test d'effort du 24/07/2025</div>
+          </div>
+        </div>
+      )}
+
+      <nav className="tabbar">
+        {TABS.map((l) => (
+          <Link key={l.href} href={l.href} className="tab" data-active={isActive(l.href, pathname)}>
+            <Icon name={l.icon} />
+            {l.short}
+          </Link>
+        ))}
+        <button type="button" className="tab" data-active={sheet || sheetActive} onClick={() => setSheet((s) => !s)}>
+          <Icon name="more" />
+          Plus
+        </button>
+      </nav>
+    </>
   );
 }
