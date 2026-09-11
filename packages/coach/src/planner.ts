@@ -279,7 +279,7 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   const strengthDay = remaining.find((d) => !restDays.includes(d) && assigned.get(d)?.type === 'endurance');
   if (strengthDay != null && spec.phase !== 'taper') {
     const existing = assigned.get(strengthDay)!;
-    const s = lib.strength(model, 35);
+    const s = lib.strength(model);
     const blocks = [...existing.blocks, ...s.blocks];
     // La charge mécanique se relit sur les blocs fusionnés, jamais par forfait :
     // un forfait fait peser un tour de circuit comme trois, et c'est justement
@@ -381,21 +381,22 @@ function calibrateToTarget(
           ? cappedFactor(s, fillerScale)
           : globalScale;
       const date = addDays(spec.weekStart, weekOrder(day));
-      // Les blocs annexes — souplesse, respiration — ne suivent pas le facteur
-      // d'échelle : leur durée est prescrite au dossier, pas déduite de la
-      // charge de la semaine. Ramener dix minutes d'étirements à sept parce que
-      // la semaine est chargée, c'est ne plus honorer la consigne du tout.
-      const ancillaryS = s.blocks
-        .filter((b) => b.kind)
+      // Les blocs à durée prescrite ne suivent pas le facteur d'échelle :
+      // ramener dix minutes d'étirements à sept parce que la semaine est
+      // chargée, c'est ne plus honorer la consigne du tout ; ramener un circuit
+      // de trois tours à treize minutes, c'est en prescrire un contenu qu'on
+      // n'a pas le temps de faire.
+      const prescribedS = s.blocks
+        .filter(isPrescribed)
         .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
-      const runningS = Math.max(0, s.durationS - ancillaryS);
+      const runningS = Math.max(0, s.durationS - prescribedS);
       // Le dénivelé suit le facteur **dans les blocs**. Il y était figé pendant
       // que l'en-tête, lui, le suivait : une rando-course ramenée à 3 h
       // annonçait 1 384 m et prescrivait 1 092 m de montées, et c'est le second
       // chiffre que l'athlète exécute. Mis à l'échelle ici, il n'y a plus qu'un
       // dénivelé, et l'en-tête se relit dessus.
       const blocks = scalable
-        ? s.blocks.map((b) => (b.kind ? b : scaleBlock(b, factor)))
+        ? s.blocks.map((b) => scaleBlock(b, factor))
         : s.blocks;
       const elevationGainM = lib.elevationGainOf(blocks);
       const elevationLossM = Math.round(s.elevationLossM * (scalable ? factor : 1));
@@ -414,7 +415,7 @@ function calibrateToTarget(
         // total à l'échelle ferait varier un contenu que la calibration n'a pas
         // touché — et le chiffre ne se referait plus depuis la séance écrite.
         plannedMechanicalLoad: lib.mechanicalFor(blocks, elevationLossM).total,
-        plannedDurationS: Math.round(runningS * factor) + (scalable ? ancillaryS : 0),
+        plannedDurationS: Math.round(runningS * factor) + (scalable ? prescribedS : 0),
         plannedDistanceM: distanceM,
         plannedElevationGainM: elevationGainM,
         priority: s.priority,
@@ -425,15 +426,27 @@ function calibrateToTarget(
 }
 
 /**
+ * Blocs dont la durée est prescrite, non calibrée.
+ *
+ * Les blocs annexes — souplesse, respiration — tiennent leur durée du dossier.
+ * Un circuit tient la sienne de son contenu : ses tours ne suivent pas le
+ * facteur de la semaine, sa durée ne le peut donc pas non plus. Elle le suivait
+ * pourtant, et prescrivait treize minutes pour un tour de cinq exercices.
+ */
+const isPrescribed = (b: SessionBlock): boolean => Boolean(b.kind || b.circuit);
+
+/**
  * Met un bloc couru à l'échelle de la calibration.
  *
  * Durée et dénivelé ensemble : ce sont les deux étendues du bloc, et n'en
- * réduire qu'une donne une séance qui monte autant en moins de temps. Le reste
- * — cibles, cadence, tours de circuit — décrit *comment* le bloc se court, pas
- * combien : la calibration n'a rien à y changer.
+ * réduire qu'une donne une séance qui monte autant en moins de temps — la
+ * vitesse ascensionnelle exigée, elle, ne bouge pas. Le reste — cibles,
+ * cadence, tours de circuit — décrit *comment* le bloc se court, pas combien :
+ * la calibration n'a rien à y changer.
  */
 function scaleBlock(b: SessionBlock, factor: number): SessionBlock {
   const out = { ...b };
+  if (isPrescribed(b)) return out;
   if (b.durationS) out.durationS = Math.round(b.durationS * factor);
   if (b.elevationGainM) out.elevationGainM = Math.round(b.elevationGainM * factor);
   return out;
@@ -550,13 +563,10 @@ function raiseVertToMeasurable(s: PlannedSession): void {
   const carried = lib.elevationGainOf(s.blocks);
   if (carried >= floor || carried <= 0) return;
 
-  // Arrondi au-dessus : le plancher est une condition à remplir, et un bloc
-  // arrondi vers le bas ferait rater de deux mètres la mesure qu'on veut rendre
-  // possible.
-  const k = floor / carried;
-  s.blocks = s.blocks.map((b) =>
-    b.elevationGainM ? { ...b, elevationGainM: Math.ceil(b.elevationGainM * k) } : b,
-  );
+  // Le dénivelé monte, et le temps de montée avec lui : la vitesse
+  // ascensionnelle prescrite ne se relève pas au motif qu'il faut du D+ pour
+  // mesurer quelque chose. Ce sont les autres blocs qui cèdent le temps.
+  s.blocks = lib.rescaleElevation(s.blocks, floor / carried);
   // Le plancher est visé, pas décrété : ce qui est enregistré est ce que les
   // blocs portent. Écrire `floor` ici rendrait à la séance le second chiffre
   // qu'on vient de lui retirer — et le plancher se lirait sur un dénivelé que

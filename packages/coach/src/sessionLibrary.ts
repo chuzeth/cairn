@@ -79,12 +79,21 @@ const paceRange = (lo: number, hi: number): [string, string] => [formatPace(hi),
  */
 const TERRAIN_VERT_M = { tempo: 100, threshold: 80, vo2max: 40 } as const;
 
+/**
+ * Ce qu'un bloc admet en plus de son étendue.
+ *
+ * `vamTargetMh` n'y figure pas : une vitesse ascensionnelle posée à côté d'une
+ * durée et d'un dénivelé fait trois nombres libres pour un même fait. Elle ne
+ * s'écrit que par `climbBlock`, qui n'en accepte que deux.
+ */
+type BlockOpts = Omit<Partial<SessionBlock>, 'vamTargetMh'> & { speedLo?: number; speedHi?: number };
+
 function block(
   c: Ctx,
   label: string,
   zone: ZoneKey,
   durationS: number,
-  opts: Partial<SessionBlock> & { speedLo?: number; speedHi?: number } = {},
+  opts: BlockOpts = {},
 ): SessionBlock {
   const z = zoneOf(c, zone);
   const lo = opts.speedLo ?? z.speedMinMs;
@@ -105,9 +114,62 @@ function block(
   if (opts.recovery) b.recovery = opts.recovery;
   if (opts.notes) b.notes = opts.notes;
   if (opts.elevationGainM) b.elevationGainM = opts.elevationGainM;
-  if (opts.vamTargetMh) b.vamTargetMh = opts.vamTargetMh;
   if (opts.cadenceTargetSpm) b.cadenceTargetSpm = opts.cadenceTargetSpm;
   if (opts.distanceM) b.distanceM = opts.distanceM;
+  return b;
+}
+
+/**
+ * Les deux nombres qui suffisent à décrire une montée.
+ *
+ * Durée, dénivelé et vitesse ascensionnelle sont trois vues d'un même fait :
+ * D+ = VAM × durée. En laisser fixer trois, c'est laisser la séance se
+ * démentir — et c'est ce qui a demandé 1 427 m/h pendant cinquante minutes,
+ * au-delà du meilleur effort d'une minute de l'athlète et le double de ce
+ * qu'il tient sur cette durée, parce que le dénivelé d'une sortie de trois
+ * heures avait été versé dans le seul bloc de montée.
+ */
+export type ClimbSpec =
+  | { elevationGainM: number; vamTargetMh: number; durationS?: undefined }
+  | { durationS: number; vamTargetMh: number; elevationGainM?: undefined }
+  | { durationS: number; elevationGainM: number; vamTargetMh?: undefined };
+
+export interface Climb {
+  durationS: number;
+  elevationGainM: number;
+  vamTargetMh: number;
+}
+
+/**
+ * Complète une montée par le troisième de ses nombres.
+ *
+ * La vitesse ascensionnelle rendue est toujours celle que le bloc exige
+ * réellement, une fois durée et dénivelé arrondis à l'entier : sur une
+ * répétition de 90 s, un mètre d'arrondi vaut 40 m/h, et une cible affichée à
+ * côté de ce que le bloc demande serait déjà l'écart qu'on ferme.
+ */
+export function resolveClimb(spec: ClimbSpec): Climb {
+  const durationS =
+    spec.durationS ?? Math.round((spec.elevationGainM / spec.vamTargetMh) * 3600);
+  const elevationGainM =
+    spec.elevationGainM ?? Math.round((spec.vamTargetMh * spec.durationS) / 3600);
+  return {
+    durationS,
+    elevationGainM,
+    vamTargetMh: durationS > 0 ? Math.round((elevationGainM / durationS) * 3600) : 0,
+  };
+}
+
+/** Un bloc de montée, bâti sur deux nombres et jamais sur trois. */
+function climbBlock(
+  c: Ctx,
+  label: string,
+  zone: ZoneKey,
+  climb: Climb,
+  opts: Omit<BlockOpts, 'elevationGainM' | 'durationS'> = {},
+): SessionBlock {
+  const b = block(c, label, zone, climb.durationS, { ...opts, elevationGainM: climb.elevationGainM });
+  b.vamTargetMh = climb.vamTargetMh;
   return b;
 }
 
@@ -204,6 +266,35 @@ export function describeCircuit(c: StrengthCircuit): string {
   return `${c.rounds} tour${c.rounds > 1 ? 's' : ''} : ${items.join(' · ')}.`;
 }
 
+/** Freinage lent puis retour : ce que dure une répétition excentrique, s. */
+const ECCENTRIC_REP_S = 4;
+/** Passage d'un exercice au suivant, s. */
+const CIRCUIT_TRANSITION_S = 30;
+/** Récupération entre deux tours, s — celle que les consignes annoncent. */
+const CIRCUIT_REST_S = 120;
+
+/**
+ * Ce que dure un circuit, depuis son contenu.
+ *
+ * Un circuit dure ce que durent ses tours. Sa durée venait d'ailleurs — du
+ * paramètre de la séance, puis du facteur de calibration de la semaine — et
+ * elle ne suivait pas les tours : le 14/09, treize minutes étaient prescrites
+ * pour un tour de cinq exercices. Le nombre de tours est le levier par lequel
+ * on réintroduit l'excentrique ; qu'il ne touche pas au temps qu'on y passe
+ * n'avait aucun sens.
+ */
+export function circuitDurationS(c: StrengthCircuit): number {
+  const work = c.exercises.reduce((a, e) => {
+    const spec = ECCENTRIC_MOVEMENTS[e.movement];
+    // Un gainage se prescrit en secondes de maintien, tout le reste en
+    // répétitions — et un mouvement unilatéral se fait des deux côtés.
+    const perSide = e.movement === 'isometric' ? e.reps : e.reps * ECCENTRIC_REP_S;
+    return a + perSide * (spec.unilateral ? 2 : 1);
+  }, 0);
+  const round = work + Math.max(0, c.exercises.length - 1) * CIRCUIT_TRANSITION_S;
+  return c.rounds * round + Math.max(0, c.rounds - 1) * CIRCUIT_REST_S;
+}
+
 /**
  * Dénivelé positif d'un contenu de séance.
  *
@@ -215,7 +306,37 @@ export function elevationGainOf(blocks: readonly SessionBlock[]): number {
   return blocks.reduce((a, b) => a + (b.repeat ?? 1) * (b.elevationGainM ?? 0), 0);
 }
 
-function totalDuration(blocks: SessionBlock[]): number {
+/**
+ * Relève le dénivelé porté par les blocs, sans laisser une montée se démentir.
+ *
+ * Monter davantage prend plus de temps. Relever le dénivelé d'un bloc de
+ * montée sans toucher à sa durée, c'est exiger la même ascension plus vite —
+ * la contradiction qu'on vient de fermer, rouverte au nom d'un plancher de
+ * mesurabilité. La durée suit donc le dénivelé, à vitesse ascensionnelle
+ * constante, et les autres blocs courus cèdent le temps qu'il faut : la séance
+ * monte plus, elle ne dure pas plus longtemps.
+ */
+export function rescaleElevation(blocks: readonly SessionBlock[], k: number): SessionBlock[] {
+  const out = blocks.map((b) => {
+    if (!b.elevationGainM) return { ...b };
+    // Arrondi au-dessus : un plancher est une condition à remplir, et deux
+    // mètres manquants la feraient rater.
+    const elevationGainM = Math.ceil(b.elevationGainM * k);
+    if (!b.vamTargetMh || !b.durationS) return { ...b, elevationGainM };
+    return { ...b, ...resolveClimb({ elevationGainM, vamTargetMh: b.vamTargetMh }) };
+  });
+
+  const added = totalDuration(out) - totalDuration(blocks);
+  if (added <= 0) return out;
+  const givers = out.filter((b) => !b.kind && !b.circuit && !b.vamTargetMh && b.durationS);
+  const pool = givers.reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
+  if (pool <= added) return out;
+  const share = (pool - added) / pool;
+  for (const b of givers) b.durationS = Math.max(60, Math.round((b.durationS as number) * share));
+  return out;
+}
+
+function totalDuration(blocks: readonly SessionBlock[]): number {
   return blocks.reduce((a, b) => {
     const reps = b.repeat ?? 1;
     return a + reps * ((b.durationS ?? 0) + (b.recovery?.durationS ?? 0));
@@ -377,6 +498,17 @@ export function longRun(model: PhysiologyModel, durationMin = 105, vertM = 300):
   }, vertM);
 }
 
+/**
+ * Part du temps mobile qu'une montée ne peut pas dépasser.
+ *
+ * Ce n'est pas une répartition, c'est une soupape : une boucle redescend ce
+ * qu'elle monte, et une sortie qui ne garderait rien pour la descente ne
+ * décrirait plus un parcours. Quand elle joue, c'est le dénivelé qui cède —
+ * ce qui se monte dans le temps disponible, à la vitesse ascensionnelle visée,
+ * est tout ce que la séance peut honnêtement annoncer.
+ */
+const MAX_CLIMB_SHARE = 0.8;
+
 /** Rando-course : le format spécifique recommandé par le laboratoire pour les trails longs. */
 export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 1200): SessionTemplate {
   const c = ctxOf(model);
@@ -385,31 +517,54 @@ export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 120
   const climbPower = 3.6 * z2.speedMaxMs * 0.94;
   const climbSpeed = speedForMetabolicPower(climbPower, 0.15);
   const targetVam = Math.round(vam(climbSpeed, 0.15));
+
+  // Le temps de montée n'est pas une part du temps mobile : c'est le temps
+  // qu'il faut pour monter ce que la séance monte, à la vitesse ascensionnelle
+  // visée. Posé à 45 % comme il l'était, il entassait 1 384 m dans 55 min et
+  // prescrivait une ascension que l'athlète ne tient pas une minute. Ce que la
+  // correction change, c'est la forme de la séance : une rando-course de
+  // 1 384 m en 3 h passe la majorité de son temps mobile en montée — c'est ce
+  // qu'elle est réellement, et l'ancienne répartition était la fiction.
+  const approachS = 25 * 60;
+  const cooldownS = 20 * 60;
+  const mobileS = Math.max(0, durationMin * 60 - approachS - cooldownS);
+  const needsS = (vertM / targetVam) * 3600;
+  const climb = resolveClimb(
+    needsS <= mobileS * MAX_CLIMB_SHARE
+      ? { elevationGainM: vertM, vamTargetMh: targetVam }
+      : { durationS: Math.round(mobileS * MAX_CLIMB_SHARE), vamTargetMh: targetVam },
+  );
+  // Descente et retour roulant se partagent le reste dans la proportion qu'ils
+  // avaient : 35 et 20 points sur les 55 qui ne montaient pas.
+  const remainingS = Math.max(0, mobileS - climb.durationS);
+  const descentS = Math.round((remainingS * 0.35) / 0.55);
+
   return finalize(c, {
     key: 'long_trail',
     type: 'long_trail',
-    title: `Rando-course ${Math.round(durationMin / 60 * 10) / 10} h · ${vertM} m D+`,
+    // Le titre annonce ce que les blocs montent, pas ce qu'on a demandé : quand
+    // la soupape a joué, les deux diffèrent, et c'est le premier chiffre que
+    // l'athlète lit.
+    title: `Rando-course ${Math.round(durationMin / 60 * 10) / 10} h · ${climb.elevationGainM} m D+`,
     intent:
       "Spécificité trail pure : alterner marche et course selon la pente, tenir plusieurs heures sans dérive, et habituer les quadriceps à la descente. C'est la séance qui différencie un coureur de route d'un traileur.",
     priority: 'key',
     phases: ['base', 'build', 'specific'],
     blocks: [
-      block(c, 'Approche en endurance', 'Z2', 25 * 60, { cadenceTargetSpm: 172 }),
-      block(c, 'Montées — marche active ou course selon la pente', 'Z2', Math.round((durationMin - 45) * 60 * 0.45), {
-        elevationGainM: vertM,
-        vamTargetMh: targetVam,
+      block(c, 'Approche en endurance', 'Z2', approachS, { cadenceTargetSpm: 172 }),
+      climbBlock(c, 'Montées — marche active ou course selon la pente', 'Z2', climb, {
         notes:
-          `Cible ${targetVam} m D+/h. Au-delà de 15 % de pente, marche : mains sur les cuisses, buste droit, petits pas. Courir là serait 25 % plus coûteux pour la même vitesse.`,
+          `Cible ${climb.vamTargetMh} m D+/h. Au-delà de 15 % de pente, marche : mains sur les cuisses, buste droit, petits pas. Courir là serait 25 % plus coûteux pour la même vitesse.`,
       }),
-      block(c, 'Descentes — travail technique', 'Z2', Math.round((durationMin - 45) * 60 * 0.35), {
+      block(c, 'Descentes — travail technique', 'Z2', descentS, {
         notes:
           'Cadence haute, appuis courts et légers, regard 4-5 m devant, épaules relâchées. Cherche la fluidité, pas la vitesse pure : c\'est ici que se construit la tolérance excentrique.',
         cadenceTargetSpm: 180,
       }),
-      block(c, 'Retour roulant', 'Z2', Math.round((durationMin - 45) * 60 * 0.2), {}),
-      block(c, 'Retour au calme', 'Z1', 20 * 60, {}),
+      block(c, 'Retour roulant', 'Z2', Math.max(0, remainingS - descentS), {}),
+      block(c, 'Retour au calme', 'Z1', cooldownS, {}),
     ],
-  }, vertM);
+  }, climb.elevationGainM);
 }
 
 export function tempo(model: PhysiologyModel, blockMin = 25): SessionTemplate {
@@ -521,7 +676,10 @@ export function hillRepeats(model: PhysiologyModel, reps = 8, repS = 90, grade =
   const power = 3.6 * model.vmaMs * 0.96;
   const speed = speedForMetabolicPower(power, grade);
   const targetVam = Math.round(vam(speed, grade));
-  const gainPerRep = Math.round((speed * repS * grade) / Math.sqrt(1 + grade * grade));
+  // La répétition dure ce qui est prescrit ; ce qu'elle monte s'en déduit, à la
+  // vitesse ascensionnelle visée. Le dénivelé se recalculait ici par sa propre
+  // formule : deux chemins pour un même mètre, donc deux occasions de diverger.
+  const climb = resolveClimb({ durationS: repS, vamTargetMh: targetVam });
   return finalize(c, {
     key: 'hill_repeats',
     type: 'hill_repeats',
@@ -532,20 +690,18 @@ export function hillRepeats(model: PhysiologyModel, reps = 8, repS = 90, grade =
     phases: ['base', 'build', 'specific'],
     blocks: [
       block(c, 'Échauffement jusqu\'au pied de la côte', 'Z2', 20 * 60, {}),
-      block(c, `Répétitions en montée`, 'Z4', repS, {
+      // Le dénivelé de la séance *est* celui des répétitions : une côte qui
+      // annonçait 208 m dont aucun bloc ne portait un mètre laissait le
+      // chiffre d'en-tête vivre sa vie. Porté par la répétition, il suit le
+      // nombre de répétitions sans que personne ait à le recalculer.
+      climbBlock(c, `Répétitions en montée`, 'Z4', climb, {
         repeat: reps,
         speedLo: speed * 0.95,
         speedHi: speed * 1.05,
-        // Le dénivelé de la séance *est* celui des répétitions : une côte qui
-        // annonçait 208 m dont aucun bloc ne portait un mètre laissait le
-        // chiffre d'en-tête vivre sa vie. Porté par la répétition, il suit le
-        // nombre de répétitions sans que personne ait à le recalculer.
-        elevationGainM: gainPerRep,
-        vamTargetMh: targetVam,
         recovery: { durationS: repS, zone: 'Z1', active: true },
         cadenceTargetSpm: 180,
         notes:
-          `Cible ${targetVam} m D+/h, ${Math.round(z4.hrMin)}-${Math.round(z4.hrMax)} bpm en fin de répétition. ` +
+          `Cible ${climb.vamTargetMh} m D+/h, ${Math.round(z4.hrMin)}-${Math.round(z4.hrMax)} bpm en fin de répétition. ` +
           `Buste légèrement penché, foulée courte et fréquente, bras actifs. Descente en récupération, très souple.`,
       }),
       block(c, 'Retour au calme', 'Z1', 12 * 60, {}),
@@ -630,31 +786,40 @@ const STRENGTH_CIRCUIT: StrengthExercise[] = [
   { movement: 'isometric', reps: 45 },
 ];
 
-export function strength(model: PhysiologyModel, durationMin = 40, rounds = 3): SessionTemplate {
+export function strength(model: PhysiologyModel, rounds = 3): SessionTemplate {
   const c = ctxOf(model);
   const circuit: StrengthCircuit = { rounds, exercises: STRENGTH_CIRCUIT.map((e) => ({ ...e })) };
+  // La séance dure ce que durent ses blocs, et le circuit dure ses tours. La
+  // durée était un paramètre : elle annonçait quarante minutes quel que soit le
+  // contenu, et le circuit gardait vingt minutes qu'il y ait un tour ou trois.
+  const circuitS = circuitDurationS(circuit);
+  const activationS = 10 * 60;
+  const mobilityS = 10 * 60;
   return finalize(c, {
     key: 'strength',
     type: 'strength',
-    title: `Renforcement spécifique ${durationMin} min · ${rounds} tour${rounds > 1 ? 's' : ''}`,
+    title:
+      `Renforcement spécifique ${Math.round((activationS + circuitS + mobilityS) / 60)} min · ` +
+      `${rounds} tour${rounds > 1 ? 's' : ''}`,
     intent:
       "Renforcer la chaîne postérieure et la tolérance excentrique, et corriger le déficit de souplesse relevé au test (flexion avant à −1 cm). Prévention et économie de course.",
     priority: 'support',
     phases: ['base', 'build', 'specific', 'transition', 'recovery'],
     blocks: [
-      block(c, 'Activation (10 min)', 'Z1', 10 * 60, {
+      block(c, 'Activation', 'Z1', activationS, {
         notes: 'Mobilité hanches/chevilles, fentes marchées, ponts fessiers.',
       }),
       // Le contenu du circuit n'est pas dans les notes : il est dans `circuit`,
-      // d'où sortent à la fois le texte affiché et la charge mécanique. Les
-      // écrire deux fois, c'est se donner deux occasions de se contredire.
-      block(c, 'Circuit force (20 min)', 'Z2', 20 * 60, {
+      // d'où sortent à la fois le texte affiché, la durée et la charge
+      // mécanique. Les écrire deux fois, c'est se donner deux occasions de se
+      // contredire — et une durée annoncée dans l'intitulé en était une.
+      block(c, 'Circuit force', 'Z2', circuitS, {
         circuit,
         notes:
           'Descentes lentes et mollets excentriques sont le cœur de la séance : la charge se prend en ' +
           'freinant, jamais en poussant. Deux minutes de récupération entre les tours.',
       }),
-      block(c, 'Souplesse chaîne postérieure (10 min)', 'Z1', 10 * 60, {
+      block(c, 'Souplesse chaîne postérieure', 'Z1', mobilityS, {
         kind: 'mobility',
         notes:
           'Ischio-jambiers, mollets, chaîne postérieure du rachis. Maintiens de 45 s, deux passages. ' +

@@ -3,7 +3,7 @@ import type {
   ZoneDefinition, ZoneKey,
 } from '@cairn/core';
 import { ECCENTRIC_MOVEMENTS, ZONE_KEYS, buildZones, formatPace } from '@cairn/physiology';
-import { sessionTotals } from './sessionLibrary.js';
+import { resolveClimb, sessionTotals } from './sessionLibrary.js';
 
 /**
  * Contenu de séance fourni par le coach.
@@ -157,12 +157,45 @@ function parseBlock(
     }
   }
 
-  const durationS = raw.durationS === undefined
+  const statedDurationS = raw.durationS === undefined
     ? undefined
     : Math.round(number(raw.durationS, `${at}.durationS`, 1, MAX_BLOCK_DURATION_S));
   const distanceM = raw.distanceM === undefined
     ? undefined
     : Math.round(number(raw.distanceM, `${at}.distanceM`, 1, MAX_BLOCK_DISTANCE_M));
+  const elevationGainM = raw.elevationGainM === undefined
+    ? undefined
+    : Math.round(number(raw.elevationGainM, `${at}.elevationGainM`, 0, MAX_ELEVATION_GAIN_M));
+  const vamTargetMh = raw.vamTargetMh === undefined
+    ? undefined
+    : Math.round(number(raw.vamTargetMh, `${at}.vamTargetMh`, 1, MAX_VAM_MH));
+
+  // Durée, dénivelé et vitesse ascensionnelle d'une montée décrivent un même
+  // fait : deux suffisent, le troisième s'en déduit. Les trois s'écrivaient
+  // librement, et c'est ainsi qu'une rando-course a prescrit 1 384 m en 55 min
+  // sous une cible de 854 m/h — 1 501 m/h exigés, soit au-delà du meilleur
+  // effort d'une minute de l'athlète, tenu cinquante.
+  const durationS =
+    statedDurationS === undefined && elevationGainM !== undefined && vamTargetMh !== undefined
+      ? resolveClimb({ elevationGainM, vamTargetMh }).durationS
+      : statedDurationS;
+  if (durationS !== undefined && durationS > MAX_BLOCK_DURATION_S) {
+    throw new Error(
+      `${at} : ${elevationGainM} m à ${vamTargetMh} m/h demandent ${Math.round(durationS / 360) / 10} h ` +
+        `de montée, maximum ${MAX_BLOCK_DURATION_S / 3600} h par bloc.`,
+    );
+  }
+  if (durationS !== undefined && elevationGainM !== undefined && vamTargetMh !== undefined) {
+    const climbedM = (vamTargetMh * durationS) / 3600;
+    if (Math.abs(elevationGainM - climbedM) > 1 + 0.01 * climbedM) {
+      throw new Error(
+        `${at} : ${elevationGainM} m en ${Math.round(durationS / 60)} min exigent ` +
+          `${Math.round((elevationGainM / durationS) * 3600)} m/h, pour une cible annoncée à ${vamTargetMh} m/h. ` +
+          `Durée, dénivelé et vitesse ascensionnelle décrivent un même fait : deux suffisent, ` +
+          `le troisième s'en déduit — n'en écris que deux.`,
+      );
+    }
+  }
   if (durationS === undefined && distanceM === undefined) {
     throw new Error(`${at} : durationS ou distanceM requis — un bloc sans étendue ne se prescrit pas.`);
   }
@@ -190,12 +223,8 @@ function parseBlock(
   if (raw.repeat !== undefined) {
     block.repeat = Math.round(number(raw.repeat, `${at}.repeat`, 1, MAX_REPEAT));
   }
-  if (raw.elevationGainM !== undefined) {
-    block.elevationGainM = Math.round(number(raw.elevationGainM, `${at}.elevationGainM`, 0, MAX_ELEVATION_GAIN_M));
-  }
-  if (raw.vamTargetMh !== undefined) {
-    block.vamTargetMh = Math.round(number(raw.vamTargetMh, `${at}.vamTargetMh`, 1, MAX_VAM_MH));
-  }
+  if (elevationGainM !== undefined) block.elevationGainM = elevationGainM;
+  if (vamTargetMh !== undefined) block.vamTargetMh = vamTargetMh;
   if (raw.cadenceTargetSpm !== undefined) {
     block.cadenceTargetSpm = Math.round(number(raw.cadenceTargetSpm, `${at}.cadenceTargetSpm`, 120, 240));
   }

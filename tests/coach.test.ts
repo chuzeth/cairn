@@ -716,7 +716,7 @@ describe('Remplacement du contenu d\'une séance', () => {
     // Le cas réel : le renforcement du 14/09 réécrit par le coach, revenu sans
     // le `kind` de son bloc de souplesse. Un aller-retour ne doit rien perdre —
     // seul `paceRange` s'en va, parce qu'il se déduit et se refait.
-    const avant = lib.strength(model, 40, 2).blocks;
+    const avant = lib.strength(model, 2).blocks;
     const ecrit = avant.map(({ paceRange, ...reste }) => reste as Record<string, unknown>);
     const apres = lib.parseSessionBlocks(ecrit, model);
     expect(apres).toEqual(avant);
@@ -860,9 +860,9 @@ describe('Remplacement du contenu d\'une séance', () => {
   });
 
   it('fait porter la charge mécanique par le contenu du circuit', () => {
-    const un = lib.strength(model, 35, 1);
-    const deux = lib.strength(model, 35, 2);
-    const trois = lib.strength(model, 35, 3);
+    const un = lib.strength(model, 1);
+    const deux = lib.strength(model, 2);
+    const trois = lib.strength(model, 3);
 
     // Le défaut : un forfait de 8 points, quel que soit le circuit. Un tour et
     // trois tours pesaient pareil, et un palier de réintroduction de
@@ -886,13 +886,13 @@ describe('Remplacement du contenu d\'une séance', () => {
     // Deux chemins pour une même séance donnaient deux valeurs : celle que
     // l'athlète lisait dépendait de quel code l'avait touchée en dernier.
     for (const rounds of [1, 2, 3]) {
-      const s = lib.strength(model, 35, rounds);
+      const s = lib.strength(model, rounds);
       expect(lib.sessionTotals(model, s.blocks).mechanicalLoad).toBe(s.plannedMechanicalLoad);
     }
   });
 
   it('décrit le circuit depuis sa structure, jamais à côté', () => {
-    const s = lib.strength(model, 35, 2);
+    const s = lib.strength(model, 2);
     const circuit = s.blocks.find((b) => b.circuit)!.circuit!;
     expect(circuit.rounds).toBe(2);
     expect(lib.describeCircuit(circuit)).toContain('2 tours');

@@ -2,7 +2,7 @@ import type { AbsenceKind, CourseProfile, PlannedSession, RaceGoal, SessionBlock
 import { directivesFor } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  describeZone, formatClock, formatDuration, formatPace, goalProbability,
+  ECCENTRIC_MOVEMENTS, describeZone, formatClock, formatDuration, formatPace, goalProbability,
   interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
@@ -53,6 +53,7 @@ const bool = (description: string) => ({ type: 'boolean', description });
 
 const ZONES = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
 const BLOCK_KINDS = ['mobility', 'respiratory'];
+const MOVEMENTS = Object.keys(ECCENTRIC_MOVEMENTS);
 const ABSENCE_KINDS: AbsenceKind[] = ['chosen', 'illness', 'injury', 'unavailable'];
 
 const pair = (description: string) => ({
@@ -71,10 +72,13 @@ const pair = (description: string) => ({
  * `speedRangeMs` — un affichage qui pourrait contredire ses propres nombres
  * n'est pas une prescription.
  *
- * Le schéma expose tout ce que le bloc sait porter, `kind` compris : un champ
- * que le coach ne peut pas écrire est un champ qu'un remplacement de blocs
- * efface, et c'est ainsi qu'une séance a perdu le marqueur par lequel se
- * comptait une fréquence hebdomadaire prescrite au dossier.
+ * Le schéma expose tout ce que le bloc sait porter, `kind` et `circuit`
+ * compris : un champ que le coach ne peut pas écrire est un champ qu'un
+ * remplacement de blocs efface, et c'est ainsi qu'une séance a perdu le
+ * marqueur par lequel se comptait une fréquence hebdomadaire prescrite au
+ * dossier. `circuit`, lui, était accepté à la validation mais annoncé nulle
+ * part : le coach ne pouvait l'écrire qu'en le devinant, et le commentaire
+ * d'ici affirmait le contraire.
  */
 const BLOCK_SCHEMA = {
   type: 'object',
@@ -89,7 +93,10 @@ const BLOCK_SCHEMA = {
         "Un bloc annexe n'admet ni allure, ni FC, ni cadence, ni distance.",
       { enum: BLOCK_KINDS },
     ),
-    durationS: num('Durée du bloc, en secondes. Requis, sauf si distanceM est fourni.'),
+    durationS: num(
+      'Durée du bloc, en secondes. Requis, sauf si distanceM est fourni, ou si dénivelé et vitesse ' +
+        'ascensionnelle la déterminent déjà.',
+    ),
     distanceM: num('Étendue du bloc en mètres, à la place d\'une durée.'),
     repeat: num('Nombre de répétitions du bloc (défaut 1).'),
     elevationGainM: num(
@@ -97,13 +104,48 @@ const BLOCK_SCHEMA = {
         "Le D+ de la séance en est la somme : il ne se saisit nulle part ailleurs, " +
         "et une séance qui monte doit le dire dans un bloc.",
     ),
+    circuit: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['rounds', 'exercises'],
+      description:
+        "Contenu excentrique du bloc, quand il y en a. C'est d'ici que sortent le texte affiché et la " +
+        "charge mécanique : un circuit décrit en toutes lettres dans `notes` pèse zéro, et un tour y " +
+        "pèse comme trois. Donne au bloc la durée que son contenu demande — côté plan, elle s'en déduit, " +
+        "et un tour de cinq exercices ne tient pas en treize minutes.",
+      properties: {
+        rounds: num('Nombre de tours du circuit. C\'est par lui que l\'excentrique se réintroduit après une coupure.'),
+        exercises: {
+          type: 'array',
+          minItems: 1,
+          description: 'Exercices d\'un tour, dans l\'ordre.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['movement', 'reps'],
+            properties: {
+              movement: str(
+                'Mouvement, parmi ceux dont la charge excentrique se calcule. La liste est fermée : ' +
+                  'un mouvement inventé n\'a ni course de freinage ni sévérité, donc aucune charge.',
+                { enum: MOVEMENTS },
+              ),
+              reps: num('Répétitions par tour et par côté — pour `isometric`, secondes de maintien.'),
+            },
+          },
+        },
+      },
+    },
     hrRange: pair(
       "Fourchette de FC cible [min, max]. Omise, celle de la zone s'applique. À renseigner dès que la prescription sort de la bande — un test maximal vise au-delà du plafond de Z4.",
     ),
     speedRangeMs: pair(
       "Fourchette de vitesse cible à plat [min, max], en m/s. Omise, celle de la zone s'applique. L'allure en min/km en est déduite et ne se saisit pas.",
     ),
-    vamTargetMh: num('Vitesse ascensionnelle cible, en m/h, pour un bloc en côte.'),
+    vamTargetMh: num(
+      'Vitesse ascensionnelle cible, en m/h, pour un bloc en côte. Durée, dénivelé et vitesse ' +
+        'ascensionnelle décrivent un même fait : écris-en deux, le troisième s\'en déduit. Les trois ' +
+        'à la fois ne sont acceptés que s\'ils concordent.',
+    ),
     cadenceTargetSpm: num('Cadence cible, en pas par minute.'),
     recovery: {
       type: 'object',
