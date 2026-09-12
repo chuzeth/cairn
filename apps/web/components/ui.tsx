@@ -201,6 +201,12 @@ export function unweighed(readiness: Readiness): ('subjective' | 'autonomic')[] 
  * Ce poids n'est pas décoratif : une composante sans source pèse 0 et son poids
  * nominal part aux autres, si bien que la même barre ne vaut pas la même chose
  * d'un jour à l'autre. L'afficher est la seule façon de lire le score.
+ *
+ * Les deux nombres d'une ligne se disent donc, au lieu de se deviner. « Charge
+ * mesurée 54 % / 75 » demandait à l'athlète de trouver seul lequel des deux
+ * était le poids et lequel la valeur — et l'info-bulle qui le disait n'existe
+ * pas sous le pouce. C'est la carte qui porte l'honnêteté du score : elle ne
+ * peut pas être la seule à se lire de travers.
  */
 export function ReadinessBasis({ readiness, before }: { readiness: Readiness; before?: Readiness }) {
   return (
@@ -226,9 +232,7 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
             <span className="basis-src" data-assumed={assumed || idle}>
               {changedSource && <s className="faint">{READINESS_SOURCE_LABEL[before.sources[key]]}</s>}
               {READINESS_SOURCE_LABEL[source]}
-              <span className="basis-weight" title="poids de cette composante dans le score">
-                {Math.round(weight * 100)} %
-              </span>
+              <span className="basis-weight">pèse {Math.round(weight * 100)} %</span>
             </span>
             <div className="basis-meter">
               <div
@@ -238,7 +242,7 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
               />
             </div>
             <span className="basis-num mono">
-              {idle ? '—' : Math.round(value)}
+              {idle ? '—' : `${Math.round(value)}/100`}
               {!idle && delta !== 0 && (
                 <span className="delta" data-dir={delta > 0 ? 'up' : 'down'} style={{ marginLeft: 5 }}>
                   {delta > 0 ? '+' : ''}{Math.round(delta)}

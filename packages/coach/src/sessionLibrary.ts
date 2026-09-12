@@ -1,6 +1,6 @@
 import type {
-  PhysiologyModel, SessionBlock, SessionSuccessCriterion, SessionType, StrengthCircuit,
-  StrengthExercise, ZoneKey,
+  PhysiologyModel, PlannedSession, SessionBlock, SessionSuccessCriterion, SessionType,
+  StrengthCircuit, StrengthExercise, ZoneKey,
 } from '@cairn/core';
 import {
   ECCENTRIC_MOVEMENTS, buildZones, eccentricStrengthLoad, formatPace, msToKmh,
@@ -336,11 +336,83 @@ export function rescaleElevation(blocks: readonly SessionBlock[], k: number): Se
   return out;
 }
 
-function totalDuration(blocks: readonly SessionBlock[]): number {
+export function totalDuration(blocks: readonly SessionBlock[]): number {
   return blocks.reduce((a, b) => {
     const reps = b.repeat ?? 1;
     return a + reps * ((b.durationS ?? 0) + (b.recovery?.durationS ?? 0));
   }, 0);
+}
+
+/**
+ * Blocs dont la durée est prescrite, non calibrée.
+ *
+ * Les blocs annexes — souplesse, respiration — tiennent leur durée du dossier.
+ * Un circuit tient la sienne de son contenu : ses tours ne suivent aucun
+ * facteur, sa durée ne le peut donc pas non plus. Elle le suivait pourtant, et
+ * prescrivait treize minutes pour un tour de cinq exercices.
+ *
+ * La règle est la même quelle que soit la porte — calibration d'une semaine ou
+ * allègement décidé par les règles de charge. Deux lectures divergentes, ce
+ * serait la même séance réduite différemment selon qui la réduit.
+ */
+export const isPrescribed = (b: SessionBlock): boolean => Boolean(b.kind || b.circuit);
+
+/**
+ * Met un bloc couru à l'échelle de la calibration.
+ *
+ * Durée et dénivelé ensemble : ce sont les deux étendues du bloc, et n'en
+ * réduire qu'une donne une séance qui monte autant en moins de temps — la
+ * vitesse ascensionnelle exigée, elle, ne bouge pas. Le reste — cibles,
+ * cadence, tours de circuit — décrit *comment* le bloc se court, pas combien :
+ * la calibration n'a rien à y changer.
+ */
+export function scaleBlock(b: SessionBlock, factor: number): SessionBlock {
+  const out = { ...b };
+  if (isPrescribed(b)) return out;
+  if (b.durationS) out.durationS = Math.round(b.durationS * factor);
+  if (b.elevationGainM) out.elevationGainM = Math.round(b.elevationGainM * factor);
+  return out;
+}
+
+/**
+ * Ce qu'un allègement retire d'une séance déjà écrite.
+ *
+ * Il raccourcit ce qui se court, et rien d'autre. Un circuit garde ses tours —
+ * c'est déjà le cas de la charge mécanique, qui n'en met à l'échelle que la
+ * part descente — donc il garde aussi le temps qu'il faut pour les faire : un
+ * circuit de cinq exercices ramené à 5 min prescrivait un contenu qu'on n'a
+ * pas le temps d'exécuter, en face duquel l'écran affichait « 1 tour :
+ * 5 exercices ».
+ *
+ * La durée totale se relit sur les blocs allégés au lieu d'être mise à
+ * l'échelle à son tour : c'est la seule façon que l'en-tête et le contenu
+ * annoncent la même minute.
+ */
+type Relievable = Pick<
+  PlannedSession,
+  'blocks' | 'plannedLoad' | 'plannedMechanicalLoad' | 'plannedDurationS'
+>;
+
+export function relieved(session: Relievable, factor: number): Relievable {
+  const blocks = session.blocks.map((b) =>
+    isPrescribed(b) || !b.durationS ? { ...b } : { ...b, durationS: Math.round(b.durationS * factor) },
+  );
+  // Le renforcement excentrique ne suit pas le facteur puisque les tours ne le
+  // suivent pas : le mettre à l'échelle ferait disparaître d'un chiffre un
+  // excentrique qui reste intégralement prescrit.
+  const eccentric = eccentricStrengthOf(session.blocks);
+  return {
+    blocks,
+    plannedLoad: Math.round(session.plannedLoad * factor),
+    // Une séance dont les blocs ne portent aucune durée n'a que son total :
+    // faute de contenu écrit, c'est lui qu'on met à l'échelle. Dès qu'il y a du
+    // contenu, c'est lui qui fait foi.
+    plannedDurationS:
+      totalDuration(session.blocks) > 0
+        ? totalDuration(blocks)
+        : Math.round(session.plannedDurationS * factor),
+    plannedMechanicalLoad: Math.round((session.plannedMechanicalLoad - eccentric) * factor + eccentric),
+  };
 }
 
 /** Distance estimée depuis la vitesse moyenne pondérée des blocs. */

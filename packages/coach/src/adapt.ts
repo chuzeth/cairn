@@ -1,7 +1,7 @@
 import type { DeclaredAbsence, PlannedSession } from '@cairn/core';
 import * as db from '@cairn/db';
-import { formatDuration } from '@cairn/physiology';
-import { eccentricStrengthOf } from './sessionLibrary.js';
+import { sessionDuration } from '@cairn/core';
+import { relieved } from './sessionLibrary.js';
 import type { AthleteState } from './state.js';
 
 /**
@@ -194,15 +194,19 @@ export function evaluateAdjustments(
   if (state.readiness.verdict === 'red') {
     const next = future.find((s) => daysUntil(s.date) <= 1);
     if (next && next.plannedLoad > 40) {
+      const factor = 0.45;
       push({
         sessionId: next.id,
         date: next.date,
         action: 'scale',
-        factor: 0.45,
+        factor,
         rule: 'readiness_red',
         reason:
           `Disponibilité à ${state.readiness.score}/100. ${state.readiness.recommendation} ` +
-          `Séance ramenée à ${Math.round(next.plannedDurationS * 0.45 / 60)} min en récupération.`,
+          // La durée annoncée est celle que l'allègement produira, écrite comme
+          // l'écran l'écrira. Calculée à part, elle promettait 31 min là où la
+          // séance enregistrée en affichait 30, et c'est la phrase qu'on croit.
+          `Séance ramenée à ${sessionDuration(relieved(next, factor).plannedDurationS)} en récupération.`,
       });
     }
   }
@@ -282,22 +286,11 @@ export async function applyAdjustments(
         break;
 
       case 'scale': {
-        const f = adj.factor ?? 1;
-        // Alléger raccourcit les blocs courus ; ça ne retire aucun tour au
-        // circuit. Seule la part descente suit le facteur — mettre le total à
-        // l'échelle ferait disparaître d'un chiffre un excentrique qui reste
-        // intégralement prescrit.
-        const eccentric = eccentricStrengthOf(session.blocks);
+        // Alléger raccourcit les blocs courus, et eux seuls : ni les tours d'un
+        // circuit, ni la durée qu'il faut pour les faire. Le détail est dans
+        // `relieved`, partagé avec la phrase qui l'annonce plus haut.
         await db.updateSession(adj.sessionId, {
-          plannedLoad: Math.round(session.plannedLoad * f),
-          plannedDurationS: Math.round(session.plannedDurationS * f),
-          plannedMechanicalLoad: Math.round(
-            (session.plannedMechanicalLoad - eccentric) * f + eccentric,
-          ),
-          blocks: session.blocks.map((b) => ({
-            ...b,
-            durationS: b.durationS ? Math.round(b.durationS * f) : b.durationS,
-          })),
+          ...relieved(session, adj.factor ?? 1),
           title: `${session.title} · allégée`,
           rationale: adj.reason,
         } as never);

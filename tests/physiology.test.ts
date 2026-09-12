@@ -13,6 +13,7 @@ import {
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
   matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
   eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
+  type ReadinessDay,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -989,5 +990,77 @@ describe('Ligne de base du ressenti', () => {
     expect(r.sources.subjective).toBe('baseline');
     // Une journée en tous points ordinaire pour lui : 50, ni bonne ni mauvaise.
     expect(r.components.subjective).toBe(50);
+  });
+});
+
+describe('Conseil du jour', () => {
+  /** Une journée dont seule la fraîcheur varie : elle seule fixe le verdict. */
+  const pmc = (tsb: number): PmcSeries => ({
+    metabolic: [{ date: '2026-09-12', ctl: 50, atl: 50 - tsb, tsb, load: 0 }],
+    mechanical: [{ date: '2026-09-12', ctl: 30, atl: 30 - tsb, tsb, load: 0 }],
+    acwr: [{ date: '2026-09-12', value: 1.0 }],
+    monotony: [], strain: [], rampRate: [],
+  });
+  const at = (day?: ReadinessDay, tsb = 0) =>
+    computeReadiness({ date: '2026-09-12', pmc: pmc(tsb), checkIns: [], day });
+  const advice = (day?: ReadinessDay, tsb = 0) => at(day, tsb).recommendation;
+
+  it('tient les trois bandes de verdict là où les tests suivants les attendent', () => {
+    expect(at(undefined, 20).verdict).toBe('green');
+    expect(at(undefined, 0).verdict).toBe('amber');
+    expect(at(undefined, -30).verdict).toBe('red');
+  });
+
+  it('ne conseille aucune séance le jour où il n\'y en a pas', () => {
+    const a = advice({ session: 'none' });
+    expect(a).not.toContain('Garde la séance');
+    expect(a).not.toContain('la séance prévue');
+    expect(a).toContain('Rien n\'est prévu aujourd\'hui');
+  });
+
+  it('dit, sous une absence déclarée, d\'où vient la fraîcheur qu\'on lit', () => {
+    // Le 12/09 : l'écran titre « Rien aujourd'hui », le tableau de bord affiche
+    // « Frais, prêt à performer », et la carte conseillait de garder une séance
+    // qui n'existait pas. Les deux surfaces se rejoignent ici.
+    const a = advice({ session: 'none', absence: 'chosen' });
+    expect(a).toContain('absence déclarée couvre la journée');
+    expect(a).toContain('vient de l\'arrêt, pas de la forme');
+    expect(a).not.toContain('séance');
+  });
+
+  it('avoue ce qu\'il ne regarde pas quand l\'absence est une maladie ou une blessure', () => {
+    expect(advice({ session: 'none', absence: 'injury' })).toContain('ni ta guérison ni ta douleur');
+    expect(advice({ session: 'none', absence: 'chosen' })).not.toContain('guérison');
+  });
+
+  it('ne laisse pas un feu vert couvrir une reprise', () => {
+    // Onze jours sans impact : la fraîcheur est au plus haut *parce que* rien
+    // n'a été couru. C'est la configuration où le verdict seul trompe le plus.
+    const back = advice({ session: 'work', daysWithoutImpact: 11 }, 20);
+    expect(back).toContain('11 jours sans impact');
+    expect(back).toContain('parce que tu as coupé');
+    // Six jours ne sont pas une reprise : la séance se conseille normalement.
+    expect(advice({ session: 'work', daysWithoutImpact: 6 }, 20)).toContain('exécutée telle quelle');
+  });
+
+  it('distingue un repos prescrit et une séance déjà faite d\'une séance à faire', () => {
+    expect(advice({ session: 'rest' })).toContain('Repos prescrit');
+    expect(advice({ session: 'done' })).toContain('est faite');
+    expect(advice({ session: 'work' })).toContain('Garde la séance');
+  });
+
+  it('ne suppose aucune séance quand personne n\'a dit ce que la journée tient', () => {
+    for (const tsb of [20, 0, -30]) expect(advice(undefined, tsb)).not.toContain('séance');
+  });
+
+  it('garde ses raisons dans toutes les situations', () => {
+    // Le verdict et la situation sont deux moitiés indépendantes : ce que le
+    // corps dit ne disparaît pas parce que la journée ne demande rien.
+    for (const day of [
+      { session: 'work' }, { session: 'rest' }, { session: 'none' },
+      { session: 'done' }, { session: 'none', absence: 'chosen' },
+    ] as ReadinessDay[]) {
+      expect(advice(day, -30)).toContain('fatigue musculaire élevée');
+    }
   });
 });

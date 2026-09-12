@@ -7,7 +7,7 @@ import {
   aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
   computeReadiness, decayedEnvelopeWithCompanion, fitCriticalSpeed, interpretAcwr, interpretTsb,
   maximalEffortSupport, modelFromLabOnly, monotonize, projectFrom, type FieldEvidence,
-  type MmpCurve,
+  type MmpCurve, type ReadinessDay,
 } from '@cairn/physiology';
 import { absenceCovering } from './adapt.js';
 import { addDays } from './periodization.js';
@@ -252,6 +252,78 @@ function estimateDescentSkill(
   return Math.round(Math.min(1.3, Math.max(0.65, raw)) * 100) / 100;
 }
 
+/**
+ * Sports dont la foulée frappe le sol.
+ *
+ * « Sans impact » n'est pas « sans entraînement » : une semaine de vélo laisse
+ * la charge métabolique presque intacte et le tendon d'Achille déshabitué. La
+ * reprise se compte donc sur ce qui percute, pas sur ce qui fatigue.
+ */
+const IMPACT_SPORTS = new Set(['Run', 'TrailRun', 'VirtualRun', 'Hike']);
+
+/** Séances dont il n'y a plus rien à faire : elles ont eu lieu. */
+const DONE_STATUSES = new Set<PlannedSession['status']>(['completed', 'replaced']);
+
+/**
+ * Ce que la journée tient, pour la recommandation de disponibilité.
+ *
+ * La règle de lecture est celle de l'écran du matin, et doit le rester : une
+ * journée peut porter une séance et un repos, c'est la séance qui l'emporte ;
+ * une séance retirée par une absence ou annulée n'est plus au programme. Deux
+ * lectures divergentes, ce serait le titre de l'écran et le conseil juste
+ * dessous qui parlent de deux journées différentes — précisément le défaut
+ * qu'on ferme ici.
+ */
+async function situationOn(
+  athleteId: string,
+  date: string,
+  absences: DeclaredAbsence[],
+  recent: Activity[],
+): Promise<ReadinessDay> {
+  const held = (await db.listPlannedSessions(athleteId, date, date)).filter(
+    (s) => s.status !== 'withdrawn' && s.status !== 'cancelled',
+  );
+  const planned = held.find((s) => s.type !== 'rest') ?? held[0];
+  const ranToday = recent.some((a) => a.startDateLocal.slice(0, 10) === date);
+
+  const session: ReadinessDay['session'] =
+    planned == null ? (ranToday ? 'done' : 'none')
+    : DONE_STATUSES.has(planned.status) ? 'done'
+    : planned.type === 'rest' ? 'rest'
+    : 'work';
+
+  return {
+    session,
+    absence: absenceCovering(absences, date)?.kind,
+    daysWithoutImpact: await daysWithoutImpact(athleteId, date, recent),
+  };
+}
+
+/**
+ * Jours pleins sans impact avant `date` — onze entre une dernière sortie le
+ * 02/09 et une reprise le 14/09.
+ *
+ * La fenêtre des activités récentes répond dans tous les cas ordinaires. Quand
+ * elle ne contient aucun impact, on redemande sans borne de date : annoncer la
+ * largeur de la fenêtre pour une coupure de six mois serait donner un chiffre
+ * faux plutôt qu'aucun.
+ */
+async function daysWithoutImpact(
+  athleteId: string,
+  date: string,
+  recent: Activity[],
+): Promise<number | undefined> {
+  const isImpact = (a: Activity) => IMPACT_SPORTS.has(a.sportType);
+  const last =
+    recent.find(isImpact) ?? (await db.listActivities(athleteId, { limit: 40 })).find(isImpact);
+  if (!last) return undefined;
+  const gap = Math.round(
+    (new Date(`${date}T00:00:00Z`).getTime() -
+      new Date(`${last.startDateLocal.slice(0, 10)}T00:00:00Z`).getTime()) / dayMs,
+  );
+  return Math.max(0, gap - 1);
+}
+
 /** Charge l'état complet de l'athlète. */
 export async function loadAthleteState(athleteId: string): Promise<AthleteState> {
   const profile = await db.getAthlete(athleteId);
@@ -268,7 +340,6 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const loads = await db.getDailyLoads(athleteId, daysAgo(400));
   const pmc = buildPmcSeries(loads, loads[0]?.date ?? daysAgo(90), today);
   const checkIns = await db.listCheckIns(athleteId, daysAgo(60));
-  const readiness = computeReadiness({ date: today, pmc, checkIns });
 
   const last = <T>(arr: T[]): T | undefined => arr[arr.length - 1];
   const met = last(pmc.metabolic);
@@ -282,6 +353,16 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const absences = await db.listAbsences(athleteId, { from: daysAgo(60) });
   const upcomingRaces = await db.listRaceGoals(athleteId, today);
   const recentActivities = await db.listActivities(athleteId, { from: daysAgo(45), limit: 60 });
+
+  // La disponibilité se calcule après le plan et les absences, et pas avant :
+  // ce qu'il faut faire d'un score dépend de ce que la journée tient, et le
+  // paquet `physiology` ne va rien chercher — on le lui donne.
+  const readiness = computeReadiness({
+    date: today,
+    pmc,
+    checkIns,
+    day: await situationOn(athleteId, today, absences, recentActivities),
+  });
 
   const analyses = await db.getAnalyses(recentActivities.map((a) => a.id));
   const envelope = decayedEnvelopeWithCompanion(

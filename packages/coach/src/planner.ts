@@ -387,7 +387,7 @@ function calibrateToTarget(
       // de trois tours à treize minutes, c'est en prescrire un contenu qu'on
       // n'a pas le temps de faire.
       const prescribedS = s.blocks
-        .filter(isPrescribed)
+        .filter(lib.isPrescribed)
         .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
       const runningS = Math.max(0, s.durationS - prescribedS);
       // Le dénivelé suit le facteur **dans les blocs**. Il y était figé pendant
@@ -396,7 +396,7 @@ function calibrateToTarget(
       // chiffre que l'athlète exécute. Mis à l'échelle ici, il n'y a plus qu'un
       // dénivelé, et l'en-tête se relit dessus.
       const blocks = scalable
-        ? s.blocks.map((b) => scaleBlock(b, factor))
+        ? s.blocks.map((b) => lib.scaleBlock(b, factor))
         : s.blocks;
       const elevationGainM = lib.elevationGainOf(blocks);
       const elevationLossM = Math.round(s.elevationLossM * (scalable ? factor : 1));
@@ -423,33 +423,6 @@ function calibrateToTarget(
         rationale: reasons.get(day),
       };
     });
-}
-
-/**
- * Blocs dont la durée est prescrite, non calibrée.
- *
- * Les blocs annexes — souplesse, respiration — tiennent leur durée du dossier.
- * Un circuit tient la sienne de son contenu : ses tours ne suivent pas le
- * facteur de la semaine, sa durée ne le peut donc pas non plus. Elle le suivait
- * pourtant, et prescrivait treize minutes pour un tour de cinq exercices.
- */
-const isPrescribed = (b: SessionBlock): boolean => Boolean(b.kind || b.circuit);
-
-/**
- * Met un bloc couru à l'échelle de la calibration.
- *
- * Durée et dénivelé ensemble : ce sont les deux étendues du bloc, et n'en
- * réduire qu'une donne une séance qui monte autant en moins de temps — la
- * vitesse ascensionnelle exigée, elle, ne bouge pas. Le reste — cibles,
- * cadence, tours de circuit — décrit *comment* le bloc se court, pas combien :
- * la calibration n'a rien à y changer.
- */
-function scaleBlock(b: SessionBlock, factor: number): SessionBlock {
-  const out = { ...b };
-  if (isPrescribed(b)) return out;
-  if (b.durationS) out.durationS = Math.round(b.durationS * factor);
-  if (b.elevationGainM) out.elevationGainM = Math.round(b.elevationGainM * factor);
-  return out;
 }
 
 /**

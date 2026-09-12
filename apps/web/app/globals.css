@@ -322,8 +322,13 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .basis-src { font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); text-align: right; }
 .basis-src[data-assumed="true"] { color: var(--watch); }
 .basis-src s { margin-right: 6px; opacity: 0.6; }
-/* Le poids appliqué, collé à la provenance : une barre ne se lit pas sans lui. */
-.basis-weight { margin-left: 7px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+/* Le poids appliqué, collé à la provenance : une barre ne se lit pas sans lui.
+   En minuscules et nommé — « pèse 54 % » — pour qu'il ne se confonde pas avec
+   la valeur de la composante, qui est l'autre nombre de la ligne. */
+.basis-weight {
+  margin-left: 7px; color: var(--text-dim);
+  font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0;
+}
 .basis-src[data-assumed="true"] .basis-weight { color: inherit; }
 .basis-meter { height: 5px; border-radius: 3px; background: var(--bg-inset); overflow: hidden; align-self: center; }
 .basis-fill { height: 100%; background: var(--accent); opacity: 0.75; transition: width 400ms ease; }

@@ -1,4 +1,6 @@
-import type { DailyCheckIn, PmcSeries, ReadinessScore, ReadinessSource } from '@cairn/core';
+import type {
+  AbsenceKind, DailyCheckIn, PmcSeries, ReadinessScore, ReadinessSource,
+} from '@cairn/core';
 import { clamp, mean } from './units.js';
 
 /**
@@ -19,7 +21,51 @@ export interface ReadinessInput {
   hrvBaseline?: number;
   /** Base de référence pour la FC de repos. */
   restingHrBaseline?: number;
+  /** Ce que la journée tient. Absent : rien n'en est supposé. */
+  day?: ReadinessDay;
 }
+
+/**
+ * Ce que la journée tient, tel que l'appelant le sait.
+ *
+ * Le score se calcule sur la charge et le ressenti ; ce qu'il faut en faire
+ * dépend de ce que le jour demande, et ce paquet n'a aucun moyen de le savoir.
+ * Il l'a pourtant supposé : ses trois recommandations parlaient de « la séance
+ * prévue » les jours où il n'y en avait aucune — le 12/09, en pleine coupure
+ * déclarée, l'écran du matin titrait « Rien aujourd'hui » et conseillait juste
+ * dessous de garder une séance qui n'existait pas.
+ *
+ * La situation arrive donc en entrée, comme une donnée. Elle n'est ni devinée
+ * ici, ni allée chercher : ce paquet reste pur, et c'est ce qui le rend
+ * testable exhaustivement.
+ */
+export interface ReadinessDay {
+  /**
+   * Ce que le plan tient pour ce jour : une séance à faire, une déjà faite, un
+   * repos prescrit, ou rien du tout.
+   */
+  session: 'work' | 'done' | 'rest' | 'none';
+  /** Nature de l'absence déclarée qui recouvre le jour, s'il y en a une. */
+  absence?: AbsenceKind;
+  /**
+   * Jours consécutifs sans impact avant ce jour — zéro si l'athlète a couru
+   * hier. Au-delà de `IMPACT_GAP_DAYS`, la séance du jour est une reprise.
+   */
+  daysWithoutImpact?: number;
+}
+
+/**
+ * Seuil au-delà duquel une séance n'est plus une séance mais une reprise, en
+ * jours consécutifs sans impact.
+ *
+ * Une semaine sans choc au sol ne coûte presque rien à la filière
+ * cardiovasculaire, et laisse le score au plus haut : la charge aiguë s'efface,
+ * la fraîcheur monte, le verdict passe au vert. Ce qu'elle coûte est ailleurs —
+ * la tolérance du tendon et de l'os à l'impact — et rien dans ce score ne le
+ * mesure. C'est exactement la configuration où un feu vert est le plus
+ * trompeur, donc celle où la recommandation doit dire autre chose que lui.
+ */
+export const IMPACT_GAP_DAYS = 7;
 
 const pointAt = <T extends { date: string }>(series: readonly T[], date: string): T | undefined =>
   series.find((p) => p.date === date) ?? series[series.length - 1];
@@ -225,14 +271,18 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
     weights,
     assumedShare,
     verdict,
-    recommendation: recommend(verdict, {
-      tsbM,
-      tsbMech,
-      acwr: acwrValue,
-      fatigue: today?.fatigue,
-      soreness: today?.soreness,
-      sleep: today?.sleepHours,
-    }),
+    recommendation: recommend(
+      verdict,
+      {
+        tsbM,
+        tsbMech,
+        acwr: acwrValue,
+        fatigue: today?.fatigue,
+        soreness: today?.soreness,
+        sleep: today?.sleepHours,
+      },
+      input.day,
+    ),
   };
 }
 
@@ -260,6 +310,20 @@ function roundToPercent(w: Record<Component, number>): Record<Component, number>
   }, {} as Record<Component, number>);
 }
 
+/**
+ * Le conseil du jour : ce que le verdict dit du corps, appliqué à ce que la
+ * journée demande.
+ *
+ * Les deux moitiés sont indépendantes et doivent le rester. Le verdict vient
+ * du score — charge, ressenti, système autonome. La situation vient de
+ * l'appelant. Un jour sans séance, un jour couvert par une absence déclarée et
+ * un jour de reprise après onze jours sans impact n'appellent pas le même
+ * conseil, même à score identique : c'est la phrase qui change, pas le score.
+ *
+ * Sans situation, on ne suppose aucune séance : le conseil porte alors sur la
+ * charge du jour, quelle qu'elle soit. Une phrase vague est un moindre mal
+ * qu'une phrase fausse.
+ */
 function recommend(
   verdict: ReadinessScore['verdict'],
   ctx: {
@@ -270,6 +334,7 @@ function recommend(
     soreness?: number;
     sleep?: number;
   },
+  day?: ReadinessDay,
 ): string {
   const reasons: string[] = [];
   if (ctx.fatigue != null && ctx.fatigue >= 4) reasons.push('fatigue perçue élevée');
@@ -280,19 +345,92 @@ function recommend(
   if (ctx.sleep != null && ctx.sleep < 6) reasons.push(`sommeil court (${ctx.sleep} h)`);
 
   const because = reasons.length ? ` — ${reasons.join(', ')}` : '';
+  const say = (green: string, amber: string, red: string) =>
+    verdict === 'green' ? green : verdict === 'amber' ? amber : red;
 
-  switch (verdict) {
-    case 'green':
-      return `Feu vert : la séance prévue peut être exécutée telle quelle${because}.`;
-    case 'amber':
-      return (
-        `Vigilance${because}. Garde la séance mais réduis le volume de 20-30 %, ou décale la ` +
-        `qualité de 24 h si les sensations ne viennent pas à l'échauffement.`
+  // Une absence déclarée passe avant tout le reste : la journée ne demande
+  // rien, et il n'y a donc rien à alléger ni à décaler.
+  if (day?.absence) {
+    // Maladie et blessure sont les deux cas où ce score se lit de travers : il
+    // ne connaît que la charge et les réponses au point du jour. Le dire est la
+    // même exigence que la provenance d'un paramètre — l'athlète a le droit de
+    // savoir ce que le chiffre ne regarde pas.
+    const blind =
+      day.absence === 'illness' || day.absence === 'injury'
+        ? ' Ce score ne lit ni ta guérison ni ta douleur : seulement la charge et ce que tu déclares.'
+        : '';
+    return say(
+      `Rien à faire aujourd'hui : une absence déclarée couvre la journée. Le score est haut parce ` +
+        `que tu ne t'entraînes pas — c'est la fraîcheur de l'arrêt, pas celle de la forme.${blind}`,
+      `Rien à faire aujourd'hui : une absence déclarée couvre la journée${because}. La fraîcheur que ` +
+        `tu lis vient de l'arrêt, pas de la forme : ta charge chronique baisse pendant ce temps, ` +
+        `et c'était prévu.${blind}`,
+      `Rien à faire aujourd'hui : une absence déclarée couvre la journée. Le score reste bas malgré ` +
+        `l'arrêt${because} — c'est ce qu'il faut dire au coach avant de reprendre à la date prévue.${blind}`,
+    );
+  }
+
+  switch (day?.session) {
+    case 'done':
+      return say(
+        `Feu vert${because}, et la séance du jour est déjà faite. Ce score parle de demain, ` +
+          `pas d'aujourd'hui : il n'y a rien à y ajouter.`,
+        `Vigilance${because}. La séance du jour est faite : ce score se lit maintenant comme un ` +
+          `état de récupération, pas comme une consigne.`,
+        `Signal rouge${because}. La séance du jour est faite ; c'est la suivante qui se décide ` +
+          `là-dessus — la récupération n'a pas suivi la charge.`,
       );
-    case 'red':
-      return (
-        `Signal rouge${because}. Remplace la séance par de la récupération active ou du repos complet. ` +
-        `Une séance forcée dans cet état coûte plus qu'elle ne rapporte.`
+
+    case 'rest':
+      return say(
+        `Feu vert${because}, et repos prescrit aujourd'hui : c'est lui qui transforme la charge ` +
+          `des jours passés en forme. Rien à y ajouter.`,
+        `Vigilance${because}. Repos prescrit aujourd'hui : la journée tombe bien, il n'y a rien ` +
+          `à alléger.`,
+        `Signal rouge${because}. Repos prescrit aujourd'hui, et rien à y ajouter — pas même ` +
+          `trente minutes faciles.`,
+      );
+
+    case 'none':
+      return say(
+        `Feu vert${because}, mais rien n'est prévu aujourd'hui : aucune séance n'attend cette ` +
+          `réserve. Si tu sors quand même, reste en endurance.`,
+        `Vigilance${because}. Rien n'est prévu aujourd'hui : une sortie facile ne coûte rien, ` +
+          `une séance de qualité improvisée, si.`,
+        `Signal rouge${because}. Rien n'est prévu aujourd'hui, et c'est aussi bien : n'ajoute rien.`,
+      );
+
+    case 'work': {
+      const gap = day?.daysWithoutImpact ?? 0;
+      if (gap >= IMPACT_GAP_DAYS) {
+        const off = `${gap} jours sans impact`;
+        return say(
+          `Feu vert${because} — mais c'est la première séance après ${off}. Le score est haut ` +
+            `parce que tu as coupé, pas parce que tu es prêt : fais-la telle qu'elle est écrite, ` +
+            `sans rien y ajouter.`,
+          `Vigilance${because}. Première séance après ${off} : tiens-la sans la rallonger. Ce qui ` +
+            `se reprend aujourd'hui est le choc au sol, pas le volume.`,
+          `Signal rouge${because}, le jour d'une reprise après ${off}. Décale-la de 24 h plutôt ` +
+            `que de la forcer : une reprise ratée coûte la semaine qui suit.`,
+        );
+      }
+      return say(
+        `Feu vert : la séance prévue peut être exécutée telle quelle${because}.`,
+        `Vigilance${because}. Garde la séance mais réduis le volume de 20-30 %, ou décale la ` +
+          `qualité de 24 h si les sensations ne viennent pas à l'échauffement.`,
+        `Signal rouge${because}. Remplace la séance par de la récupération active ou du repos ` +
+          `complet. Une séance forcée dans cet état coûte plus qu'elle ne rapporte.`,
+      );
+    }
+
+    // Personne n'a dit ce que la journée tient : on ne l'invente pas.
+    default:
+      return say(
+        `Feu vert : rien ne s'oppose à la charge du jour${because}.`,
+        `Vigilance${because}. Réduis de 20-30 % le volume que tu prévoyais, ou décale la qualité ` +
+          `de 24 h si les sensations ne viennent pas à l'échauffement.`,
+        `Signal rouge${because}. Récupération active ou repos complet : une charge forcée dans ` +
+          `cet état coûte plus qu'elle ne rapporte.`,
       );
   }
 }

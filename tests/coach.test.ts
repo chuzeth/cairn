@@ -503,6 +503,24 @@ describe('Règles d\'ajustement automatique', () => {
     expect(evaluateAdjustments(earlier, [tomorrow]).some((a) => a.rule === 'readiness_red')).toBe(false);
   });
 
+  it('annonce la durée que la séance portera, pas une minute de plus', () => {
+    const state = baseState({
+      readiness: { date: '2026-09-01', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
+    });
+    // 4 089 s allégées de 55 % font 1 840 s, que l'écran écrit « 30 min ».
+    // Arrondie à part, la phrase en promettait 31 : deux nombres pour la même
+    // séance, et c'est la phrase qu'on croit.
+    const tomorrow = session({
+      date: '2026-09-02', type: 'threshold', plannedLoad: 80, plannedMechanicalLoad: 5,
+      plannedDurationS: 4089, blocks: [{ label: 'Bloc continu', zone: 'Z3', durationS: 4089 }],
+    });
+    const [adj] = evaluateAdjustments(state, [tomorrow]);
+    expect(adj!.rule).toBe('readiness_red');
+    expect(lib.relieved(tomorrow, adj!.factor!).plannedDurationS).toBe(1840);
+    expect(adj!.reason).toContain('ramenée à 30 min');
+    expect(adj!.reason).not.toContain('31 min');
+  });
+
   it('n\'applique qu\'une règle par séance', () => {
     const state = baseState({
       today: { date: '2026-09-01', ctl: 50, atl: 95, tsb: -45, mechanicalTsb: -35, acwr: 1.9, rampRate: 12, monotony: 2.5, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
@@ -510,6 +528,56 @@ describe('Règles d\'ajustement automatique', () => {
     });
     const adj = evaluateAdjustments(state, [session({ date: '2026-09-02' })]);
     expect(adj.filter((a) => a.sessionId === 's1')).toHaveLength(1);
+  });
+});
+
+describe('Allègement d\'une séance', () => {
+  const withCircuit = (): PlannedSession => ({
+    id: 's1', athleteId: 'pierre', date: '2026-09-14', type: 'endurance',
+    title: 'Endurance fondamentale + renforcement', intent: '',
+    blocks: [
+      { label: 'Footing en endurance aérobie', zone: 'Z2', durationS: 2326 },
+      {
+        label: 'Circuit force', zone: 'Z2', durationS: 775,
+        circuit: {
+          rounds: 3,
+          exercises: [
+            { movement: 'split_squat', reps: 8 },
+            { movement: 'step_down', reps: 10 },
+            { movement: 'eccentric_calf', reps: 12 },
+          ],
+        },
+      },
+      { label: 'Souplesse chaîne postérieure', zone: 'Z1', kind: 'mobility', durationS: 600 },
+    ],
+    plannedLoad: 45, plannedMechanicalLoad: 30, plannedDurationS: 3701,
+    priority: 'support', status: 'planned',
+  });
+
+  it('raccourcit ce qui se court, et laisse entier ce que le dossier prescrit', () => {
+    const out = lib.relieved(withCircuit(), 0.45);
+    expect(out.blocks[0]!.durationS).toBe(1047);
+    // Les tours ne suivent pas le facteur ; la durée du circuit ne le peut donc
+    // pas non plus, sans quoi la séance prescrit « 5 min » en face de trois
+    // tours de trois exercices.
+    expect(out.blocks[1]!.circuit!.rounds).toBe(3);
+    expect(out.blocks[1]!.durationS).toBe(775);
+    expect(out.blocks[2]!.durationS).toBe(600);
+  });
+
+  it('relit la durée totale sur les blocs allégés, jamais à côté d\'eux', () => {
+    const out = lib.relieved(withCircuit(), 0.45);
+    expect(out.plannedDurationS).toBe(1047 + 775 + 600);
+    // Mise à l'échelle à son tour, elle aurait annoncé 1 665 s pour un contenu
+    // qui en dure 2 422 : l'en-tête et les blocs ne disaient plus la même chose.
+    expect(out.plannedDurationS).not.toBe(Math.round(3701 * 0.45));
+  });
+
+  it('met à l\'échelle le total quand la séance n\'a aucun contenu écrit', () => {
+    const bare: PlannedSession = {
+      ...withCircuit(), blocks: [], plannedDurationS: 3600,
+    };
+    expect(lib.relieved(bare, 0.5).plannedDurationS).toBe(1800);
   });
 });
 

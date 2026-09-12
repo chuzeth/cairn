@@ -1,3 +1,5 @@
+import { sessionDuration } from '@cairn/core/format';
+
 /**
  * Les appels partent de l'origine qui a servi la page — `/api/...`, jamais
  * `http://hôte:4000/api/...`. Next relaie vers l'API (voir `next.config.ts`) :
@@ -43,13 +45,13 @@ export function pace(speedMs: number | null | undefined): string {
   return sec === 60 ? `${m + 1}:00` : `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+/**
+ * Durée d'une séance. La règle d'arrondi vient de `@cairn/core` : c'est la même
+ * qui écrit la phrase du coach quand il annonce un allègement.
+ */
 export function duration(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds)) return '—';
-  const s = Math.round(seconds);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h} h ${String(m).padStart(2, '0')}`;
-  return `${m} min`;
+  return sessionDuration(seconds);
 }
 
 export function clock(seconds: number | null | undefined): string {
