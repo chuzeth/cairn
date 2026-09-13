@@ -8,7 +8,8 @@ import { getDb, packStreams, unpackStreams } from './client.js';
 import * as t from './schema.js';
 
 /** Version du moteur d'analyse. Toute modification invalide les analyses en cache. */
-export const ENGINE_VERSION = '1.1.0';
+/** 1.2.0 : l'analyse conserve la courbe de descente, pas seulement celle de montée. */
+export const ENGINE_VERSION = '1.2.0';
 
 const uid = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 const dateKey = (iso: string) => iso.slice(0, 10);

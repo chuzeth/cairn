@@ -1,3 +1,4 @@
+export * from './plausibility.js';
 export * from './sessionContent.js';
 export * from './directives.js';
 export * from './sessionLibrary.js';

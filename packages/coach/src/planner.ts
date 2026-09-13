@@ -297,7 +297,7 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
 
   // ── 4. Calibration sur la charge cible ────────────────────────────────────
   const set = indexDirectives(input.directives);
-  const sessions = calibrateToTarget([...assigned.entries()], spec, athleteId, reasons, set);
+  const sessions = calibrateToTarget([...assigned.entries()], spec, athleteId, reasons, set, model);
 
   // ── 5. Directives du dossier ──────────────────────────────────────────────
   honourDirectives(sessions, set, input);
@@ -332,6 +332,7 @@ function calibrateToTarget(
   athleteId: string,
   reasons: Map<number, string>,
   set: DirectiveSet,
+  model: PhysiologyModel,
 ): PlannedSession[] {
   const isLong = (s: SessionTemplate) => s.type === 'long_run' || s.type === 'long_trail';
   const isFiller = (s: SessionTemplate) => s.type === 'endurance';
@@ -390,37 +391,84 @@ function calibrateToTarget(
         .filter(lib.isPrescribed)
         .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
       const runningS = Math.max(0, s.durationS - prescribedS);
-      // Le dénivelé suit le facteur **dans les blocs**. Il y était figé pendant
-      // que l'en-tête, lui, le suivait : une rando-course ramenée à 3 h
-      // annonçait 1 384 m et prescrivait 1 092 m de montées, et c'est le second
-      // chiffre que l'athlète exécute. Mis à l'échelle ici, il n'y a plus qu'un
-      // dénivelé, et l'en-tête se relit dessus.
-      const blocks = scalable
-        ? s.blocks.map((b) => lib.scaleBlock(b, factor))
-        : s.blocks;
-      const elevationGainM = lib.elevationGainOf(blocks);
-      const elevationLossM = Math.round(s.elevationLossM * (scalable ? factor : 1));
-      const distanceM = s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined;
-      return {
+      const said = (amendments: readonly string[] = []) =>
+        [reasons.get(day), ...amendments].filter(Boolean).join(' ') || undefined;
+      const common = {
         id: uid(),
         athleteId,
         date,
         type: s.type as SessionType,
-        title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS, elevationGainM) : s.title,
         intent: s.intent,
-        blocks,
-        plannedLoad: Math.round(s.plannedLoad * factor),
-        // Relue sur les blocs mis à l'échelle : le dénivelé et les durées
-        // suivent le facteur, le nombre de tours du circuit non. Mettre le
-        // total à l'échelle ferait varier un contenu que la calibration n'a pas
-        // touché — et le chiffre ne se referait plus depuis la séance écrite.
-        plannedMechanicalLoad: lib.mechanicalFor(blocks, elevationLossM).total,
-        plannedDurationS: Math.round(runningS * factor) + (scalable ? prescribedS : 0),
-        plannedDistanceM: distanceM,
-        plannedElevationGainM: elevationGainM,
         priority: s.priority,
         status: 'planned' as const,
-        rationale: reasons.get(day),
+      };
+
+      if (!scalable) {
+        const elevationGainM = lib.elevationGainOf(s.blocks);
+        return {
+          ...common,
+          title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS, elevationGainM) : s.title,
+          blocks: s.blocks,
+          plannedLoad: Math.round(s.plannedLoad * factor),
+          plannedMechanicalLoad: lib.mechanicalFor(s.blocks, s.elevationLossM).total,
+          plannedDurationS: Math.round(runningS * factor),
+          plannedDistanceM: s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined,
+          plannedElevationGainM: elevationGainM,
+          rationale: said(s.amendments),
+        };
+      }
+
+      // La sortie longue ne s'étire pas : elle se reconstruit à la durée que la
+      // calibration lui donne, avec le dénivelé demandé mis à la même échelle.
+      // Sa forme dépend du temps disponible — la montée et la descente prennent
+      // ce que les courbes de l'athlète exigent, le reste va au terrain plat —,
+      // et la phrase qui dit ce qui a cédé parle de la séance enregistrée, pas
+      // d'un gabarit que l'athlète ne verra jamais.
+      if (isLong(s) && s.rebuild) {
+        const built = factor !== 1 ? s.rebuild(factor) : s;
+        return {
+          ...common,
+          title: built.title,
+          blocks: built.blocks,
+          plannedLoad: built.plannedLoad,
+          plannedMechanicalLoad: built.plannedMechanicalLoad,
+          plannedDurationS: built.durationS,
+          plannedDistanceM: built.plannedDistanceM,
+          plannedElevationGainM: built.elevationGainM,
+          rationale: said(built.amendments),
+        };
+      }
+
+      // Le volume facile suit le facteur par le chemin commun à toute
+      // transformation : durée et dénivelé ensemble, et ce que l'athlète ne peut
+      // pas exécuter fait céder le dénivelé, avec la phrase qui le dit.
+      const t = lib.transformSession(
+        {
+          type: s.type,
+          blocks: s.blocks,
+          plannedLoad: s.plannedLoad,
+          plannedMechanicalLoad: s.plannedMechanicalLoad,
+          plannedDurationS: s.durationS,
+          plannedDistanceM: s.plannedDistanceM,
+        },
+        factor,
+        model,
+      );
+      return {
+        ...common,
+        title:
+          factor !== 1 && runningS > 0
+            ? retitle(s, factor, runningS, t.plannedElevationGainM)
+            : t.plannedElevationGainM !== s.elevationGainM
+              ? lib.restateVert(s.title, t.plannedElevationGainM)
+              : s.title,
+        blocks: t.blocks,
+        plannedLoad: t.plannedLoad,
+        plannedMechanicalLoad: t.plannedMechanicalLoad,
+        plannedDurationS: t.plannedDurationS,
+        plannedDistanceM: t.plannedDistanceM,
+        plannedElevationGainM: t.plannedElevationGainM,
+        rationale: said([...(s.amendments ?? []), ...t.amendments]),
       };
     });
 }
@@ -497,7 +545,7 @@ function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: 
     }
 
     if (longAmbition && input.ambition && (s.type === 'long_run' || s.type === 'long_trail')) {
-      if (!spec.isDeload && spec.phase !== 'taper') raiseVertToMeasurable(s);
+      if (!spec.isDeload && spec.phase !== 'taper') raiseVertToMeasurable(s, input.model);
       const measurable =
         s.plannedDurationS >= DURABILITY_MEASURABLE.minDurationS &&
         (s.plannedElevationGainM ?? 0) >= DURABILITY_MEASURABLE.minVertM;
@@ -531,34 +579,26 @@ function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: 
  * et c'est exactement le défaut qu'on corrige : une durabilité jamais mesurée
  * parce que rien dans le plan n'a la forme qui la mesure.
  */
-function raiseVertToMeasurable(s: PlannedSession): void {
+function raiseVertToMeasurable(s: PlannedSession, model: PhysiologyModel): void {
   const floor = DURABILITY_MEASURABLE.minVertM;
   const carried = lib.elevationGainOf(s.blocks);
   if (carried >= floor || carried <= 0) return;
 
-  // Le dénivelé monte, et le temps de montée avec lui : la vitesse
-  // ascensionnelle prescrite ne se relève pas au motif qu'il faut du D+ pour
-  // mesurer quelque chose. Ce sont les autres blocs qui cèdent le temps.
-  s.blocks = lib.rescaleElevation(s.blocks, floor / carried);
+  // Le dénivelé monte par le chemin de toute transformation, à durée
+  // inchangée : le plancher de mesurabilité ne prime pas sur ce que l'athlète
+  // peut exécuter. Relevé en prenant le temps des autres blocs, il avait vidé
+  // la descente d'une rando-course — un bloc sans dénivelé déclaré passait pour
+  // du temps disponible. Quand un segment ne tient plus, le relèvement
+  // s'arrête là, et la séance dit pourquoi.
+  const t = lib.transformSession(s, { duration: 1, vertical: floor / carried }, model);
   // Le plancher est visé, pas décrété : ce qui est enregistré est ce que les
-  // blocs portent. Écrire `floor` ici rendrait à la séance le second chiffre
-  // qu'on vient de lui retirer — et le plancher se lirait sur un dénivelé que
-  // l'athlète n'exécute pas. Le titre suit, faute de quoi les deux nombres
-  // reparaissent à l'endroit précis où l'athlète les lit.
-  const raised = lib.elevationGainOf(s.blocks);
-  s.plannedElevationGainM = raised;
-  s.plannedMechanicalLoad = lib.mechanicalFor(s.blocks, raised).total;
-  s.title = restateVert(s.title, raised);
-}
-
-const VERT_MENTION = / · \d+ m D\+/;
-
-/** Réécrit le dénivelé qu'un titre annonce, sans toucher au reste. */
-function restateVert(title: string, vert: number): string {
-  const mention = ` · ${vert} m D+`;
-  if (VERT_MENTION.test(title)) return title.replace(VERT_MENTION, mention);
-  const suffix = title.indexOf(' + ');
-  return suffix < 0 ? title + mention : title.slice(0, suffix) + mention + title.slice(suffix);
+  // blocs portent, et le titre suit.
+  s.blocks = t.blocks;
+  s.plannedElevationGainM = t.plannedElevationGainM;
+  s.plannedMechanicalLoad = t.plannedMechanicalLoad;
+  s.plannedDurationS = t.plannedDurationS;
+  s.title = lib.restateVert(s.title, t.plannedElevationGainM);
+  if (t.amendments.length) s.rationale = [s.rationale, ...t.amendments].filter(Boolean).join(' ');
 }
 
 /**

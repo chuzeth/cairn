@@ -1,8 +1,8 @@
-import type { DeclaredAbsence, PlannedSession } from '@cairn/core';
+import type { DeclaredAbsence, PhysiologyModel, PlannedSession } from '@cairn/core';
 import * as db from '@cairn/db';
 import { sessionDuration } from '@cairn/core';
-import { relieved } from './sessionLibrary.js';
-import type { AthleteState } from './state.js';
+import { elevationGainOf, restateVert, transformSession } from './sessionLibrary.js';
+import { currentModel, type AthleteState } from './state.js';
 
 /**
  * Ajustement automatique du plan.
@@ -206,7 +206,7 @@ export function evaluateAdjustments(
           // La durée annoncée est celle que l'allègement produira, écrite comme
           // l'écran l'écrira. Calculée à part, elle promettait 31 min là où la
           // séance enregistrée en affichait 30, et c'est la phrase qu'on croit.
-          `Séance ramenée à ${sessionDuration(relieved(next, factor).plannedDurationS)} en récupération.`,
+          `Séance ramenée à ${sessionDuration(transformSession(next, factor, state.model).plannedDurationS)} en récupération.`,
       });
     }
   }
@@ -267,6 +267,9 @@ export async function applyAdjustments(
   const dates = adjustments.map((a) => a.date).sort();
   const all = await db.listPlannedSessions(athleteId, dates[0]!, dates[dates.length - 1]!);
   const byId = new Map(all.map((s) => [s.id, s]));
+  // Les courbes de l'athlète ne servent qu'à l'allègement : on ne va les
+  // chercher que s'il y en a un.
+  let model: PhysiologyModel | undefined;
 
   for (const adj of adjustments) {
     const session = byId.get(adj.sessionId);
@@ -286,13 +289,21 @@ export async function applyAdjustments(
         break;
 
       case 'scale': {
-        // Alléger raccourcit les blocs courus, et eux seuls : ni les tours d'un
-        // circuit, ni la durée qu'il faut pour les faire. Le détail est dans
-        // `relieved`, partagé avec la phrase qui l'annonce plus haut.
+        // Alléger raccourcit ce qui se court — durée et dénivelé ensemble —, et
+        // rien de ce que le dossier prescrit. Le détail est dans
+        // `transformSession`, le chemin de toute transformation, partagé avec la
+        // phrase qui l'annonce plus haut. Ce que la séance a dû céder pour rester
+        // exécutable s'ajoute au motif.
+        model ??= await currentModel(athleteId);
+        const { amendments, ...content } = transformSession(session, adj.factor ?? 1, model);
+        const title =
+          content.plannedElevationGainM !== elevationGainOf(session.blocks)
+            ? restateVert(session.title, content.plannedElevationGainM)
+            : session.title;
         await db.updateSession(adj.sessionId, {
-          ...relieved(session, adj.factor ?? 1),
-          title: `${session.title} · allégée`,
-          rationale: adj.reason,
+          ...content,
+          title: `${title} · allégée`,
+          rationale: [adj.reason, ...amendments].join(' '),
         } as never);
         break;
       }

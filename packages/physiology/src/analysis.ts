@@ -11,7 +11,9 @@ import { computeTrainingLoad, energyExpenditure, fuelingTargets, type LoadSample
 import { companionAtMeanMaximal, meanMaximal } from './mmp.js';
 import { cumulativeVertical } from './streams.js';
 import { buildZones, computeZoneDistribution } from './zones.js';
-import { analyzeDescent, gradeProfile, vamCurve, verticalityIndex } from './vertical.js';
+import {
+  VERTICAL_CURVE_DURATIONS, descentCurve, gradeProfile, vamCurve, verticalityIndex,
+} from './vertical.js';
 import { wPrimeBalance } from './criticalSpeed.js';
 import { matchPlannedSession, sessionOutcome } from './sessionMatch.js';
 import { formatDuration, mean, movingAverage } from './units.js';
@@ -103,7 +105,11 @@ export function analyzeActivity(
     grade: streams.grade[i] ?? 0,
     hr: hr[i] ?? null,
   }));
-  const vamMms = vamCurve(verticalSamples, relevantDurations.filter((d) => d >= 60));
+  // Montée et descente, sur les mêmes durées : ce sont les deux courbes que les
+  // séances ne peuvent pas dépasser.
+  const verticalDurations = VERTICAL_CURVE_DURATIONS.filter((d) => d <= durationS);
+  const vamMms = vamCurve(verticalSamples, verticalDurations);
+  const descentMms = descentCurve(verticalSamples, verticalDurations);
 
   // ── Découplage ────────────────────────────────────────────────────────────
   const decoupling = computeDecoupling(
@@ -179,6 +185,7 @@ export function analyzeActivity(
     meanMaximalSpeed: roundedMms,
     meanMaximalSpeedHr: hrAtMms,
     meanMaximalVam: vamMms,
+    meanMaximalDescentVam: descentMms,
     gradeProfile: gradeProfile(verticalSamples),
     intervals,
     wPrimeBalanceMinM: wPrimeMin,
@@ -483,6 +490,7 @@ export function summarizeForCoach(
     courbe_vam_mh: analysis.meanMaximalVam,
     descente: {
       temps_s: descent.reduce((a, g) => a + g.seconds, 0),
+      courbe_mh: analysis.meanMaximalDescentVam ?? null,
       vitesse_par_pente: descent.map((g) => ({
         pente: `${Math.round(g.from * 100)}..${Math.round(g.to * 100)} %`,
         vitesse_kmh: Math.round(g.avgSpeedMs * 36) / 10,

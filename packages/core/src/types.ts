@@ -251,6 +251,15 @@ export interface PhysiologyModel {
   vamCurve: Record<string, number>;
 
   /**
+   * Vitesse verticale descendante max soutenue, m D−/h, par durée de référence.
+   *
+   * La même forme que `vamCurve`, et la même origine : les courbes des séances.
+   * Absente des modèles construits avant qu'on la conserve — la capacité en
+   * descente y repose alors sur une valeur par défaut, déclarée comme telle.
+   */
+  descentVamCurve?: Record<string, number>;
+
+  /**
    * Aisance en descente, relative à un bon trailer de référence (1,0).
    * Apprise depuis les vitesses réellement tenues par tranche de pente. C'est
    * une compétence, pas une qualité physiologique : elle se travaille vite et
@@ -489,6 +498,11 @@ export interface ActivityAnalysis {
   meanMaximalSpeedHr?: Record<string, number>;
   /** Courbe VAM : durée (s) → meilleure vitesse ascensionnelle (m/h). */
   meanMaximalVam: Record<string, number>;
+  /**
+   * Courbe de descente : durée (s) → meilleure vitesse verticale descendante
+   * (m/h). Absente des analyses produites avant le moteur 1.2.0.
+   */
+  meanMaximalDescentVam?: Record<string, number>;
 
   /** Répartition du temps par tranche de pente. */
   gradeProfile: GradeBucket[];
@@ -794,8 +808,16 @@ export interface SessionBlock {
   /** Durée cible, s (ou distance si `distanceM` est fourni). */
   durationS?: number;
   distanceM?: number;
-  /** Dénivelé positif visé sur le bloc. */
+  /** Dénivelé positif visé sur le bloc — par répétition, hors récupération. */
   elevationGainM?: number;
+  /**
+   * Dénivelé négatif du bloc — par répétition, hors récupération.
+   *
+   * Le D− se situe comme le D+ : dans le segment qui le descend. Tant qu'il
+   * n'était écrit nulle part, une rando-course pouvait loger 1 384 m de descente
+   * dans seize minutes sans qu'aucun contrôle ne le voie.
+   */
+  elevationLossM?: number;
   zone: ZoneKey;
   /** Fourchette de FC cible. */
   hrRange?: [number, number];
@@ -806,7 +828,17 @@ export interface SessionBlock {
   /** Vitesse ascensionnelle cible, m/h, pour les blocs en côte. */
   vamTargetMh?: number;
   cadenceTargetSpm?: number;
-  recovery?: { durationS: number; zone: ZoneKey; active: boolean };
+  /**
+   * Récupération suivant chaque répétition. Elle porte son propre dénivelé
+   * quand elle en a un : la remontée d'une descente, la descente d'une côte.
+   */
+  recovery?: {
+    durationS: number;
+    zone: ZoneKey;
+    active: boolean;
+    elevationGainM?: number;
+    elevationLossM?: number;
+  };
   /**
    * Contenu excentrique du bloc, quand il y en a.
    *

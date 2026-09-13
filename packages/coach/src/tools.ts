@@ -1,17 +1,22 @@
-import type { AbsenceKind, CourseProfile, PlannedSession, RaceGoal, SessionBlock } from '@cairn/core';
+import type {
+  AbsenceKind, CourseProfile, PhysiologyModel, PlannedSession, RaceGoal, SessionBlock,
+} from '@cairn/core';
 import { directivesFor } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  ECCENTRIC_MOVEMENTS, describeZone, formatClock, formatDuration, formatPace, goalProbability,
-  interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
+  ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration, formatPace,
+  goalProbability, interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
+  verticalCapacity,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
 import { parseSessionBlocks } from './sessionContent.js';
-import { eccentricStrengthOf, renderSession, sessionTotals } from './sessionLibrary.js';
 import {
-  currentCriticalSpeed, fitnessAtPlanStart, loadAthleteState, rebuildPhysiologyModel,
+  eccentricStrengthOf, elevationGainOf, renderSession, restateVert, sessionTotals, transformSession,
+} from './sessionLibrary.js';
+import {
+  currentCriticalSpeed, currentModel, fitnessAtPlanStart, loadAthleteState, rebuildPhysiologyModel,
 } from './state.js';
 
 /**
@@ -100,9 +105,16 @@ const BLOCK_SCHEMA = {
     distanceM: num('Étendue du bloc en mètres, à la place d\'une durée.'),
     repeat: num('Nombre de répétitions du bloc (défaut 1).'),
     elevationGainM: num(
-      "Dénivelé positif du bloc, en mètres — par répétition si le bloc en porte. " +
+      "Dénivelé positif du bloc, en mètres — par répétition si le bloc en porte, hors récupération. " +
         "Le D+ de la séance en est la somme : il ne se saisit nulle part ailleurs, " +
         "et une séance qui monte doit le dire dans un bloc.",
+    ),
+    elevationLossM: num(
+      "Dénivelé négatif du bloc, en mètres — par répétition, hors récupération. Il se déclare sur le segment " +
+        "qui le descend : pas sur une montée à vitesse cible, qui monte pendant toute sa durée, mais sur le bloc " +
+        "qui la redescend. Sans aucun D− déclaré, la séance est lue comme une boucle et sa descente située par " +
+        "défaut. Chaque segment doit tenir dans sa durée d'après les courbes de l'athlète " +
+        "(get_performance_curves → capacite_verticale) : un contenu qui ne tient pas est refusé, avec la borne.",
     ),
     circuit: {
       type: 'object',
@@ -156,6 +168,8 @@ const BLOCK_SCHEMA = {
         durationS: num('Durée de la récupération, en secondes.'),
         zone: str('Zone de la récupération.', { enum: ZONES }),
         active: bool('Trottinée (défaut) ou à l\'arrêt.'),
+        elevationGainM: num('Dénivelé positif franchi pendant la récupération — la remontée d\'une descente.'),
+        elevationLossM: num('Dénivelé négatif franchi pendant la récupération — la descente d\'une côte.'),
       },
     },
     notes: str("Consigne d'exécution, affichée sous le bloc."),
@@ -292,14 +306,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           "Nouveau statut. « completed » : la séance prescrite a eu lieu ; « replaced » : autre chose a été fait ce jour-là.",
           { enum: ['planned', 'completed', 'partial', 'missed', 'moved', 'cancelled', 'replaced'] },
         ),
-        scale_load: num("Facteur multiplicatif de la charge et de la durée, ex. 0.7 pour réduire de 30 %. Exclusif de blocks."),
+        scale_load: num(
+          "Facteur multiplicatif de la charge, de la durée et du dénivelé de ce qui se court, ex. 0.7 pour réduire de 30 %. " +
+            "Ce que le dossier prescrit — tours d'un circuit, souplesse, respiration — garde son temps. Si un segment ne tient " +
+            "plus dans les courbes de l'athlète, c'est le dénivelé qui cède, et la réponse le dit. Exclusif de blocks.",
+        ),
         title: str('Nouveau titre.'),
         intent: str("Nouvelle intention physiologique — le « pourquoi » de la séance, affiché sous le titre."),
         blocks: {
           type: 'array',
           minItems: 1,
           description:
-            "Remplace intégralement le contenu prescrit. Durée, charge métabolique, distance, dénivelé et charge mécanique de la séance sont recalculés depuis ces blocs, par la formule du planificateur — la charge mécanique en supposant un parcours en boucle, le dénivelé négatif valant le positif. Exclusif de scale_load, qui multiplie le contenu existant au lieu de le remplacer.",
+            "Remplace intégralement le contenu prescrit. Durée, charge métabolique, distance, dénivelé et charge mécanique de la séance sont recalculés depuis ces blocs, par la formule du planificateur — la charge mécanique sur le dénivelé négatif que les blocs déclarent, ou, faute d'aucun, sur une boucle qui descend ce qu'elle monte. Un contenu dont un segment dépasse les courbes de l'athlète est refusé. Exclusif de scale_load, qui multiplie le contenu existant au lieu de le remplacer.",
           items: BLOCK_SCHEMA,
         },
         rationale: str('Justification de la modification. Obligatoire.'),
@@ -610,6 +628,7 @@ export async function executeTool(
               .sort(([a], [b]) => Number(a) - Number(b))
               .map(([k, v]) => [formatDuration(Number(k)), Math.round(v)]),
           ),
+          capacite_verticale: verticalCapacityTable(state.model),
           vitesse_critique: {
             retenue_kmh: round2(msToKmh(cs.modelled)),
             ajustement_terrain_kmh: cs.fieldFit > 0 ? round2(msToKmh(cs.fieldFit)) : null,
@@ -978,8 +997,9 @@ export async function executeTool(
       }
 
       let blocks: SessionBlock[] | undefined;
+      let amendments: string[] = [];
       if (rawBlocks !== undefined) {
-        const { model } = await loadAthleteState(athleteId);
+        const model = await currentModel(athleteId);
         blocks = parseSessionBlocks(rawBlocks, model);
         const totals = sessionTotals(model, blocks);
         patch.blocks = blocks;
@@ -993,13 +1013,21 @@ export async function executeTool(
       }
 
       if (target && scale && scale > 0) {
-        patch.plannedLoad = Math.round(target.plannedLoad * scale);
-        patch.plannedDurationS = Math.round(target.plannedDurationS * scale);
-        patch.plannedMechanicalLoad = Math.round(target.plannedMechanicalLoad * scale);
-        patch.blocks = target.blocks.map((b) => ({
-          ...b,
-          durationS: b.durationS ? Math.round(b.durationS * scale) : b.durationS,
-        }));
+        // Le chemin de toute transformation : le même que la calibration et que
+        // les allègements. Il multipliait ici la durée de tous les blocs,
+        // circuits compris, et laissait le dénivelé où il était.
+        const t = transformSession(target, scale, await currentModel(athleteId));
+        patch.blocks = t.blocks;
+        patch.plannedLoad = t.plannedLoad;
+        patch.plannedDurationS = t.plannedDurationS;
+        patch.plannedMechanicalLoad = t.plannedMechanicalLoad;
+        patch.plannedElevationGainM = t.plannedElevationGainM;
+        if (t.plannedDistanceM !== undefined) patch.plannedDistanceM = t.plannedDistanceM;
+        if (t.plannedElevationGainM !== elevationGainOf(target.blocks)) {
+          patch.title = restateVert(title ?? target.title, t.plannedElevationGainM);
+        }
+        amendments = t.amendments;
+        if (amendments.length) patch.rationale = [rationale, ...amendments].join(' ');
       }
 
       await db.updateSession(sessionId, patch as never);
@@ -1015,10 +1043,12 @@ export async function executeTool(
       return {
         summary: blocks
           ? `Séance ${sessionId} modifiée — contenu remplacé (${blocks.length} bloc(s))`
-          : `Séance ${sessionId} modifiée`,
+          : `Séance ${sessionId} modifiée${amendments.length ? ' — le dénivelé a dû céder' : ''}`,
         content: {
           session_id: sessionId,
           modifications: patch,
+          // Ce que la séance a dû céder pour rester exécutable : à relayer tel quel.
+          ...(amendments.length ? { amendements: amendments } : {}),
           // Ce que l'athlète lira : le contenu prescrit, pas le titre.
           ...(blocks && target
             ? { apercu: renderSession({ title: (title ?? target.title), intent: intent ?? target.intent, blocks }) }
@@ -1249,6 +1279,34 @@ function mechanicalBlindSpot(s: PlannedSession): Record<string, unknown> {
       `${ecc} des ${s.plannedMechanicalLoad} points viennent du renforcement excentrique, qui n'est dans aucun ` +
       `flux d'activité. Le réalisé mesuré affichera 0 sur cette part quoi qu'il arrive : c'est une cécité de la ` +
       `mesure, pas une séance non faite. Le reste est du dénivelé négatif couru, que le réalisé confirmera.`,
+  };
+}
+
+/**
+ * Les bornes que toute séance respecte, avec ce sur quoi chacune repose.
+ *
+ * Le coach doit les voir pour écrire un contenu exécutable : `modify_session`
+ * refuse ce qui les dépasse, et une borne affichée sans sa provenance ferait
+ * lire une extrapolation comme une mesure.
+ */
+function verticalCapacityTable(model: PhysiologyModel) {
+  const row = (direction: 'climb' | 'descent') => {
+    const capacity = verticalCapacity(model, direction);
+    return Object.fromEntries(
+      VERTICAL_CURVE_DURATIONS.map((d) => {
+        const bound = capacity.at(d);
+        return [formatDuration(d), { m_par_h: Math.round(bound.vamMh), provenance: bound.provenance }];
+      }),
+    );
+  };
+  return {
+    montee: row('climb'),
+    descente: row('descent'),
+    note:
+      "Bornes appliquées à chaque segment d'une séance — effort ou récupération : ce qu'il monte et ce qu'il " +
+      "descend doit tenir dans sa durée. Elles viennent des courbes du modèle (un an de séances), pas de la " +
+      "fenêtre récente de vam_par_duree_m_par_h. « default » : aucun point mesuré sur cette durée — la valeur " +
+      "est extrapolée depuis le plus long point, ou vient du moteur quand la courbe est vide.",
   };
 }
 

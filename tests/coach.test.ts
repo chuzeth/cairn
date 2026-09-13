@@ -516,7 +516,7 @@ describe('Règles d\'ajustement automatique', () => {
     });
     const [adj] = evaluateAdjustments(state, [tomorrow]);
     expect(adj!.rule).toBe('readiness_red');
-    expect(lib.relieved(tomorrow, adj!.factor!).plannedDurationS).toBe(1840);
+    expect(lib.transformSession(tomorrow, adj!.factor!, model).plannedDurationS).toBe(1840);
     expect(adj!.reason).toContain('ramenée à 30 min');
     expect(adj!.reason).not.toContain('31 min');
   });
@@ -555,7 +555,7 @@ describe('Allègement d\'une séance', () => {
   });
 
   it('raccourcit ce qui se court, et laisse entier ce que le dossier prescrit', () => {
-    const out = lib.relieved(withCircuit(), 0.45);
+    const out = lib.transformSession(withCircuit(), 0.45, model);
     expect(out.blocks[0]!.durationS).toBe(1047);
     // Les tours ne suivent pas le facteur ; la durée du circuit ne le peut donc
     // pas non plus, sans quoi la séance prescrit « 5 min » en face de trois
@@ -566,7 +566,7 @@ describe('Allègement d\'une séance', () => {
   });
 
   it('relit la durée totale sur les blocs allégés, jamais à côté d\'eux', () => {
-    const out = lib.relieved(withCircuit(), 0.45);
+    const out = lib.transformSession(withCircuit(), 0.45, model);
     expect(out.plannedDurationS).toBe(1047 + 775 + 600);
     // Mise à l'échelle à son tour, elle aurait annoncé 1 665 s pour un contenu
     // qui en dure 2 422 : l'en-tête et les blocs ne disaient plus la même chose.
@@ -577,7 +577,7 @@ describe('Allègement d\'une séance', () => {
     const bare: PlannedSession = {
       ...withCircuit(), blocks: [], plannedDurationS: 3600,
     };
-    expect(lib.relieved(bare, 0.5).plannedDurationS).toBe(1800);
+    expect(lib.transformSession(bare, 0.5, model).plannedDurationS).toBe(1800);
   });
 });
 

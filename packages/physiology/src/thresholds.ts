@@ -51,6 +51,8 @@ export interface FieldEvidence {
   };
   /** Courbe VAM, m/h par durée. */
   vamCurve: Record<string, number>;
+  /** Courbe de descente, m D−/h par durée. Absente : aucune séance ne l'a produite. */
+  descentVamCurve?: Record<string, number>;
   /** Nombre de jours de données exploitables sur la fenêtre. */
   dataDays: number;
 }
@@ -261,6 +263,16 @@ export function buildPhysiologyModel(
   provenance.durabilityPctPerHour = durabilityProvenance(durabilityMeasured.perHour);
   provenance.durabilityPctPer1000mVert = durabilityProvenance(durabilityMeasured.perVert);
 
+  // ── Courbes verticales ─────────────────────────────────────────────────────
+  // Elles ne portent que des points mesurés. Là où une courbe manque, la borne
+  // qu'on en tire est une valeur par défaut (`verticalCapacity`), et sa
+  // provenance le dit point par point ; celle-ci dit si la courbe existe.
+  const descentVamCurve = field.descentVamCurve ?? {};
+  const measuredCurve = (c: Record<string, number>): ParameterProvenance =>
+    Object.values(c).some((v) => v > 0) ? 'field' : 'default';
+  provenance.vamCurve = measuredCurve(field.vamCurve);
+  provenance.descentVamCurve = measuredCurve(descentVamCurve);
+
   // ── Confiance globale ──────────────────────────────────────────────────────
   // La qualité de l'ajustement n'entre qu'à hauteur de ce qu'une preuve d'effort
   // maximal soutient — et cette preuve s'escompte avec son âge. La confiance
@@ -286,6 +298,7 @@ export function buildPhysiologyModel(
     durabilityPctPer1000mVert: field.durability.pctPer1000mVert,
     durabilityPctPerHour: field.durability.pctPerHour,
     vamCurve: field.vamCurve,
+    descentVamCurve,
     criticalSpeedEvidence: {
       support: Math.round(support.support * 1000) / 1000,
       lastProofAgeDays:

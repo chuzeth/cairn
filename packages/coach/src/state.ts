@@ -132,15 +132,10 @@ export async function rebuildPhysiologyModel(
   const speedCurve = monotonize(envelope.curve);
   const asOf = iso(new Date(now));
 
-  // ── Courbe VAM ─────────────────────────────────────────────────────────────
-  const vamCurve: Record<string, number> = {};
-  for (const a of runLike) {
-    const an = analyses.get(a.id);
-    if (!an) continue;
-    for (const [k, v] of Object.entries(an.meanMaximalVam)) {
-      if (!vamCurve[k] || v > (vamCurve[k] as number)) vamCurve[k] = v;
-    }
-  }
+  // ── Courbes verticales ─────────────────────────────────────────────────────
+  const { climb: vamCurve, descent: descentVamCurve } = verticalEnvelopes(
+    runLike.map((a) => analyses.get(a.id)),
+  );
 
   // ── FC max & FC de repos ───────────────────────────────────────────────────
   const observedMaxHrs = activities
@@ -204,6 +199,7 @@ export async function rebuildPhysiologyModel(
     hrSpeedPairs,
     durability,
     vamCurve,
+    descentVamCurve,
     dataDays,
   };
 
@@ -214,6 +210,32 @@ export async function rebuildPhysiologyModel(
 
   if (opts.persist !== false) await db.saveModel(athleteId, model);
   return model;
+}
+
+/**
+ * Enveloppes verticales : la meilleure vitesse tenue sur chaque durée, en montée
+ * et en descente, toutes séances confondues.
+ *
+ * Une analyse antérieure au moteur 1.2.0 ne porte pas de courbe de descente :
+ * elle ne compte que pour la montée, et une descente sans aucun point retombe
+ * sur sa valeur par défaut, déclarée comme telle.
+ */
+export function verticalEnvelopes(
+  analyses: readonly (ActivityAnalysis | undefined)[],
+): { climb: Record<string, number>; descent: Record<string, number> } {
+  const climb: Record<string, number> = {};
+  const descent: Record<string, number> = {};
+  const fold = (into: Record<string, number>, curve: Record<string, number> | undefined) => {
+    for (const [k, v] of Object.entries(curve ?? {})) {
+      if (!into[k] || v > (into[k] as number)) into[k] = v;
+    }
+  };
+  for (const an of analyses) {
+    if (!an) continue;
+    fold(climb, an.meanMaximalVam);
+    fold(descent, an.meanMaximalDescentVam);
+  }
+  return { climb, descent };
 }
 
 /**
@@ -322,6 +344,18 @@ async function daysWithoutImpact(
       new Date(`${last.startDateLocal.slice(0, 10)}T00:00:00Z`).getTime()) / dayMs,
   );
   return Math.max(0, gap - 1);
+}
+
+/**
+ * Le modèle courant : le dernier enregistré, à défaut celui du seul test
+ * d'effort. C'est celui dont `loadAthleteState` part, sans le reste de l'état.
+ */
+export async function currentModel(athleteId: string): Promise<PhysiologyModel> {
+  const saved = await db.getLatestModel(athleteId);
+  if (saved) return saved;
+  const lab = (await db.getAthlete(athleteId))?.labTests[0];
+  if (!lab) throw new Error("Aucun modèle physiologique disponible : importe d'abord un test d'effort.");
+  return modelFromLabOnly(lab, new Date().toISOString().slice(0, 10));
 }
 
 /** Charge l'état complet de l'athlète. */

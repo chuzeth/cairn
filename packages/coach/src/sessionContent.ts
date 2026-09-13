@@ -3,6 +3,7 @@ import type {
   ZoneDefinition, ZoneKey,
 } from '@cairn/core';
 import { ECCENTRIC_MOVEMENTS, ZONE_KEYS, buildZones, formatPace } from '@cairn/physiology';
+import { checkVertical, declaresDescent, describeVerdict, verticalOf } from './plausibility.js';
 import { resolveClimb, sessionTotals } from './sessionLibrary.js';
 
 /**
@@ -59,12 +60,12 @@ const MAX_REPS = 200;
  */
 const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, 'paceRange'>, true> = {
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
-  elevationGainM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
+  elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
   cadenceTargetSpm: true, recovery: true, circuit: true, notes: true,
 };
 
 const WRITABLE_RECOVERY_FIELDS: Record<keyof NonNullable<SessionBlock['recovery']>, true> = {
-  durationS: true, zone: true, active: true,
+  durationS: true, zone: true, active: true, elevationGainM: true, elevationLossM: true,
 };
 const WRITABLE_CIRCUIT_FIELDS: Record<keyof StrengthCircuit, true> = { rounds: true, exercises: true };
 const WRITABLE_EXERCISE_FIELDS: Record<keyof StrengthExercise, true> = { movement: true, reps: true };
@@ -113,6 +114,21 @@ export function parseSessionBlocks(raw: unknown, model: PhysiologyModel): Sessio
     throw new Error(
       `blocks : durée totale de ${Math.round(durationS / 360) / 10} h, maximum ${MAX_TOTAL_DURATION_S / 3600} h.`,
     );
+  }
+
+  // Chaque segment doit pouvoir s'exécuter : ce qu'il monte et ce qu'il descend,
+  // dans le temps qu'il dure, d'après les courbes de l'athlète. Le chemin
+  // d'écriture refuse ce qu'il ne peut pas prescrire — il ne corrige pas en
+  // silence un contenu que le coach a choisi.
+  const refused = checkVertical(blocks, verticalOf(model)).find((v) => !v.feasible);
+  if (refused) {
+    const at = `blocks[${refused.block}]${refused.part === 'recovery' ? '.recovery' : ''}`;
+    const located =
+      refused.lossM > 0 && !declaresDescent(blocks)
+        ? " Aucun bloc ne déclare son D− : il est situé par la règle de la boucle. Déclare elevationLossM " +
+          'sur le segment où la descente a lieu.'
+        : '';
+    throw new Error(`${at} : ${describeVerdict(refused)}${located}`);
   }
   return blocks;
 }
@@ -166,6 +182,9 @@ function parseBlock(
   const elevationGainM = raw.elevationGainM === undefined
     ? undefined
     : Math.round(number(raw.elevationGainM, `${at}.elevationGainM`, 0, MAX_ELEVATION_GAIN_M));
+  const elevationLossM = raw.elevationLossM === undefined
+    ? undefined
+    : Math.round(number(raw.elevationLossM, `${at}.elevationLossM`, 0, MAX_ELEVATION_GAIN_M));
   const vamTargetMh = raw.vamTargetMh === undefined
     ? undefined
     : Math.round(number(raw.vamTargetMh, `${at}.vamTargetMh`, 1, MAX_VAM_MH));
@@ -199,6 +218,12 @@ function parseBlock(
   if (durationS === undefined && distanceM === undefined) {
     throw new Error(`${at} : durationS ou distanceM requis — un bloc sans étendue ne se prescrit pas.`);
   }
+  if (vamTargetMh !== undefined && (elevationLossM ?? 0) > 0) {
+    throw new Error(
+      `${at}.elevationLossM : une montée à vitesse cible monte pendant toute sa durée — sa descente se déclare ` +
+        `sur le segment qui la redescend.`,
+    );
+  }
 
   const block: SessionBlock = { label: text(raw.label, `${at}.label`, MAX_LABEL_CHARS), zone };
   if (kind !== undefined) block.kind = kind;
@@ -224,6 +249,7 @@ function parseBlock(
     block.repeat = Math.round(number(raw.repeat, `${at}.repeat`, 1, MAX_REPEAT));
   }
   if (elevationGainM !== undefined) block.elevationGainM = elevationGainM;
+  if (elevationLossM !== undefined) block.elevationLossM = elevationLossM;
   if (vamTargetMh !== undefined) block.vamTargetMh = vamTargetMh;
   if (raw.cadenceTargetSpm !== undefined) {
     block.cadenceTargetSpm = Math.round(number(raw.cadenceTargetSpm, `${at}.cadenceTargetSpm`, 120, 240));
@@ -248,11 +274,20 @@ function parseRecovery(raw: unknown, at: string): NonNullable<SessionBlock['reco
   for (const key of Object.keys(r)) {
     if (!RECOVERY_FIELDS.has(key)) throw new Error(`${at}.${key} : champ inconnu.`);
   }
-  return {
+  const recovery: NonNullable<SessionBlock['recovery']> = {
     durationS: Math.round(number(r.durationS, `${at}.durationS`, 1, MAX_BLOCK_DURATION_S)),
     zone: zoneKey(r.zone, `${at}.zone`),
     active: r.active === undefined ? true : boolean(r.active, `${at}.active`),
   };
+  // La remontée d'une descente, la descente d'une côte : une récupération qui
+  // franchit du dénivelé le déclare, et son temps se contrôle comme un autre.
+  if (r.elevationGainM !== undefined) {
+    recovery.elevationGainM = Math.round(number(r.elevationGainM, `${at}.elevationGainM`, 0, MAX_ELEVATION_GAIN_M));
+  }
+  if (r.elevationLossM !== undefined) {
+    recovery.elevationLossM = Math.round(number(r.elevationLossM, `${at}.elevationLossM`, 0, MAX_ELEVATION_GAIN_M));
+  }
+  return recovery;
 }
 
 /**
