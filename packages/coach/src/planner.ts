@@ -435,7 +435,7 @@ function calibrateToTarget(
           plannedDurationS: built.durationS,
           plannedDistanceM: built.plannedDistanceM,
           plannedElevationGainM: built.elevationGainM,
-          rationale: said(built.amendments),
+          rationale: said([...(built.amendments ?? []), ...(built.divergences ?? []).map((d) => d.statement)]),
         };
       }
 

@@ -11,6 +11,7 @@ import {
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
+import { PRESCRIPTION_MARGIN } from './plausibility.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
   eccentricStrengthOf, elevationGainOf, renderSession, restateVert, sessionTotals, transformSession,
@@ -114,7 +115,10 @@ const BLOCK_SCHEMA = {
         "qui le descend : pas sur une montée à vitesse cible, qui monte pendant toute sa durée, mais sur le bloc " +
         "qui la redescend. Sans aucun D− déclaré, la séance est lue comme une boucle et sa descente située par " +
         "défaut. Chaque segment doit tenir dans sa durée d'après les courbes de l'athlète " +
-        "(get_performance_curves → capacite_verticale) : un contenu qui ne tient pas est refusé, avec la borne.",
+        "(get_performance_curves → capacite_verticale), à l'instant où il commence — la borne perd ce que " +
+        "la durabilité retire du temps de séance et du dénivelé déjà franchis — et avec " +
+        `${Math.round(PRESCRIPTION_MARGIN * 100)} % de marge sous cette borne : un contenu qui ne tient pas est ` +
+        "refusé, avec la borne.",
     ),
     circuit: {
       type: 'object',
@@ -1306,7 +1310,10 @@ function verticalCapacityTable(model: PhysiologyModel) {
       "Bornes appliquées à chaque segment d'une séance — effort ou récupération : ce qu'il monte et ce qu'il " +
       "descend doit tenir dans sa durée. Elles viennent des courbes du modèle (un an de séances), pas de la " +
       "fenêtre récente de vam_par_duree_m_par_h. « default » : aucun point mesuré sur cette durée — la valeur " +
-      "est extrapolée depuis le plus long point, ou vient du moteur quand la courbe est vide.",
+      "est extrapolée depuis le plus long point, ou vient du moteur quand la courbe est vide. Ce sont des " +
+      "bornes fraîches : un segment se juge à l'instant où il commence, la borne perdant ce que la durabilité " +
+      "retire du temps de séance écoulé et du D+ déjà monté — D+ et D− en descente, où cette perte est une " +
+      `valeur par défaut —, et une prescription garde ${Math.round(PRESCRIPTION_MARGIN * 100)} % de marge sous elle.`,
   };
 }
 

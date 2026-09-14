@@ -86,6 +86,8 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     });
     const randos = weeks.flatMap((w) => w.sessions).filter((s) => s.type === 'long_trail');
     expect(randos.length).toBeGreaterThan(0);
+    // La contradiction entre cible métabolique et courbe se lit dans la séance enregistrée.
+    expect(randos.some((s) => /divergent/.test(s.rationale ?? ''))).toBe(true);
     for (const s of randos) {
       expect(impossible(s.blocks, PIERRE_MODEL), `${s.date} ${s.title}`).toEqual([]);
       // La descente est écrite là où elle a lieu : sans elle, rien ne la contrôle.

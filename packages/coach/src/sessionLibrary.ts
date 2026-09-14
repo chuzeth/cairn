@@ -1,5 +1,5 @@
 import type {
-  PhysiologyModel, PlannedSession, SessionBlock, SessionSuccessCriterion, SessionType,
+  ParameterProvenance, PhysiologyModel, PlannedSession, SessionBlock, SessionSuccessCriterion, SessionType,
   StrengthCircuit, StrengthExercise, ZoneKey,
 } from '@cairn/core';
 import { sessionDuration } from '@cairn/core';
@@ -8,7 +8,7 @@ import {
   prescribedMechanicalLoad, speedForMetabolicPower, vam,
 } from '@cairn/physiology';
 import {
-  describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit,
+  PRESCRIPTION_MARGIN, PROVENANCE_FR, describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit,
 } from './plausibility.js';
 
 /**
@@ -25,6 +25,27 @@ import {
  * résistance dure, rando-course en montagne, et un seul fractionné par semaine
  * en alternant court et moyen.
  */
+
+/**
+ * Deux modèles du même athlète qui décrivent le même fait sans s'accorder.
+ *
+ * Une séance ne peut en suivre qu'un, mais elle ne tranche pas en silence : un
+ * minimum pris sans rien dire fait passer une contradiction pour une précaution,
+ * et plus personne ne cherche lequel des deux se trompe.
+ */
+export interface ModelDivergence {
+  /** Durée sur laquelle les deux lectures portent, s. */
+  durationS: number;
+  /** Vitesse ascensionnelle que permet la puissance métabolique de Z2, m/h. */
+  modelledMh: number;
+  /** Meilleure vitesse ascensionnelle tenue sur cette durée, m/h. */
+  observedMh: number;
+  observedProvenance: ParameterProvenance;
+  /** Écart du modèle à l'observation, %. */
+  gapPct: number;
+  /** La contradiction en clair, et ce que la séance en fait. */
+  statement: string;
+}
 
 export interface SessionTemplate {
   key: string;
@@ -56,6 +77,8 @@ export interface SessionTemplate {
    * l'athlète, en clair. Absent quand rien n'a cédé.
    */
   amendments?: string[];
+  /** Les modèles de l'athlète qui se contredisent sur ce que la séance prescrit. Absent quand ils s'accordent. */
+  divergences?: ModelDivergence[];
   /**
    * Reconstruit la séance à une autre étendue — durée et dénivelé demandés
    * multipliés par `factor`.
@@ -481,7 +504,8 @@ function shedNote(before: readonly SessionBlock[], fit: VerticalFit): string {
   const why = fit.refused[0] ? ` ${describeVerdict(fit.refused[0])}` : '';
   return (
     `Dénivelé ramené de ${elevationGainOf(before)} à ${elevationGainOf(fit.blocks)} m D+ et de ` +
-    `${elevationLossOf(before)} à ${elevationLossOf(fit.blocks)} m D− pour que la séance reste exécutable.${why}`
+    `${elevationLossOf(before)} à ${elevationLossOf(fit.blocks)} m D− pour que la séance reste exécutable, ` +
+    `marge de prescription comprise.${why}`
   );
 }
 
@@ -694,12 +718,23 @@ export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 120
   // déjà produit deux séances impossibles, chacune à un bout : 1 384 m montés en
   // 55 min, puis 1 384 m descendus en 16. Quand les deux ne tiennent pas dans le
   // temps de terrain, c'est le dénivelé qui cède — et la séance le dit.
+  //
+  // Ces temps sont ceux de l'instant où chaque segment commence, marge de
+  // prescription comprise : la montée part après l'approche, la descente après
+  // la montée et tout son D+. Jugée fraîche, la descente du 03/10 était
+  // prescrite à 1 703 m/h quand il n'en restait que 1 465 à ce moment-là.
   const approachS = 25 * 60;
   const cooldownS = 20 * 60;
   const mobileS = Math.max(0, durationMin * 60 - approachS - cooldownS);
+  const keep = 1 - PRESCRIPTION_MARGIN;
+  const margin = `${Math.round(PRESCRIPTION_MARGIN * 100)} %`;
+  const climbing = vertical.climb.after({ elapsedS: approachS, gainM: 0, lossM: 0 });
   const climbTime = (m: number) =>
-    Math.ceil(Math.max((m / targetVam) * 3600, vertical.climb.timeFor(m).durationS));
-  const descentTime = (m: number) => Math.ceil(vertical.descent.timeFor(m).durationS);
+    Math.ceil(Math.max((m / targetVam) * 3600, climbing.timeFor(m / keep).durationS));
+  const descentTime = (m: number) =>
+    Math.ceil(
+      vertical.descent.after({ elapsedS: approachS + climbTime(m), gainM: m, lossM: 0 }).timeFor(m / keep).durationS,
+    );
   const fits = (m: number) => climbTime(m) + descentTime(m) <= mobileS;
 
   const asked = Math.max(0, Math.round(vertM));
@@ -728,16 +763,45 @@ export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 120
   if (gain < asked) {
     amendments.push(
       `Dénivelé ramené de ${asked} à ${gain} m : ${asked} m demandent ${sessionDuration(climbTime(asked))} de ` +
-        `montée et ${sessionDuration(descentTime(asked))} de descente d'après tes courbes, au-delà des ` +
-        `${sessionDuration(mobileS)} de terrain que laisse une sortie de ${sessionDuration(durationMin * 60)}.`,
+        `montée et ${sessionDuration(descentTime(asked))} de descente d'après ce que tes courbes laissent à ce ` +
+        `moment de la séance, marge de ${margin} comprise — au-delà des ${sessionDuration(mobileS)} de terrain que ` +
+        `laisse une sortie de ${sessionDuration(durationMin * 60)}.`,
     );
   }
   if (gain > 0 && climb.vamTargetMh < targetVam) {
-    const bound = vertical.climb.at(climb.durationS);
     amendments.push(
-      `Vitesse ascensionnelle ramenée de ${targetVam} à ${climb.vamTargetMh} m/h : ta courbe de montée n'atteste ` +
-        `pas davantage sur ${sessionDuration(climb.durationS)} (${bound.provenance === 'field' ? 'terrain' : 'valeur par défaut'}).`,
+      `Vitesse ascensionnelle ramenée de ${targetVam} à ${climb.vamTargetMh} m/h : c'est ce que ta courbe de montée ` +
+        `laisse sur ${sessionDuration(climb.durationS)} après ${sessionDuration(approachS)} d'approche, marge de ` +
+        `${margin} comprise (${PROVENANCE_FR[climbing.at(climb.durationS).provenance]}).`,
     );
+  }
+
+  // La cible métabolique et la courbe décrivent le même fait : ce que l'athlète
+  // monte en Z2 sur cette durée. Quand la première dépasse le meilleur effort
+  // jamais tenu, les deux modèles se contredisent — la séance n'en suit qu'un,
+  // et le dit.
+  const record = vertical.climb.at(climb.durationS);
+  const divergences: ModelDivergence[] = [];
+  if (gain > 0 && targetVam > record.vamMh) {
+    const observedMh = Math.round(record.vamMh);
+    const gapPct = Math.round(((targetVam - record.vamMh) / record.vamMh) * 100);
+    const follows =
+      record.provenance === 'default'
+        ? 'La séance suit la plus prudente des deux ; aucune n\'est une mesure sur cette durée.'
+        : 'La séance suit la courbe en attendant : des deux, c\'est la seule mesure.';
+    divergences.push({
+      durationS: climb.durationS,
+      modelledMh: targetVam,
+      observedMh,
+      observedProvenance: record.provenance,
+      gapPct,
+      statement:
+        `Deux lectures de ta montée en Z2 divergent de ${gapPct} % sur ${sessionDuration(climb.durationS)} : ` +
+        `${targetVam} m/h d'après la puissance de ton SV1 sur une pente régulière de 15 %, ${observedMh} m/h au mieux ` +
+        `d'après ta courbe (${PROVENANCE_FR[record.provenance]}). Si ta meilleure montée sur cette durée a été courue ` +
+        `en Z2 ou plus fort, c'est la cible métabolique qui se trompe — elle ignore le relief d'un vrai sentier ; ` +
+        `sinon, c'est la courbe qui sous-estime ce que tu tiens. ${follows}`,
+    });
   }
 
   const session = finalize(c, {
@@ -752,6 +816,7 @@ export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 120
     priority: 'key',
     phases: ['base', 'build', 'specific'],
     ...(amendments.length ? { amendments } : {}),
+    ...(divergences.length ? { divergences } : {}),
     blocks: [
       block(c, 'Approche en endurance', 'Z2', approachS, { cadenceTargetSpm: 172 }),
       climbBlock(c, 'Montées — marche active ou course selon la pente', 'Z2', climb, {

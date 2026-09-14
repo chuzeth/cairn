@@ -1,4 +1,5 @@
 import type { GradeBucket, ParameterProvenance, PhysiologyModel } from '@cairn/core';
+import { durabilityFactor } from './durability.js';
 import { descentSpeedCeiling } from './environment.js';
 import { FLAT_RUNNING_COST, locomotionCost, speedForMetabolicPower, vam } from './grade.js';
 import { interpolateCurve, meanMaximal, type MmpCurve } from './mmp.js';
@@ -224,6 +225,11 @@ export interface VerticalBound {
  */
 export interface VerticalCapacity {
   direction: VerticalDirection;
+  /**
+   * Part de la capacité fraîche qui reste, et la provenance de ce qu'on lui a
+   * retiré : 1 et `null` pour une capacité fraîche.
+   */
+  remaining: { share: number; provenance: ParameterProvenance | null };
   /** Vitesse verticale maximale sur `durationS`, m/h. */
   at(durationS: number): VerticalBound;
   /** Mètres franchissables au plus en `durationS`. */
@@ -233,6 +239,95 @@ export interface VerticalCapacity {
    * dit qu'il couvre ce dénivelé. `Infinity` quand rien ne le couvre.
    */
   timeFor(meters: number): { durationS: number; provenance: ParameterProvenance };
+  /** La même capacité quand la séance a déjà coûté `before` — voir `remainingCapacity`. */
+  after(before: EffortSoFar): VerticalCapacity;
+}
+
+/** Ce qu'une séance a déjà coûté quand un segment commence. */
+export interface EffortSoFar {
+  /** Temps de séance écoulé, s. */
+  elapsedS: number;
+  /** Dénivelés déjà franchis, m. */
+  gainM: number;
+  lossM: number;
+}
+
+const PROVENANCE_STRENGTH: Record<ParameterProvenance, number> = { default: 0, blended: 1, lab: 2, field: 2 };
+
+/**
+ * Provenance d'un nombre calculé depuis d'autres : celle du plus faible. Une
+ * borne mesurée corrigée par une valeur de population n'est plus une mesure.
+ */
+export function weakestProvenance(
+  first: ParameterProvenance,
+  ...others: (ParameterProvenance | null | undefined)[]
+): ParameterProvenance {
+  return others.reduce<ParameterProvenance>(
+    (weakest, p) => (p != null && PROVENANCE_STRENGTH[p] < PROVENANCE_STRENGTH[weakest] ? p : weakest),
+    first,
+  );
+}
+
+/**
+ * Ce qui reste de la capacité verticale quand un segment commence.
+ *
+ * La courbe d'une durée contient la fatigue de cette durée — le meilleur effort
+ * d'1 h 30 s'est usé pendant 1 h 30 —, pas celle de ce qui l'a précédé. Jugée sur
+ * sa seule courbe, la descente d'une rando-course, qui commence après deux heures
+ * et 1 200 m de montée, l'était comme si l'athlète partait de chez lui. On lui
+ * retire la perte que la durabilité du modèle prévoit au départ du segment.
+ *
+ * En montée, c'est ce que la durabilité mesure : la perte de rendement au fil des
+ * heures et du D+. En descente, ce n'est qu'un transfert — la descente est
+ * limitée par le freinage, pas par le rendement —, et les séances de l'athlète ne
+ * permettent pas de le vérifier : la vitesse d'une descente y dépend du terrain
+ * et de l'allure choisie bien plus que de l'heure. Le transfert est affiné sur
+ * deux points. Le terme vertical y compte aussi le D− déjà descendu, parce que
+ * c'est le travail excentrique qui use le freinage en premier. Et la borne qui en
+ * résulte est une valeur par défaut dès que cette perte joue, quelle que soit la
+ * provenance des deux indices : aucune mesure ne la fonde.
+ */
+function remainingCapacity(
+  model: PhysiologyModel,
+  direction: VerticalDirection,
+  before: EffortSoFar,
+): VerticalCapacity['remaining'] {
+  const elapsedS = Math.max(0, before.elapsedS);
+  const vertM = Math.max(0, before.gainM) + (direction === 'descent' ? Math.max(0, before.lossM) : 0);
+  const share = durabilityFactor(elapsedS, vertM, {
+    pctPerHour: model.durabilityPctPerHour,
+    pctPer1000mVert: model.durabilityPctPer1000mVert,
+  });
+  if (share >= 1) return { share: 1, provenance: null };
+  const of = (key: string): ParameterProvenance => model.provenance?.[key] ?? 'default';
+  return {
+    share,
+    provenance: weakestProvenance(
+      direction === 'descent' ? 'default' : 'field',
+      elapsedS > 0 ? of('durabilityPctPerHour') : null,
+      vertM > 0 ? of('durabilityPctPer1000mVert') : null,
+    ),
+  };
+}
+
+/** Une capacité dont il ne reste que `remaining.share`, et qui en porte la provenance. */
+function weakened(fresh: VerticalCapacity, remaining: VerticalCapacity['remaining']): VerticalCapacity {
+  const { share, provenance } = remaining;
+  if (share >= 1) return fresh;
+  return {
+    direction: fresh.direction,
+    remaining,
+    at: (durationS) => {
+      const b = fresh.at(durationS);
+      return { vamMh: b.vamMh * share, provenance: weakestProvenance(b.provenance, provenance) };
+    },
+    metersIn: (durationS) => fresh.metersIn(durationS) * share,
+    timeFor: (meters) => {
+      const t = fresh.timeFor(meters / share);
+      return { durationS: t.durationS, provenance: weakestProvenance(t.provenance, provenance) };
+    },
+    after: fresh.after,
+  };
 }
 
 const REFERENCE_GRADES = Array.from({ length: 41 }, (_, i) => 0.05 + i * 0.01);
@@ -308,5 +403,13 @@ export function verticalCapacity(model: PhysiologyModel, direction: VerticalDire
     return { durationS: Infinity, provenance: at(lo).provenance };
   };
 
-  return { direction, at, metersIn, timeFor };
+  const fresh: VerticalCapacity = {
+    direction,
+    remaining: { share: 1, provenance: null },
+    at,
+    metersIn,
+    timeFor,
+    after: (before) => weakened(fresh, remainingCapacity(model, direction, before)),
+  };
+  return fresh;
 }

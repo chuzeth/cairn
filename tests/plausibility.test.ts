@@ -152,17 +152,27 @@ describe('Écriture par le coach', () => {
     ).toThrow(/Aucun bloc ne déclare son D−/);
   });
 
-  it('accepte le même dénivelé dans le temps qu\'il demande', () => {
+  it('refuse une montée posée sur la borne, faute de la marge d\'une prescription', () => {
+    expect(() =>
+      lib.parseSessionBlocks(
+        [{ label: 'Montée', zone: 'Z2', durationS: 6700, elevationGainM: 1384, elevationLossM: 0 }],
+        PIERRE_MODEL,
+      ),
+    ).toThrow(/exigent 744 m\/h ; ta courbe de montée atteste \d+ m\/h sur cette durée \(terrain\), et une prescription garde 10 % de marge/);
+  });
+
+  it('accepte un dénivelé dans le temps qu\'il demande, marge comprise', () => {
+    // Montée et descente laissent chacune leur marge sous la borne de l'instant.
     const blocks = lib.parseSessionBlocks(
       [
-        { label: 'Montées', zone: 'Z2', durationS: 6700, elevationGainM: 1384, elevationLossM: 0 },
-        { label: 'Descentes', zone: 'Z2', durationS: 3200, elevationLossM: 1384 },
+        { label: 'Montées', zone: 'Z2', durationS: 4800, elevationGainM: 900, elevationLossM: 0 },
+        { label: 'Descentes', zone: 'Z2', durationS: 2400, elevationLossM: 900 },
       ],
       PIERRE_MODEL,
     );
     const totals = lib.sessionTotals(PIERRE_MODEL, blocks);
-    expect(totals.elevationGainM).toBe(1384);
-    expect(totals.mechanicalLoad).toBe(lib.sessionTotals(PIERRE_MODEL, blocks, 1384).mechanicalLoad);
+    expect(totals.elevationGainM).toBe(900);
+    expect(totals.mechanicalLoad).toBe(lib.sessionTotals(PIERRE_MODEL, blocks, 900).mechanicalLoad);
   });
 });
 
@@ -177,5 +187,84 @@ describe('Séance déjà écrite', () => {
     expect(t.blocks[2]!.elevationLossM).toBe(t.plannedElevationGainM);
     expect(t.plannedElevationGainM).toBeLessThan(1384);
     expect(t.amendments[0]).toMatch(/Dénivelé ramené de 1384 à \d+ m D\+ et de 1384 à \d+ m D−/);
+  });
+});
+
+describe('Borne de l\'instant', () => {
+  const climb = verticalCapacity(PIERRE_MODEL, 'climb');
+  const descent = verticalCapacity(PIERRE_MODEL, 'descent');
+
+  it('borne la descente du 03/10 par ce qui reste après la montée, et en hérite la valeur par défaut', () => {
+    // 1 197 m montés, 1 h 58 de séance, puis 42 min de descente.
+    const fresh = descent.at(2532);
+    const now = descent.after({ elapsedS: 7070, gainM: 1197, lossM: 0 }).at(2532);
+    expect(fresh.vamMh).toBeCloseTo(1708, 0);
+    expect(fresh.provenance).toBe('field');
+    expect(now.vamMh).toBeCloseTo(1465, -1);
+    expect(now.provenance).toBe('default');
+  });
+
+  it('ne rend une montée « par défaut » que si le D+ déjà monté entre dans la perte', () => {
+    expect(climb.after({ elapsedS: 0, gainM: 0, lossM: 0 }).at(5400)).toEqual(climb.at(5400));
+    expect(climb.after({ elapsedS: 1500, gainM: 0, lossM: 0 }).at(5400).provenance).toBe('field');
+    expect(climb.after({ elapsedS: 1500, gainM: 300, lossM: 0 }).at(5400).provenance).toBe('default');
+  });
+
+  it('compte en descente le D− déjà descendu, et en montée le seul D+', () => {
+    const climbed = { elapsedS: 3600, gainM: 500, lossM: 0 };
+    const looped = { ...climbed, lossM: 500 };
+    expect(descent.after(looped).at(600).vamMh).toBeLessThan(descent.after(climbed).at(600).vamMh);
+    expect(climb.after(looped).at(600).vamMh).toBe(climb.after(climbed).at(600).vamMh);
+  });
+});
+
+describe('Prescription', () => {
+  it('laisse sa marge sous la borne de l\'instant à chaque segment de la rando-course', () => {
+    const s = lib.longTrail(PIERRE_MODEL, 180, 1384);
+    const keep = 1 - lib.PRESCRIPTION_MARGIN;
+    let before = { elapsedS: 0, gainM: 0, lossM: 0 };
+    for (const b of s.blocks) {
+      const t = b.durationS ?? 0;
+      if (b.elevationGainM) {
+        const bound = verticalCapacity(PIERRE_MODEL, 'climb').after(before).at(t).vamMh;
+        expect((b.elevationGainM / t) * 3600, b.label).toBeLessThanOrEqual(bound * keep + 1);
+      }
+      if (b.elevationLossM) {
+        const bound = verticalCapacity(PIERRE_MODEL, 'descent').after(before).at(t).vamMh;
+        expect((b.elevationLossM / t) * 3600, b.label).toBeLessThanOrEqual(bound * keep + 1);
+      }
+      before = {
+        elapsedS: before.elapsedS + t,
+        gainM: before.gainM + (b.elevationGainM ?? 0),
+        lossM: before.lossM + (b.elevationLossM ?? 0),
+      };
+    }
+    expect(lib.totalDuration(s.blocks)).toBe(180 * 60);
+  });
+
+  it('laisse la marge à chaque séance de la bibliothèque, sur le laboratoire comme sur le terrain', () => {
+    for (const [name, model] of [['laboratoire', LAB_MODEL], ['terrain', PIERRE_MODEL]] as const) {
+      for (const s of [
+        lib.recovery(model), lib.endurance(model, 60, 200), lib.longRun(model, 150, 600),
+        lib.longTrail(model, 180, 1384), lib.tempo(model), lib.threshold(model), lib.vo2max(model),
+        lib.hillRepeats(model), lib.downhillSession(model), lib.racePace(model), lib.strength(model),
+      ]) {
+        const refused = lib.checkVertical(s.blocks, lib.verticalOf(model), s.type).filter((v) => !v.prescribable);
+        expect(refused.map(lib.describeVerdict), `${name} — ${s.title}`).toEqual([]);
+      }
+    }
+  });
+
+  it('rend visible la contradiction entre la cible métabolique de Z2 et la courbe', () => {
+    const s = lib.longTrail(PIERRE_MODEL, 180, 1384);
+    const climb = s.blocks.find((b) => b.vamTargetMh)!;
+    const [d] = s.divergences ?? [];
+    expect(d).toMatchObject({ modelledMh: 839, durationS: climb.durationS, observedProvenance: 'field' });
+    expect(d!.observedMh).toBe(Math.round(verticalCapacity(PIERRE_MODEL, 'climb').at(climb.durationS!).vamMh));
+    expect(d!.gapPct).toBeGreaterThanOrEqual(5);
+    expect(d!.statement).toContain(`${d!.modelledMh} m/h`);
+    expect(d!.statement).toContain(`${d!.observedMh} m/h`);
+    // La vitesse prescrite est sous les deux lectures : aucun minimum ne la fixe.
+    expect(climb.vamTargetMh!).toBeLessThan(d!.observedMh);
   });
 });

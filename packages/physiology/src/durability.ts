@@ -292,6 +292,20 @@ export function aggregateDurability(
   };
 }
 
+/** Part de la capacité fraîche qui reste à un instant donné de l'effort. */
+export function durabilityFactor(
+  elapsedS: number,
+  cumulativeVertM: number,
+  model: { pctPerHour: number; pctPer1000mVert: number },
+): number {
+  const timeDecay = (model.pctPerHour / 100) * (elapsedS / 3600);
+  const vertDecay = (model.pctPer1000mVert / 100) * (cumulativeVertM / 1000);
+  // Les deux causes se recouvrent partiellement : on évite de double-compter en
+  // prenant la racine quadratique de leur somme plutôt que la somme brute.
+  const combined = Math.sqrt(timeDecay ** 2 + vertDecay ** 2 + timeDecay * vertDecay);
+  return clamp(1 - combined, 0.45, 1);
+}
+
 /**
  * Vitesse critique corrigée de la durabilité à un instant donné de l'effort.
  * C'est le cœur de la prédiction sur trail long : la CS du kilomètre 60 n'est
@@ -303,12 +317,7 @@ export function durabilityAdjustedCs(
   cumulativeVertM: number,
   model: { pctPerHour: number; pctPer1000mVert: number },
 ): number {
-  const timeDecay = (model.pctPerHour / 100) * (elapsedS / 3600);
-  const vertDecay = (model.pctPer1000mVert / 100) * (cumulativeVertM / 1000);
-  // Les deux causes se recouvrent partiellement : on évite de double-compter en
-  // prenant la racine quadratique de leur somme plutôt que la somme brute.
-  const combined = Math.sqrt(timeDecay ** 2 + vertDecay ** 2 + timeDecay * vertDecay);
-  return cs * clamp(1 - combined, 0.45, 1);
+  return cs * durabilityFactor(elapsedS, cumulativeVertM, model);
 }
 
 /** Lecture qualitative de la durabilité, comparée à des repères de terrain. */

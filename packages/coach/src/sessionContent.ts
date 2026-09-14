@@ -120,7 +120,10 @@ export function parseSessionBlocks(raw: unknown, model: PhysiologyModel): Sessio
   // dans le temps qu'il dure, d'après les courbes de l'athlète. Le chemin
   // d'écriture refuse ce qu'il ne peut pas prescrire — il ne corrige pas en
   // silence un contenu que le coach a choisi.
-  const refused = checkVertical(blocks, verticalOf(model)).find((v) => !v.feasible);
+  // Chaque segment est jugé à l'instant où il commence, marge de prescription
+  // comprise ; un segment impossible se nomme avant un segment sans marge.
+  const verdicts = checkVertical(blocks, verticalOf(model));
+  const refused = verdicts.find((v) => !v.feasible) ?? verdicts.find((v) => !v.prescribable);
   if (refused) {
     const at = `blocks[${refused.block}]${refused.part === 'recovery' ? '.recovery' : ''}`;
     const located =

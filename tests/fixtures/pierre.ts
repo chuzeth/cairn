@@ -1,13 +1,16 @@
 import { LAB_TEST_2025_07_24, type PhysiologyModel, type PlannedSession } from '@cairn/core';
 import { modelFromLabOnly } from '@cairn/physiology';
 
+const LAB_ONLY = modelFromLabOnly(LAB_TEST_2025_07_24, '2026-09-12');
+
 /**
  * Pierre au 12/09/2026 : paramètres du modèle enregistré, courbes de montée et
- * de descente relevées sur ses 54 séances. La descente n'était conservée nulle
- * part : elle est recalculée depuis les flux, par la même fenêtre que la montée.
+ * de descente relevées sur ses 54 séances. La descente est celle que le
+ * reanalyze du 13/09 a enregistrée, et la provenance celle du modèle : la
+ * durabilité horaire est mesurée, sa part par 1 000 m est un repli.
  */
 export const PIERRE_MODEL: PhysiologyModel = {
-  ...modelFromLabOnly(LAB_TEST_2025_07_24, '2026-09-12'),
+  ...LAB_ONLY,
   bodyMassKg: 68.6, hrMax: 191, hrRest: 55, hrReserve: 136,
   criticalSpeedMs: 3.82, dPrimeM: 260, vmaMs: 4.994, vo2maxRel: 58.1,
   vt1: { hr: 155, speedMs: 2.942 }, vt2: { hr: 171, speedMs: 3.745 },
@@ -19,6 +22,10 @@ export const PIERRE_MODEL: PhysiologyModel = {
   descentVamCurve: {
     '60': 3705, '120': 2672, '180': 2597, '300': 2351, '420': 2176, '600': 2022, '900': 1981,
     '1200': 1830, '1800': 1782, '2700': 1694, '3600': 1485, '5400': 1072, '7200': 816, '10800': 546,
+  },
+  provenance: {
+    ...LAB_ONLY.provenance,
+    durabilityPctPerHour: 'field', durabilityPctPer1000mVert: 'default', vamCurve: 'field', descentVamCurve: 'field',
   },
 };
 

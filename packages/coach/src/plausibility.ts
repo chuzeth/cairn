@@ -1,6 +1,8 @@
 import type { ParameterProvenance, PhysiologyModel, SessionBlock, SessionType } from '@cairn/core';
 import { sessionDuration } from '@cairn/core';
-import { verticalCapacity, type VerticalBound, type VerticalCapacity } from '@cairn/physiology';
+import {
+  verticalCapacity, weakestProvenance, type VerticalBound, type VerticalCapacity,
+} from '@cairn/physiology';
 
 /**
  * Plausibilité verticale d'une séance.
@@ -13,6 +15,14 @@ import { verticalCapacity, type VerticalBound, type VerticalCapacity } from '@ca
  * descend se descendre, dans le temps qu'il dure, d'après les courbes de
  * l'athlète. Un segment qui ne tient pas rend la séance inexécutable, quel que
  * soit l'état des autres.
+ *
+ * Un segment n'est pas couru frais : il est borné par la capacité qui reste à
+ * l'instant où il commence, une fois retiré ce que la séance a déjà coûté. Et
+ * une prescription n'est pas une frontière : elle laisse une marge sous cette
+ * borne. Les deux rando-courses reconstruites exigeaient exactement le meilleur
+ * de ce que l'athlète avait démontré, la descente jugée comme s'il partait de
+ * chez lui — la moindre perte de rendement les rendait infaisables, et c'est
+ * cette perte qu'elles existent pour mesurer.
  *
  * Pour que le contrôle voie tout, chaque mètre doit être situé. Le D− l'est
  * désormais sur les blocs comme le D+ ; un contenu écrit avant l'est par la
@@ -49,10 +59,22 @@ export function verticalOf(model: PhysiologyModel): AthleteVertical {
   return vertical;
 }
 
+/**
+ * Marge qu'une prescription laisse sous la borne de l'instant.
+ *
+ * La borne de l'instant retranche une perte de rendement estimée, et c'est cette
+ * estimation que la rando-course existe pour mesurer : une prescription doit
+ * rester exécutable si la perte réelle est au bout haut de ce qu'on en sait. Au
+ * 13/09/2026, les 23 mesures de durabilité de bonne qualité de Pierre placent
+ * leur médiane sous 10,1 %/h à 95 % de confiance, contre 5,7 retenus — et à deux
+ * heures de séance, cet écart retire 10 % à la borne.
+ */
+export const PRESCRIPTION_MARGIN = 0.1;
+
 /** Une seconde d'arrondi ne rend pas une séance impossible. */
 const TOLERANCE_S = 1;
 
-const PROVENANCE_FR: Record<ParameterProvenance, string> = {
+export const PROVENANCE_FR: Record<ParameterProvenance, string> = {
   lab: 'laboratoire',
   field: 'terrain',
   blended: 'mixte',
@@ -115,60 +137,112 @@ export function locateVertical(blocks: readonly SessionBlock[], type?: SessionTy
   return out;
 }
 
-/** Un segment chronométré, pour une répétition : l'effort d'un bloc ou sa récupération. */
+/**
+ * Un segment chronométré : l'effort d'un bloc ou sa récupération.
+ *
+ * Un bloc répété se juge sur sa dernière répétition, la plus entamée : c'est
+ * elle que la séance doit encore pouvoir faire exécuter.
+ */
 export interface VerticalSegment {
   block: number;
   part: 'work' | 'recovery';
   label: string;
+  /** Répétitions du bloc ; le segment décrit la dernière. */
+  repeat: number;
   durationS: number;
   gainM: number;
   lossM: number;
+  /** Heure de départ du segment dans la séance, s. */
+  startS: number;
+  /** Dénivelés déjà franchis quand il commence, m. */
+  gainBeforeM: number;
+  lossBeforeM: number;
 }
 
 export interface SegmentVerdict extends VerticalSegment {
-  /** Temps minimal que les courbes accordent à ce dénivelé, s. */
+  /** Temps minimal qu'une prescription accorde à ce dénivelé — capacité de l'instant, marge comprise —, s. */
   climbS: number;
   descentS: number;
   minimalS: number;
   /** Vitesses exigées sur la durée du segment, m/h. */
   climbMh: number;
   descentMh: number;
-  /** Bornes sur la durée du segment, quand il ne fait que monter ou que descendre. */
+  /**
+   * Bornes sur la durée du segment, quand il ne fait que monter ou que
+   * descendre : fraîche, puis à l'instant où il commence.
+   */
   climbBound?: VerticalBound;
   descentBound?: VerticalBound;
-  /** Provenance des temps minimaux : la plus faible des deux. */
+  climbBoundNow?: VerticalBound;
+  descentBoundNow?: VerticalBound;
+  /** Ce qu'une prescription peut exiger au plus sur cette durée, m/h : la borne de l'instant, moins la marge. */
+  ceilingMh?: number;
+  /** Provenance des temps minimaux : la plus faible. */
   provenance: ParameterProvenance;
+  /** Dans la borne de l'instant : l'athlète peut l'exécuter. */
   feasible: boolean;
+  /** Sous la borne de l'instant, marge laissée : la condition de toute prescription. */
+  prescribable: boolean;
 }
 
 export function verticalSegments(blocks: readonly SessionBlock[]): VerticalSegment[] {
   const out: VerticalSegment[] = [];
+  let clockS = 0;
+  let gainM = 0;
+  let lossM = 0;
   blocks.forEach((b, i) => {
-    if ((b.elevationGainM ?? 0) > 0 || (b.elevationLossM ?? 0) > 0) {
-      out.push({
-        block: i, part: 'work', label: b.label, durationS: b.durationS ?? 0,
-        gainM: b.elevationGainM ?? 0, lossM: b.elevationLossM ?? 0,
-      });
-    }
+    const repeat = b.repeat ?? 1;
     const r = b.recovery;
-    if (r && ((r.elevationGainM ?? 0) > 0 || (r.elevationLossM ?? 0) > 0)) {
+    const work = { s: b.durationS ?? 0, gain: b.elevationGainM ?? 0, loss: b.elevationLossM ?? 0 };
+    const rest = { s: r?.durationS ?? 0, gain: r?.elevationGainM ?? 0, loss: r?.elevationLossM ?? 0 };
+    const done = repeat - 1;
+    const last = {
+      s: clockS + done * (work.s + rest.s),
+      gain: gainM + done * (work.gain + rest.gain),
+      loss: lossM + done * (work.loss + rest.loss),
+    };
+    if (work.gain > 0 || work.loss > 0) {
       out.push({
-        block: i, part: 'recovery', label: `${b.label} — récupération`, durationS: r.durationS,
-        gainM: r.elevationGainM ?? 0, lossM: r.elevationLossM ?? 0,
+        block: i, part: 'work', label: b.label, repeat, durationS: work.s, gainM: work.gain, lossM: work.loss,
+        startS: last.s, gainBeforeM: last.gain, lossBeforeM: last.loss,
       });
     }
+    if (r && (rest.gain > 0 || rest.loss > 0)) {
+      out.push({
+        block: i, part: 'recovery', label: `${b.label} — récupération`, repeat, durationS: rest.s,
+        gainM: rest.gain, lossM: rest.loss,
+        startS: last.s + work.s, gainBeforeM: last.gain + work.gain, lossBeforeM: last.loss + work.loss,
+      });
+    }
+    clockS += repeat * (work.s + rest.s);
+    gainM += repeat * (work.gain + rest.gain);
+    lossM += repeat * (work.loss + rest.loss);
   });
   return out;
 }
 
 export function judgeSegment(s: VerticalSegment, vertical: AthleteVertical): SegmentVerdict {
-  const up = s.gainM > 0 ? vertical.climb.timeFor(s.gainM) : null;
-  const down = s.lossM > 0 ? vertical.descent.timeFor(s.lossM) : null;
+  const before = { elapsedS: s.startS, gainM: s.gainBeforeM, lossM: s.lossBeforeM };
+  const climb = s.gainM > 0 ? vertical.climb.after(before) : null;
+  const descent = s.lossM > 0 ? vertical.descent.after(before) : null;
+  const keep = 1 - PRESCRIPTION_MARGIN;
+  const up = climb?.timeFor(s.gainM / keep);
+  const down = descent?.timeFor(s.lossM / keep);
   const climbS = up?.durationS ?? 0;
   const descentS = down?.durationS ?? 0;
   const minimalS = climbS + descentS;
+  const within = (seconds: number) => s.durationS > 0 && seconds <= s.durationS + TOLERANCE_S;
+  const prescribable = within(minimalS);
+  // Ce qui laisse sa marge tient a fortiori dans la borne : le temps de
+  // l'impossible ne se cherche que pour ce qui ne la laisse pas.
+  const feasible =
+    prescribable ||
+    within((climb?.timeFor(s.gainM).durationS ?? 0) + (descent?.timeFor(s.lossM).durationS ?? 0));
   const perHour = (m: number) => (s.durationS > 0 ? Math.round((m / s.durationS) * 3600) : Infinity);
-  const provenances = [up?.provenance, down?.provenance].filter((p): p is ParameterProvenance => p != null);
+  const onlyUp = s.gainM > 0 && s.lossM <= 0;
+  const onlyDown = s.lossM > 0 && s.gainM <= 0;
+  const now = onlyUp ? climb?.at(s.durationS) : onlyDown ? descent?.at(s.durationS) : undefined;
+  const [first, ...rest] = [up?.provenance, down?.provenance].filter((p): p is ParameterProvenance => p != null);
   return {
     ...s,
     climbS,
@@ -176,10 +250,12 @@ export function judgeSegment(s: VerticalSegment, vertical: AthleteVertical): Seg
     minimalS,
     climbMh: s.gainM > 0 ? perHour(s.gainM) : 0,
     descentMh: s.lossM > 0 ? perHour(s.lossM) : 0,
-    ...(s.gainM > 0 && s.lossM <= 0 ? { climbBound: vertical.climb.at(s.durationS) } : {}),
-    ...(s.lossM > 0 && s.gainM <= 0 ? { descentBound: vertical.descent.at(s.durationS) } : {}),
-    provenance: provenances.includes('default') ? 'default' : (provenances[0] ?? 'field'),
-    feasible: s.durationS > 0 && minimalS <= s.durationS + TOLERANCE_S,
+    ...(onlyUp ? { climbBound: vertical.climb.at(s.durationS), climbBoundNow: now } : {}),
+    ...(onlyDown ? { descentBound: vertical.descent.at(s.durationS), descentBoundNow: now } : {}),
+    ...(now ? { ceilingMh: Math.round(now.vamMh * keep) } : {}),
+    provenance: first ? weakestProvenance(first, ...rest) : 'default',
+    feasible,
+    prescribable,
   };
 }
 
@@ -194,30 +270,37 @@ export function checkVertical(
 
 const minutes = (s: number) => (Number.isFinite(s) ? sessionDuration(s) : 'plus d’une journée');
 
-/** Ce qui rend un segment impossible, en une phrase. */
+/** Ce qui empêche de prescrire un segment, en une phrase. */
 export function describeVerdict(v: SegmentVerdict): string {
-  const where = `« ${v.label} »`;
+  const where = `« ${v.label} »${v.repeat > 1 ? ` (${v.repeat}ᵉ répétition)` : ''}`;
   if (v.durationS <= 0) {
     return `${where} : un dénivelé ne se prescrit que sur une durée, et ce segment n'en a pas.`;
   }
-  if (v.climbBound) {
+  const margin = `${Math.round(PRESCRIPTION_MARGIN * 100)} %`;
+  const instant =
+    v.startS > 0
+      ? `à ${minutes(v.startS)} de séance, après ${v.gainBeforeM} m de D+` +
+        (v.lossBeforeM > 0 ? ` et ${v.lossBeforeM} m de D−` : '')
+      : null;
+  const single =
+    v.climbBound && v.climbBoundNow
+      ? { meters: `${v.gainM} m de D+`, asked: v.climbMh, curve: 'montée', fresh: v.climbBound, now: v.climbBoundNow, needS: v.climbS }
+      : v.descentBound && v.descentBoundNow
+        ? { meters: `${v.lossM} m de D−`, asked: v.descentMh, curve: 'descente', fresh: v.descentBound, now: v.descentBoundNow, needS: v.descentS }
+        : null;
+  if (single) {
+    const later = instant ? `, ${Math.round(single.now.vamMh)} m/h ${instant} (${PROVENANCE_FR[single.now.provenance]})` : '';
     return (
-      `${where} : ${v.gainM} m de D+ en ${minutes(v.durationS)} exigent ${v.climbMh} m/h ; ta courbe de montée ` +
-      `atteste ${Math.round(v.climbBound.vamMh)} m/h sur cette durée (${PROVENANCE_FR[v.climbBound.provenance]}). ` +
-      `Il faut au moins ${minutes(Math.ceil(v.climbS))} pour ce dénivelé.`
-    );
-  }
-  if (v.descentBound) {
-    return (
-      `${where} : ${v.lossM} m de D− en ${minutes(v.durationS)} exigent ${v.descentMh} m/h ; ta courbe de descente ` +
-      `atteste ${Math.round(v.descentBound.vamMh)} m/h sur cette durée (${PROVENANCE_FR[v.descentBound.provenance]}). ` +
-      `Il faut au moins ${minutes(Math.ceil(v.descentS))} pour ce dénivelé.`
+      `${where} : ${single.meters} en ${minutes(v.durationS)} exigent ${single.asked} m/h ; ta courbe de ${single.curve} ` +
+      `atteste ${Math.round(single.fresh.vamMh)} m/h sur cette durée (${PROVENANCE_FR[single.fresh.provenance]})${later}, ` +
+      `et une prescription garde ${margin} de marge sous cette borne : ${v.ceilingMh} m/h au plus. ` +
+      `Il faut au moins ${minutes(Math.ceil(single.needS))} pour ce dénivelé.`
     );
   }
   return (
     `${where} : ${v.gainM} m de D+ et ${v.lossM} m de D− demandent au moins ${minutes(Math.ceil(v.minimalS))} ` +
-    `(${minutes(Math.ceil(v.climbS))} de montée, ${minutes(Math.ceil(v.descentS))} de descente, ` +
-    `${PROVENANCE_FR[v.provenance]}) ; le segment en dure ${minutes(v.durationS)}.`
+    `(${minutes(Math.ceil(v.climbS))} de montée, ${minutes(Math.ceil(v.descentS))} de descente, marge de ${margin} ` +
+    `comprise${instant ? `, ${instant}` : ''} — ${PROVENANCE_FR[v.provenance]}) ; le segment en dure ${minutes(v.durationS)}.`
   );
 }
 
@@ -246,21 +329,21 @@ export function scaleVertical(blocks: readonly SessionBlock[], k: number): Sessi
 }
 
 export interface VerticalFit {
-  /** Contenu exécutable, dénivelé situé. */
+  /** Contenu prescriptible, dénivelé situé. */
   blocks: SessionBlock[];
   /** Part du dénivelé conservée : 1 quand tout tenait. */
   share: number;
-  /** Les segments qui ne tenaient pas, avant correction. */
+  /** Les segments qui ne se prescrivaient pas, avant correction — les impossibles d'abord. */
   refused: SegmentVerdict[];
 }
 
 /**
- * Rend un contenu exécutable en retirant du dénivelé, et seulement du dénivelé.
+ * Rend un contenu prescriptible en retirant du dénivelé, et seulement du dénivelé.
  *
  * La durée est ce qu'on a demandé à la séance ; c'est le dénivelé qui cède,
  * dans la même proportion partout, pour que la séance garde sa forme et que sa
- * boucle se referme. La part retenue est la plus grande qui fait tenir chaque
- * segment.
+ * boucle se referme. La part retenue est la plus grande qui laisse à chaque
+ * segment sa marge sous la borne de l'instant.
  */
 export function fitVertical(
   blocks: readonly SessionBlock[],
@@ -269,11 +352,14 @@ export function fitVertical(
 ): VerticalFit {
   const located = locateVertical(blocks, type);
   const allFit = (content: readonly SessionBlock[]) =>
-    verticalSegments(content).every((s) => judgeSegment(s, vertical).feasible);
+    verticalSegments(content).every((s) => judgeSegment(s, vertical).prescribable);
   const segments = verticalSegments(located);
   if (segments.length === 0 || allFit(located)) return { blocks: located, share: 1, refused: [] };
 
-  const refused = segments.map((s) => judgeSegment(s, vertical)).filter((v) => !v.feasible);
+  const refused = segments
+    .map((s) => judgeSegment(s, vertical))
+    .filter((v) => !v.prescribable)
+    .sort((a, b) => Number(a.feasible) - Number(b.feasible));
   let lo = 0;
   let hi = 1;
   for (let i = 0; i < 30; i++) {
