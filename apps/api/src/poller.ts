@@ -32,6 +32,15 @@ import type { BackfillProgress } from './sync.js';
 /** Intervalle par défaut : voir l'argument de cadence ci-dessus. */
 export const DEFAULT_POLL_INTERVAL_MS = 15 * 60_000;
 
+/**
+ * Pendant la veille du Mac, l'heure avance mais rien ne garantit que le délai
+ * d'un minuteur compte ce temps : une relève due à 3 h partirait un quart
+ * d'heure après le réveil, ou plus. L'attente relit donc l'heure au moins
+ * chaque minute, et une échéance dépassée pendant le sommeil se rattrape dans
+ * la minute qui suit le réveil.
+ */
+const WAKE_CHECK_MS = 60_000;
+
 export type PollOutcome = 'ok' | 'rate-limited' | 'error';
 
 export interface PollerStatus {
@@ -212,7 +221,17 @@ export class ActivityPoller {
   private schedule(delay: number): void {
     if (this.stopped) return;
     this.nextRunAt = this.now() + delay;
-    this.timer = setTimeout(() => void this.tick(), delay);
+    this.wait();
+  }
+
+  /** Attend l'échéance par pas d'une minute au plus, en relisant l'heure à chaque pas. */
+  private wait(): void {
+    const due = this.nextRunAt;
+    if (this.stopped || due == null) return;
+    this.timer = setTimeout(
+      () => (this.now() >= due ? void this.tick() : this.wait()),
+      Math.min(Math.max(due - this.now(), 0), WAKE_CHECK_MS),
+    );
     // La relève ne doit pas, à elle seule, empêcher le processus de s'arrêter.
     this.timer.unref?.();
   }

@@ -17,12 +17,23 @@ Cette commande installe les dépendances, crée la base SQLite et importe le pro
 depuis le test d'effort. Ensuite :
 
 ```bash
-npm run dev
+npm run service -- install
 ```
 
-L'application est sur **http://localhost:3000**, l'API sur **http://localhost:4000**.
-Depuis le téléphone, sur le même réseau : `http://<ip-du-mac>:3000`, sans rien
-configurer — le site relaie lui-même les appels vers l'API.
+Cairn tourne alors comme une application installée : un LaunchAgent démarre l'API
+et le site en mode production à l'ouverture de session et les relance s'ils
+tombent. Les deux n'écoutent que sur la boucle locale — le site sur
+**http://localhost:3000**, l'API sur **http://localhost:4000** — et Tailscale
+Serve les expose en HTTPS au seul réseau privé : c'est l'adresse à ouvrir depuis
+le téléphone, en 4G comme en wifi, et à ajouter à l'écran d'accueil
+(`npm run service -- status` l'affiche). Sur secteur, le Mac ne se met pas en
+veille tant que Cairn tourne ; sur batterie il dort, et la relève Strava rattrape
+au réveil.
+
+Rien ne se recharge seul en production : après un changement de code,
+`npm run service -- update`. Pour développer, `npm run dev` sert le site sur
+http://localhost:3001 et l'API sur 4001, sans relève Strava : celle du service
+suffit, et deux relèves sur la même base se marcheraient dessus.
 
 Avant de lancer, copie `.env.example` vers `.env` et renseigne au minimum
 `ANTHROPIC_API_KEY`. Pour Strava, suis [docs/strava.md](docs/strava.md).
@@ -147,7 +158,10 @@ Le serveur MCP expose exactement les mêmes outils et les mêmes données. Voir
 
 | Commande | Effet |
 |---|---|
-| `npm run dev` | API + interface web |
+| `npm run service -- install` / `uninstall` | installe ou retire le service (LaunchAgent, Tailscale Serve) |
+| `npm run service -- update` | reconstruit et redémarre le service après un changement de code |
+| `npm run service -- status` | état launchd, réponses des serveurs, adresse HTTPS, journaux |
+| `npm run dev` | API + interface web en développement, sur 4001 et 3001 |
 | `npm run dev:api` / `npm run dev:web` | l'un ou l'autre |
 | `npm test` | suite de tests du moteur et du planificateur |
 | `npm run typecheck` | vérification TypeScript de tout le dépôt |

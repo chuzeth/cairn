@@ -29,7 +29,11 @@ dépendante de cette clé sans dire ce qui cesse de fonctionner sans elle.
 ```
 npm test                              npx tsc -b
 npm run dev                           npm run sync -w @cairn/api -- sync [n]
+npm run service -- update             npm run service -- status
 ```
+
+Le téléphone ouvre le service installé, en production : un changement de code ne
+l'atteint qu'après `npm run service -- update`.
 
 ## Méthode de travail
 

@@ -88,6 +88,23 @@ describe('Cadence', () => {
     await vi.advanceTimersByTimeAsync(1 * MIN + 1);
     expect(run).toHaveBeenCalledTimes(1);
   });
+
+  it('rattrape dans la minute qui suit le réveil une relève échue pendant la veille', async () => {
+    // Pendant la veille du Mac, l'heure avance mais rien ne garantit que le
+    // délai d'un minuteur compte ce temps : une nuit de sommeil ne doit pas
+    // repousser la relève d'un quart d'heure après le réveil.
+    const run = vi.fn(async () => progress());
+    const p = poller(run);
+    await p.start();
+    await tourner();
+    await vi.advanceTimersByTimeAsync(5 * MIN);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(Date.now() + 8 * 60 * MIN); // la nuit : l'heure saute, les minuteurs n'avancent pas
+    await vi.advanceTimersByTimeAsync(1 * MIN);
+    expect(run).toHaveBeenCalledTimes(2);
+    p.stop();
+  });
 });
 
 describe('Tolérance aux pannes', () => {

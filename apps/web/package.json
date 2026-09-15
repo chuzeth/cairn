@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "API_PORT=4001 next dev -p 3001 -H 127.0.0.1",
     "build": "next build",
-    "start": "next start -p 3000"
+    "start": "next start -p 3000 -H 127.0.0.1"
   },
   "dependencies": {
     "@cairn/core": "*",

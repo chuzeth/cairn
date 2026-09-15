@@ -6,6 +6,9 @@ export const metadata: Metadata = {
   title: 'Cairn — Performance trail',
   description:
     "Coaching trail personnalisé : modèle physiologique individuel alimenté par Strava, planification adaptative et analyse de séance.",
+  // Ouvert depuis l'écran d'accueil : un nom court sous l'icône, et une barre
+  // d'état noire au-dessus d'une application noire.
+  appleWebApp: { capable: true, title: 'Cairn', statusBarStyle: 'black' },
 };
 
 export const viewport: Viewport = {

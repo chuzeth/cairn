@@ -3,7 +3,12 @@ import { DEFAULT_POLL_INTERVAL_MS } from './poller.js';
 /** Configuration d'exécution, lue une fois et validée au démarrage. */
 export const env = {
   port: Number(process.env.API_PORT ?? 4000),
-  host: process.env.API_HOST ?? '0.0.0.0',
+  /**
+   * La boucle locale seulement : l'API n'a aucune authentification, et sur un
+   * wifi partagé n'importe qui lirait les données et écrirait dans le plan. Le
+   * téléphone passe par Tailscale Serve, qui relaie vers le site, qui relaie ici.
+   */
+  host: process.env.API_HOST ?? '127.0.0.1',
   webOrigin: process.env.WEB_ORIGIN ?? 'http://localhost:3000',
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? `http://localhost:${process.env.API_PORT ?? 4000}`,
   webhookVerifyToken: process.env.STRAVA_WEBHOOK_VERIFY_TOKEN ?? 'cairn-verify-me',

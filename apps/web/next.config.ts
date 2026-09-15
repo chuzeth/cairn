@@ -31,6 +31,10 @@ function rootEnv(key: string): string | undefined {
 
 const config: NextConfig = {
   reactStrictMode: true,
+  // Le service installé a son propre dossier de build (`scripts/service.mjs`) :
+  // un `next build` lancé pour vérifier une modification ne remplace pas en
+  // silence le site que le téléphone ouvre, et un build qui échoue ne le vide pas.
+  distDir: process.env.CAIRN_WEB_DIST_DIR || '.next',
   // Les paquets du monorepo sont consommés directement en TypeScript source.
   transpilePackages: ['@cairn/core'],
   typescript: { ignoreBuildErrors: false },
