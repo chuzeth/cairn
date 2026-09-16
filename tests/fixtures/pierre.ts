@@ -7,14 +7,16 @@ const LAB_ONLY = modelFromLabOnly(LAB_TEST_2025_07_24, '2026-09-12');
  * Pierre au 12/09/2026 : paramètres du modèle enregistré, courbes de montée et
  * de descente relevées sur ses 54 séances. La descente est celle que le
  * reanalyze du 13/09 a enregistrée, et la provenance celle du modèle : la
- * durabilité horaire est mesurée, sa part par 1 000 m est un repli.
+ * durabilité horaire est mesurée, sa part par 1 000 m est un repli. Le rythme
+ * vertical des séances de la perte horaire, 328 m/h, est celui que le même
+ * historique donne relu par le moteur 1.3.0.
  */
 export const PIERRE_MODEL: PhysiologyModel = {
   ...LAB_ONLY,
   bodyMassKg: 68.6, hrMax: 191, hrRest: 55, hrReserve: 136,
   criticalSpeedMs: 3.82, dPrimeM: 260, vmaMs: 4.994, vo2maxRel: 58.1,
   vt1: { hr: 155, speedMs: 2.942 }, vt2: { hr: 171, speedMs: 3.745 },
-  durabilityPctPerHour: 5.7, durabilityPctPer1000mVert: 4,
+  durabilityPctPerHour: 5.7, durabilityPctPer1000mVert: 4, durabilityVertRateMh: 328,
   vamCurve: {
     '60': 1823, '120': 1515, '180': 1431, '300': 1290, '420': 1246, '600': 1193, '900': 1176,
     '1200': 1173, '1800': 948, '2700': 860, '3600': 812, '5400': 778, '7200': 738,
@@ -25,7 +27,8 @@ export const PIERRE_MODEL: PhysiologyModel = {
   },
   provenance: {
     ...LAB_ONLY.provenance,
-    durabilityPctPerHour: 'field', durabilityPctPer1000mVert: 'default', vamCurve: 'field', descentVamCurve: 'field',
+    durabilityPctPerHour: 'field', durabilityPctPer1000mVert: 'default', durabilityVertRateMh: 'field',
+    vamCurve: 'field', descentVamCurve: 'field',
   },
 };
 

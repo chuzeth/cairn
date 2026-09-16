@@ -3,16 +3,15 @@ import type {
   RaceGoal, SessionBlock, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import {
-  DURABILITY_MEASURABLE, prescribedMechanicalLoad, projectFrom, targetDistribution,
-  targetRaceDayTsb,
+  ACWR_SPIKE, DURABILITY_MEASURABLE, prescribedMechanicalLoad, projectFrom, projectLoadRatios,
+  ratioExceedances, targetDistribution, targetRaceDayTsb, type DailyLoad, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import {
   TAPER_SCALE_BOUNDS, addDays, buildPeriodization, mondayOf, type WeekPlanSpec,
 } from './periodization.js';
 import {
-  INTERVAL_FORMAT, applied, appliedAmbition, clampCadence, criteriaFor, durationDirectiveFor,
-  formatDirectiveDuration, honourWeeklyFrequency, indexDirectives, isIntervalSession,
-  nextIntervalFormat, type DirectiveSet,
+  applied, appliedAmbition, clampCadence, criteriaFor, durationDirectiveFor,
+  honourWeeklyFrequency, indexDirectives, isIntervalSession, nextIntervalFormat, type DirectiveSet,
 } from './directives.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
@@ -515,52 +514,21 @@ function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: 
     const criteria = criteriaFor(set, s.type);
     if (criteria.length > 0) s.successCriteria = criteria;
 
+    // Les traces disent quelle consigne a façonné la séance, pas ce qu'elle y a
+    // produit : la durée retenue et le dénivelé se lisent sur le contenu
+    // (`describeDirectives`), qui peut être réécrit après la construction. La
+    // semaine, elle, ne se lit sur aucun contenu : une décharge ou un affûtage
+    // dispense du plancher, et la trace le retient.
     const duration = durationDirectiveFor(set, s.type);
     if (duration && s.plannedDurationS > 0) {
-      const plage =
-        `${formatDirectiveDuration(duration.minS)} – ${formatDirectiveDuration(duration.maxS)}`;
-      const retenu = formatDirectiveDuration(s.plannedDurationS);
-      // Dire « plage honorée » sur une semaine qui en est dispensée serait un
-      // mensonge de plus dans une trace censée expliquer d'où vient la consigne.
-      const inside = s.plannedDurationS >= duration.minS && s.plannedDurationS <= duration.maxS;
-      traces.push(
-        applied(
-          duration,
-          inside
-            ? `Plage prescrite ${plage} : ${retenu} retenues.`
-            : `Plage prescrite ${plage} ; ${retenu} retenues — ` +
-              `${spec.isDeload ? 'semaine de décharge' : "semaine d'affûtage"}, le plancher ne s'y applique pas.`,
-        ),
-      );
+      traces.push(applied(duration, spec.isDeload ? 'deload' : spec.phase === 'taper' ? 'taper' : undefined));
     }
 
-    if (set.intervals && isIntervalSession(s.type)) {
-      traces.push(
-        applied(
-          set.intervals,
-          `Le fractionné de la semaine, format ${INTERVAL_FORMAT[s.type] === 'short' ? 'court' : 'moyen'} — ` +
-            `le dossier n'en autorise qu'un, en alternant court et moyen.`,
-        ),
-      );
-    }
+    if (set.intervals && isIntervalSession(s.type)) traces.push(applied(set.intervals));
 
     if (longAmbition && input.ambition && (s.type === 'long_run' || s.type === 'long_trail')) {
       if (!spec.isDeload && spec.phase !== 'taper') raiseVertToMeasurable(s, input.model);
-      const measurable =
-        s.plannedDurationS >= DURABILITY_MEASURABLE.minDurationS &&
-        (s.plannedElevationGainM ?? 0) >= DURABILITY_MEASURABLE.minVertM;
-      traces.push(
-        appliedAmbition(
-          input.ambition,
-          measurable
-            ? `Sortie longue privilégiée par l'ambition trail long : ${formatDirectiveDuration(s.plannedDurationS)} ` +
-              `et ${Math.round(s.plannedElevationGainM ?? 0)} m D+ d'un seul tenant, de quoi mesurer la durabilité ` +
-              `au lieu de la supposer.`
-            : `Sortie longue privilégiée par l'ambition trail long, mais trop courte cette semaine pour produire ` +
-              `une mesure de durabilité — il y faut ${formatDirectiveDuration(DURABILITY_MEASURABLE.minDurationS)} ` +
-              `et ${DURABILITY_MEASURABLE.minVertM} m D+.`,
-        ),
-      );
+      traces.push(appliedAmbition(input.ambition));
     }
 
     if (traces.length > 0) s.directives = traces;
@@ -702,6 +670,12 @@ export interface BuildPlanInput {
   directives?: TrainingDirective[];
   /** Ambition de long terme, distincte de la course cible. */
   ambition?: AthleteAmbition;
+  /**
+   * Charges quotidiennes connues avant le premier jour du plan : le réalisé,
+   * puis ce qui reste attendu d'ici là. C'est la charge chronique sur laquelle
+   * se lisent les ratios du plan ; sans elle, ils partent de rien.
+   */
+  loadHistory?: readonly DailyLoad[];
 }
 
 /**
@@ -733,6 +707,42 @@ export interface RaceDayTsbCheck {
    * silence, c'est-à-dire le défaut lui-même.
    */
   shortfall: string | null;
+}
+
+/**
+ * Ratios de charge aiguë / chronique que le plan produit, contre le seuil de
+ * pic de chaque filière.
+ *
+ * Le planificateur projetait le TSB et rien d'autre : un plan pouvait porter la
+ * filière mécanique à 1,87 la veille d'un palier de trois tours sans qu'aucune
+ * ligne ne le dise avant le soir où la charge serait réalisée. Comme le TSB, la
+ * mesure s'arrête à la veille de course. Elle ne corrige rien : un dépassement
+ * se montre, les règles de `adapt.ts` décident.
+ */
+export interface LoadRatioCheck {
+  from: string;
+  to: string;
+  limits: { metabolic: number; mechanical: number };
+  exceedances: LoadRatioExceedance[];
+  /** Jours de charge connus avant le plan. Zéro : les ratios partent de rien et ne mesurent pas grand-chose. */
+  historyDays: number;
+}
+
+const CHANNEL_FR = { metabolic: 'métabolique', mechanical: 'mécanique' } as const;
+
+/** Dépassements de ratio en une phrase, filière par filière. */
+export function describeRatioExceedances(list: readonly LoadRatioExceedance[]): string {
+  return (['mechanical', 'metabolic'] as const)
+    .map((channel) => {
+      const days = list.filter((e) => e.channel === channel);
+      if (days.length === 0) return null;
+      return (
+        `${CHANNEL_FR[channel]} ${days.map((e) => `${e.value.toFixed(2)} le ${e.date}`).join(', ')} ` +
+        `(seuil ${days[0]!.limit})`
+      );
+    })
+    .filter(Boolean)
+    .join(' ; ');
 }
 
 /**
@@ -881,6 +891,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   plan: TrainingPlan;
   weeks: TrainingWeek[];
   tsbCheck: RaceDayTsbCheck;
+  ratioCheck: LoadRatioCheck;
 } {
   const startDate = input.startDate ?? new Date().toISOString().slice(0, 10);
 
@@ -968,6 +979,28 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     raceWeek.sessions.sort((a, b) => a.date.localeCompare(b.date));
   }
 
+  // ── Ratios de charge, sur ce que les séances produites pèsent ──────────────
+  const history = (input.loadHistory ?? []).filter((l) => l.date < planStart);
+  const firstKnown = history.reduce<string | null>((a, l) => (a == null || l.date < a ? l.date : a), null);
+  const ratioCheck: LoadRatioCheck = {
+    from: planStart,
+    to: eve,
+    limits: { ...ACWR_SPIKE },
+    exceedances: ratioExceedances(
+      projectLoadRatios(
+        history,
+        weeks.flatMap((w) =>
+          w.sessions.map((s) => ({ date: s.date, metabolic: s.plannedLoad, mechanical: s.plannedMechanicalLoad })),
+        ),
+        planStart,
+        eve,
+      ),
+    ),
+    historyDays: firstKnown
+      ? Math.round((Date.parse(`${planStart}T00:00:00Z`) - Date.parse(`${firstKnown}T00:00:00Z`)) / 86_400_000)
+      : 0,
+  };
+
   const now = new Date().toISOString();
 
   return {
@@ -991,6 +1024,10 @@ export function buildTrainingPlan(input: BuildPlanInput): {
             `${signed(tsb.metabolic)} ; les charges du plan y amènent ${signed(tsbCheck.projected)} ` +
             `(écart ${signed(gap)}, affûtage à ${Math.round(solved.taperScale * 100)} % de sa profondeur nominale).` +
             (tsbCheck.shortfall ? ` ⚠ ${tsbCheck.shortfall}` : '') +
+            (ratioCheck.exceedances.length
+              ? ` ⚠ Ratio charge aiguë/chronique projeté au-delà de son seuil — ` +
+                `${describeRatioExceedances(ratioCheck.exceedances)}.`
+              : '') +
             (input.directives?.length
               ? ` ${input.directives.length} directives du dossier honorées (durées du travail foncier, ` +
                 `critère de dérive cardiaque, fréquences hebdomadaires, cadence, un fractionné par semaine).`
@@ -1009,6 +1046,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     },
     weeks,
     tsbCheck,
+    ratioCheck,
   };
 }
 

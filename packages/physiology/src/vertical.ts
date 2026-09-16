@@ -294,9 +294,11 @@ function remainingCapacity(
 ): VerticalCapacity['remaining'] {
   const elapsedS = Math.max(0, before.elapsedS);
   const vertM = Math.max(0, before.gainM) + (direction === 'descent' ? Math.max(0, before.lossM) : 0);
+  const vertRateMh = model.durabilityVertRateMh ?? 0;
   const share = durabilityFactor(elapsedS, vertM, {
     pctPerHour: model.durabilityPctPerHour,
     pctPer1000mVert: model.durabilityPctPer1000mVert,
+    vertRateMh,
   });
   if (share >= 1) return { share: 1, provenance: null };
   const of = (key: string): ParameterProvenance => model.provenance?.[key] ?? 'default';
@@ -306,6 +308,7 @@ function remainingCapacity(
       direction === 'descent' ? 'default' : 'field',
       elapsedS > 0 ? of('durabilityPctPerHour') : null,
       vertM > 0 ? of('durabilityPctPer1000mVert') : null,
+      vertM > 0 && vertRateMh > 0 ? of('durabilityVertRateMh') : null,
     ),
   };
 }

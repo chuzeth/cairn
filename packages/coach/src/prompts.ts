@@ -124,7 +124,7 @@ export function buildContextSnapshot(state: AthleteState): string {
   lines.push(
     `CTL ${today.ctl.toFixed(0)} · ATL ${today.atl.toFixed(0)} · **TSB métabolique ${today.tsb > 0 ? '+' : ''}${today.tsb.toFixed(0)}** · **TSB mécanique ${today.mechanicalTsb > 0 ? '+' : ''}${today.mechanicalTsb.toFixed(0)}**`,
   );
-  lines.push(`ACWR ${today.acwr.toFixed(2)} (${today.acwrRisk}) · progression CTL ${today.rampRate > 0 ? '+' : ''}${today.rampRate.toFixed(1)}/sem · monotonie ${today.monotony.toFixed(2)}`);
+  lines.push(`ACWR ${today.acwr.toFixed(2)} (${today.acwrRisk}) · ACWR mécanique ${today.mechanicalAcwr.toFixed(2)} · progression CTL ${today.rampRate > 0 ? '+' : ''}${today.rampRate.toFixed(1)}/sem · monotonie ${today.monotony.toFixed(2)}`);
   lines.push(`Disponibilité ${readiness.score}/100 (${readiness.verdict}) — ${readiness.recommendation}`);
   // Le score ne contient plus de valeur inventée : ce qui n'a pas de source ne
   // pèse rien. Reste à dire ce qu'il ne regarde pas, et avec quel poids le reste.

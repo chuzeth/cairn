@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import * as db from '@cairn/db';
 import { directivesFor } from '@cairn/core';
 import {
-  applyAdjustments, chat, describeAdjustments, evaluateAdjustments,
+  applyAdjustments, chat, describeAdjustments, describeDirectives, evaluateAdjustments,
   executeTool, generateWeeklyReview, loadAthleteState, rebuildPhysiologyModel,
   summarizeWeek,
 } from '@cairn/coach';
@@ -369,10 +369,13 @@ export async function buildServer() {
     const sessions = await db.listPlannedSessions(A, from, to);
     const activities = await db.listActivities(A, { from, to: iso(new Date()), limit: 200 });
     const absences = await db.listAbsences(A, { from, to });
+    const profile = await db.getAthlete(A);
+    const dossier = profile ? directivesFor(profile) : [];
     return {
       plan: plan?.plan ?? null,
       weekSummaries: plan?.weeks.map(summarizeWeek) ?? [],
-      sessions,
+      // Ce qu'une directive produit se lit sur le contenu actuel de la séance.
+      sessions: sessions.map((s) => (s.directives ? { ...s, directives: describeDirectives(s, dossier) } : s)),
       absences,
       completedByDate: Object.fromEntries(
         activities.map((a) => [a.startDateLocal.slice(0, 10), { id: a.id, name: a.name }]),

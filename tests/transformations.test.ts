@@ -19,6 +19,8 @@ const db = vi.hoisted(() => ({
   sessions: [] as unknown[],
   updates: [] as { id: string; patch: Record<string, unknown> }[],
   model: null as unknown,
+  athlete: null as unknown,
+  dailyLoads: [] as unknown[],
 }));
 
 vi.mock('@cairn/db', () => ({
@@ -29,12 +31,15 @@ vi.mock('@cairn/db', () => ({
   getActivePlan: async () => null,
   appendPlanRevision: async () => undefined,
   getLatestModel: async () => db.model,
-  getAthlete: async () => null,
+  getAthlete: async () => db.athlete,
+  getDailyLoads: async () => db.dailyLoads,
+  listAbsences: async () => [],
 }));
 
 const { applyAdjustments, buildTrainingPlan, executeTool } = await import('@cairn/coach');
 
 db.model = PIERRE_MODEL;
+db.athlete = PIERRE;
 
 /** Segments d'effort qui ne font que monter ou que descendre, plus vite que la courbe ne l'atteste. */
 function impossible(blocks: readonly SessionBlock[], model: PhysiologyModel): string[] {
@@ -117,5 +122,69 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     const patch = db.updates.find((u) => u.id === 'rando')!.patch;
     expect(impossible(patch.blocks as SessionBlock[], PIERRE_MODEL)).toEqual([]);
     expect(patch.plannedDurationS).toBe(6480);
+  });
+});
+
+describe('Ce que le coach lit d\'une séance qu\'il écrit', () => {
+  type Ratio = { date: string; filiere: string; ratio: number; seuil: number };
+
+  it('lit les directives sur le contenu actuel, pas sur la phrase écrite à la construction', async () => {
+    const origin = directivesFor(PIERRE).find((d) => d.id === 'rando_course_duree')!.origin;
+    db.sessions = [{
+      ...rando(),
+      title: 'Rando-course 3.5 h · 1146 m D+',
+      blocks: [
+        { label: 'Approche en endurance', zone: 'Z2', durationS: 1500 },
+        { label: 'Montées', zone: 'Z2', durationS: 6186, elevationGainM: 1146, vamTargetMh: 667 },
+        { label: 'Descentes', zone: 'Z2', durationS: 3714, elevationLossM: 1146 },
+        { label: 'Retour au calme', zone: 'Z1', durationS: 1200 },
+      ],
+      plannedDurationS: 12600, plannedElevationGainM: 1146,
+      // Les traces telles que la base les garde depuis la construction du plan,
+      // avant que modify_session ne réécrive le contenu.
+      directives: [
+        { directiveId: 'rando_course_duree', effect: 'Plage prescrite 3 h 00 – 5 h 00 : 3 h 00 retenues.', origin },
+        {
+          directiveId: 'ambition', origin: PIERRE.ambition!.origin[0],
+          effect: "Sortie longue privilégiée par l'ambition trail long : 3 h 00 et 1384 m D+ d'un seul tenant, de quoi mesurer la durabilité au lieu de la supposer.",
+        },
+      ],
+    }];
+    const { content } = await executeTool('pierre', 'get_plan', { from: '2026-09-28', weeks: 1 });
+    const [seance] = (content as { seances: { directives_appliquees: { effet: string }[] }[] }).seances;
+    expect(seance!.directives_appliquees.map((d) => d.effet)).toEqual([
+      'Plage prescrite 3 h 00 – 5 h 00 : 3 h 30 retenues.',
+      "Sortie longue privilégiée par l'ambition trail long : 3 h 30 et 1146 m D+ d'un seul tenant, de quoi mesurer la perte horaire au lieu de la supposer.",
+    ]);
+  });
+
+  it('montre, au moment où une séance s\'écrit, le ratio excentrique qu\'elle produit', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-20T07:00:00Z'));
+    try {
+      // Six semaines à 3 points de charge mécanique par jour, jusqu'à la veille ;
+      // la rando-course du 03/10 en pèse 60.
+      db.dailyLoads = Array.from({ length: 42 }, (_, i) => ({
+        date: new Date(Date.UTC(2026, 7, 9 + i)).toISOString().slice(0, 10), metabolic: 40, mechanical: 3,
+      }));
+      db.sessions = [rando()];
+      db.updates = [];
+      const { summary, content } = await executeTool('pierre', 'modify_session', {
+        session_id: 'rando', scale_load: 0.6, rationale: 'Semaine chargée : on raccourcit.',
+      });
+      const ratios = (content as {
+        ratios_de_charge: { du: string; au: string; depassements: Ratio[]; depassements_avant_modification: Ratio[] };
+      }).ratios_de_charge;
+      expect(ratios).toMatchObject({ du: '2026-09-20', au: '2026-10-03' });
+      const on0310 = (list: Ratio[]) => list.find((d) => d.date === '2026-10-03' && d.filiere === 'mécanique');
+      expect(on0310(ratios.depassements_avant_modification)!.ratio).toBeGreaterThan(1.6);
+      // La projection porte la séance telle qu'elle vient d'être écrite.
+      expect(on0310(ratios.depassements)!.ratio).toBeLessThan(on0310(ratios.depassements_avant_modification)!.ratio);
+      expect(on0310(ratios.depassements)!.seuil).toBe(1.6);
+      expect(summary).toContain('au-delà d\'un seuil de ratio de charge');
+    } finally {
+      vi.useRealTimers();
+      db.dailyLoads = [];
+    }
   });
 });

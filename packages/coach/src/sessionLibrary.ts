@@ -423,19 +423,29 @@ export interface TransformedSession {
  * céder le dénivelé de toute la séance, et la séance le dit. La durée, elle,
  * reste celle qu'on a demandée : une séance allégée qui s'allongerait pour garder
  * sa montée ne serait plus allégée.
+ *
+ * Un troisième facteur, `eccentric`, ne sert qu'à la règle qui protège la
+ * filière mécanique : il retire des tours aux circuits (`scaledRounds`), et le
+ * circuit dure alors ce que durent les tours qui restent. Sans lui, aucun
+ * allègement ne touchait jamais un palier excentrique.
  */
 export function transformSession(
   session: TransformableSession,
-  change: number | { duration: number; vertical?: number },
+  change: number | { duration: number; vertical?: number; eccentric?: number },
   model: PhysiologyModel,
 ): TransformedSession {
-  const { duration, vertical = duration } = typeof change === 'number' ? { duration: change } : change;
+  const { duration, vertical = duration, eccentric = 1 } =
+    typeof change === 'number' ? { duration: change } : change;
   const located = locateVertical(session.blocks, session.type);
   const seconds = scaledDurations(located, duration);
   const round = (m: number | undefined) => (m === undefined ? undefined : Math.round(m * vertical));
 
   const scaled = located.map((b, i): SessionBlock => {
     const out: SessionBlock = { ...b };
+    if (b.circuit && scaledRounds(b.circuit.rounds, eccentric) < b.circuit.rounds) {
+      const circuit = { ...b.circuit, rounds: scaledRounds(b.circuit.rounds, eccentric) };
+      return { ...out, circuit, durationS: circuitDurationS(circuit) };
+    }
     if (isPrescribed(b)) return out;
     if (b.durationS) out.durationS = seconds[i];
     if (b.elevationGainM !== undefined) out.elevationGainM = round(b.elevationGainM);
@@ -468,6 +478,15 @@ export function transformSession(
     ...(session.plannedDistanceM ? { plannedDistanceM: Math.round(session.plannedDistanceM * duration) } : {}),
     amendments: fit.share < 1 ? [shedNote(scaled, fit)] : [],
   };
+}
+
+/**
+ * Tours qu'un circuit garde quand sa charge excentrique est allégée d'un
+ * facteur : au tour inférieur — ce qu'on retire ne revient pas par l'arrondi —,
+ * jamais sous un tour, jamais au-delà de ce qui était prescrit.
+ */
+export function scaledRounds(rounds: number, factor: number): number {
+  return Math.min(rounds, Math.max(1, Math.floor(rounds * factor + 1e-9)));
 }
 
 /**

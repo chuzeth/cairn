@@ -193,6 +193,7 @@ export function analyzeActivity(
       efDeclinePctPer1000mVert: durability.pctPer1000mVert,
       efDeclinePctPerHour: durability.pctPerHour,
       sampleQuality: durability.sampleQuality,
+      timeVertCorrelation: durability.timeVertCorrelation ?? null,
     },
     energy: {
       kcal: Math.round(energy.kcal),

@@ -48,6 +48,8 @@ export interface FieldEvidence {
     confidence: number;
     /** Vrai quand la valeur vient d'une mesure et non d'un repli. Absent ⇒ repli. */
     measured?: { perHour: boolean; perVert: boolean };
+    /** D+ par heure des séances de la perte horaire, m/h. Absent ou `null` : inconnu. */
+    vertRateMh?: number | null;
   };
   /** Courbe VAM, m/h par durée. */
   vamCurve: Record<string, number>;
@@ -262,6 +264,11 @@ export function buildPhysiologyModel(
     measured && field.durability.confidence > 0.4 ? 'field' : 'default';
   provenance.durabilityPctPerHour = durabilityProvenance(durabilityMeasured.perHour);
   provenance.durabilityPctPer1000mVert = durabilityProvenance(durabilityMeasured.perVert);
+  // Le rythme vertical décrit les séances de la perte horaire : il repose sur
+  // elles, et n'existe pas sans elles.
+  const vertRateMh = field.durability.vertRateMh ?? null;
+  provenance.durabilityVertRateMh =
+    vertRateMh != null ? durabilityProvenance(durabilityMeasured.perHour) : 'default';
 
   // ── Courbes verticales ─────────────────────────────────────────────────────
   // Elles ne portent que des points mesurés. Là où une courbe manque, la borne
@@ -297,6 +304,7 @@ export function buildPhysiologyModel(
     vt2: { hr: vt2Hr.value, speedMs: round3(vt2Speed) },
     durabilityPctPer1000mVert: field.durability.pctPer1000mVert,
     durabilityPctPerHour: field.durability.pctPerHour,
+    durabilityVertRateMh: vertRateMh ?? 0,
     vamCurve: field.vamCurve,
     descentVamCurve,
     criticalSpeedEvidence: {

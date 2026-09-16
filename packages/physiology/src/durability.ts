@@ -38,7 +38,10 @@ export interface DurabilityWindow {
 }
 
 export interface DurabilityResult {
-  /** Perte de rendement en % par 1 000 m de D+ cumulé. */
+  /**
+   * Perte de rendement en % par 1 000 m de D+ cumulé, à temps écoulé égal.
+   * `null` quand la séance ne la sépare pas du temps (`MAX_TIME_VERT_CORRELATION`).
+   */
   pctPer1000mVert: number | null;
   /** Perte de rendement en % par heure d'effort. */
   pctPerHour: number | null;
@@ -48,6 +51,11 @@ export interface DurabilityResult {
   sampleQuality: 'good' | 'partial' | 'insufficient';
   /** Coefficient de détermination de la régression temporelle. */
   r2Time: number;
+  /**
+   * Corrélation entre temps écoulé et D+ cumulé sur les fenêtres. Absente ou
+   * nulle, rien ne prouve que la pente verticale mesure autre chose que le temps.
+   */
+  timeVertCorrelation?: number | null;
 }
 
 const WINDOW_S = 600;
@@ -62,7 +70,9 @@ const STEP_S = 120;
  * 3 600 s d'écart entre centres, plus la largeur d'une fenêtre : 70 min
  * d'effort aérobie continu. La pente verticale, elle, exige plus de 350 m de
  * D+ accumulés entre ces deux centres ; 450 m sur la séance entière les
- * couvrent avec de la marge.
+ * couvrent avec de la marge. C'est nécessaire, pas suffisant : un D+ qui
+ * s'accumule au rythme du temps ne mesure que la perte horaire
+ * (`MAX_TIME_VERT_CORRELATION`).
  *
  * Elles servent au planificateur : une préparation qui ne produit jamais un
  * effort de cette forme laisse la durabilité au repli de population, et la
@@ -132,6 +142,76 @@ function linreg(xs: readonly number[], ys: readonly number[]): { slope: number; 
   return { slope, intercept: my - slope * mx, r2 };
 }
 
+/** Corrélation de Pearson ; `null` quand l'une des deux séries ne varie pas. */
+function correlation(xs: readonly number[], ys: readonly number[]): number | null {
+  const n = xs.length;
+  if (n < 3 || ys.length !== n) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = (xs[i] as number) - mx;
+    const dy = (ys[i] as number) - my;
+    sxy += dx * dy;
+    sxx += dx * dx;
+    syy += dy * dy;
+  }
+  if (sxx < 1e-12 || syy < 1e-12) return null;
+  return sxy / Math.sqrt(sxx * syy);
+}
+
+/**
+ * Régression sur deux variables à la fois : la pente de chacune à l'autre
+ * constante. `null` quand les deux se confondent.
+ */
+function linreg2(
+  x1: readonly number[],
+  x2: readonly number[],
+  ys: readonly number[],
+): { intercept: number; slope1: number; slope2: number } | null {
+  const n = ys.length;
+  if (n < 4) return null;
+  const m1 = x1.reduce((a, b) => a + b, 0) / n;
+  const m2 = x2.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let s11 = 0;
+  let s22 = 0;
+  let s12 = 0;
+  let s1y = 0;
+  let s2y = 0;
+  for (let i = 0; i < n; i++) {
+    const d1 = (x1[i] as number) - m1;
+    const d2 = (x2[i] as number) - m2;
+    const dy = (ys[i] as number) - my;
+    s11 += d1 * d1;
+    s22 += d2 * d2;
+    s12 += d1 * d2;
+    s1y += d1 * dy;
+    s2y += d2 * dy;
+  }
+  const det = s11 * s22 - s12 * s12;
+  if (!(det > 1e-12)) return null;
+  const slope1 = (s1y * s22 - s2y * s12) / det;
+  const slope2 = (s2y * s11 - s1y * s12) / det;
+  return { intercept: my - slope1 * m1 - slope2 * m2, slope1, slope2 };
+}
+
+/**
+ * Corrélation temps / D+ cumulé au-delà de laquelle une séance ne mesure pas le
+ * dénivelé indépendamment du temps.
+ *
+ * Quand le D+ s'accumule au rythme du temps — une rando-course, une sortie
+ * vallonnée régulière —, la pente par 1 000 m n'est que la perte horaire
+ * réexprimée : la régression ne peut pas séparer les deux causes, et la variance
+ * de la pente propre au dénivelé est multipliée par 1 / (1 − ρ²), plus de cinq
+ * au-delà de ce seuil. Sur les 49 séances de Pierre analysées au 13/09/2026, ρ va
+ * de 0,82 à 0,995, et ne descend jamais sous 0,90 sur celles qui franchissent
+ * assez de D+ pour produire une pente : aucune ne mesure le dénivelé à part.
+ */
+export const MAX_TIME_VERT_CORRELATION = Math.sqrt(1 - 1 / 5);
+
 /** Mesure la durabilité sur une séance. */
 export function analyzeDurability(
   samples: readonly DurabilitySample[],
@@ -147,6 +227,7 @@ export function analyzeDurability(
       windows,
       sampleQuality: 'insufficient',
       r2Time: 0,
+      timeVertCorrelation: null,
     };
   }
 
@@ -164,11 +245,20 @@ export function analyzeDurability(
     ? Math.round((-timeFit.slope / baseline) * 1000) / 10
     : null;
 
+  // La pente verticale est celle que le dénivelé a à temps écoulé constant, et
+  // seulement quand la séance les sépare : une régression sur le seul D+
+  // d'une sortie qui monte régulièrement redisait la perte horaire en d'autres
+  // unités, et cette pente-là passait pour une mesure du dénivelé.
+  const timeVertCorrelation = correlation(hours, verts);
   let pctPer1000mVert: number | null = null;
-  if (spanVert > 0.35) {
-    const vertFit = linreg(verts, efs);
-    const vBase = vertFit.intercept > 0 ? vertFit.intercept : (efs[0] as number);
-    if (vBase > 0) pctPer1000mVert = Math.round((-vertFit.slope / vBase) * 1000) / 10;
+  if (
+    spanVert > 0.35 &&
+    timeVertCorrelation != null &&
+    Math.abs(timeVertCorrelation) <= MAX_TIME_VERT_CORRELATION
+  ) {
+    const joint = linreg2(hours, verts, efs);
+    const vBase = joint && joint.intercept > 0 ? joint.intercept : baseline;
+    if (joint && vBase > 0) pctPer1000mVert = Math.round((-joint.slope2 / vBase) * 1000) / 10;
   }
 
   const quality: DurabilityResult['sampleQuality'] =
@@ -181,6 +271,8 @@ export function analyzeDurability(
     windows,
     sampleQuality: quality,
     r2Time: Math.round(timeFit.r2 * 1000) / 1000,
+    timeVertCorrelation:
+      timeVertCorrelation == null ? null : Math.round(timeVertCorrelation * 1000) / 1000,
   };
 }
 
@@ -201,6 +293,12 @@ const DEFAULT_PCT_PER_1000M_VERT = 4.0;
 export interface DurabilityAggregate {
   pctPer1000mVert: number;
   pctPerHour: number;
+  /**
+   * D+ par heure des séances qui ont mesuré la perte horaire, m/h — ce que
+   * cette perte contient déjà de dénivelé. `null` quand la perte horaire est un
+   * repli, ou qu'aucune séance ne dit ce qu'elle a monté.
+   */
+  vertRateMh: number | null;
   confidence: number;
   n: number;
   /** Vrai quand la valeur retenue vient d'une mesure, faux quand elle vient du repli. */
@@ -223,14 +321,32 @@ function resolveAggregate(
   return { value: raw, measured: true };
 }
 
+/** Une séance versée à l'agrégat. */
+export interface DurabilityEntry {
+  result: DurabilityResult;
+  ageDays: number;
+  durationS: number;
+  /** D+ de la séance, m : situe la perte horaire qu'elle a mesurée. */
+  vertM?: number;
+}
+
+/** Une pente verticale ne compte que si sa séance la sépare du temps, preuve à l'appui. */
+const separatesVertFromTime = (r: DurabilityResult): boolean =>
+  r.pctPer1000mVert != null &&
+  r.timeVertCorrelation != null &&
+  Math.abs(r.timeVertCorrelation) <= MAX_TIME_VERT_CORRELATION;
+
 /**
  * Agrégation sur l'historique. On pondère par la qualité de l'échantillon, la
  * durée couverte et la fraîcheur, et on écarte les valeurs aberrantes (une
  * séance par 34 °C ne dit rien de la durabilité intrinsèque).
+ *
+ * La pente verticale ne s'agrège que sur les séances qui la séparent du temps.
+ * Une analyse qui ne porte pas la corrélation — antérieure au moteur 1.3.0 — ne
+ * le prouve pas : sa pente ne compte pas, plutôt que de faire passer la perte
+ * horaire réexprimée pour une mesure du dénivelé.
  */
-export function aggregateDurability(
-  entries: readonly { result: DurabilityResult; ageDays: number; durationS: number }[],
-): DurabilityAggregate {
+export function aggregateDurability(entries: readonly DurabilityEntry[]): DurabilityAggregate {
   const usable = entries.filter(
     (e) => e.result.sampleQuality !== 'insufficient' && e.result.pctPerHour != null,
   );
@@ -239,6 +355,7 @@ export function aggregateDurability(
     return {
       pctPer1000mVert: DEFAULT_PCT_PER_1000M_VERT,
       pctPerHour: DEFAULT_PCT_PER_HOUR,
+      vertRateMh: null,
       confidence: 0.15,
       n: 0,
       measured: { perHour: false, perVert: false },
@@ -251,8 +368,11 @@ export function aggregateDurability(
     (e.result.sampleQuality === 'good' ? 1 : 0.5) *
     clamp(e.durationS / 5400, 0.3, 1.5);
 
-  const weightedMedian = (values: { v: number; w: number }[]): number | null => {
-    const clean = values.filter((x) => Number.isFinite(x.v) && Math.abs(x.v) < 40);
+  const weightedMedian = (
+    values: { v: number; w: number }[],
+    plausible: (v: number) => boolean = (v) => Math.abs(v) < 40,
+  ): number | null => {
+    const clean = values.filter((x) => Number.isFinite(x.v) && plausible(x.v));
     if (clean.length === 0) return null;
     clean.sort((a, b) => a.v - b.v);
     const total = clean.reduce((a, x) => a + x.w, 0);
@@ -269,8 +389,14 @@ export function aggregateDurability(
   );
   const perVert = weightedMedian(
     usable
-      .filter((e) => e.result.pctPer1000mVert != null)
+      .filter((e) => separatesVertFromTime(e.result))
       .map((e) => ({ v: e.result.pctPer1000mVert as number, w: weightOf(e) })),
+  );
+  const vertRate = weightedMedian(
+    usable
+      .filter((e) => e.vertM != null && Number.isFinite(e.vertM) && e.durationS > 0)
+      .map((e) => ({ v: ((e.vertM as number) / e.durationS) * 3600, w: weightOf(e) })),
+    (v) => v >= 0,
   );
 
   const totalWeight = usable.reduce((a, e) => a + weightOf(e), 0);
@@ -282,6 +408,9 @@ export function aggregateDurability(
   return {
     pctPerHour: hour.value,
     pctPer1000mVert: vert.value,
+    // Le rythme décrit les séances de la perte horaire : il n'a de sens que si
+    // c'est elle qui est retenue, et non le repli.
+    vertRateMh: hour.measured && vertRate != null ? Math.round(vertRate) : null,
     // La confiance décrit ce qu'on a mesuré : elle tombe au plancher si les deux
     // valeurs retenues sont des replis.
     confidence:
@@ -292,18 +421,48 @@ export function aggregateDurability(
   };
 }
 
-/** Part de la capacité fraîche qui reste à un instant donné de l'effort. */
+/** Ce que la durabilité retient d'un modèle. */
+export interface DurabilityTerms {
+  pctPerHour: number;
+  pctPer1000mVert: number;
+  /** D+ par heure que la perte horaire contient déjà, m/h. Absent : aucun. */
+  vertRateMh?: number;
+}
+
+/**
+ * Dénivelé qui s'ajoute à la perte horaire, m.
+ *
+ * Une perte horaire mesurée sur des sorties qui montent à 300 m/h contient ce
+ * que ces 300 m/h ont coûté. Sur un effort qui monte au même rythme, la perte
+ * par 1 000 m n'en est que la réexpression : seul le dénivelé au-delà de ce
+ * rythme est indépendant du temps. En deçà, rien n'est rendu — la part de la
+ * perte horaire qui revient au dénivelé n'est mesurée nulle part, et une borne
+ * ne se relâche pas sur une supposition.
+ */
+export function independentVertM(elapsedS: number, cumulativeVertM: number, vertRateMh = 0): number {
+  const carried = (Math.max(0, vertRateMh) * Math.max(0, elapsedS)) / 3600;
+  return Math.max(0, cumulativeVertM - carried);
+}
+
+/**
+ * Part de la capacité fraîche qui reste à un instant donné de l'effort.
+ *
+ * Les deux pertes s'additionnent parce que chacune ne compte que ce qu'elle a
+ * d'indépendant : la perte horaire tout le temps écoulé, la perte verticale le
+ * seul dénivelé que la première ne contient pas. La racine quadratique qui
+ * tenait lieu de recouvrement rendait, pour deux termes qui disent la même
+ * perte, √3 fois cette perte.
+ */
 export function durabilityFactor(
   elapsedS: number,
   cumulativeVertM: number,
-  model: { pctPerHour: number; pctPer1000mVert: number },
+  model: DurabilityTerms,
 ): number {
   const timeDecay = (model.pctPerHour / 100) * (elapsedS / 3600);
-  const vertDecay = (model.pctPer1000mVert / 100) * (cumulativeVertM / 1000);
-  // Les deux causes se recouvrent partiellement : on évite de double-compter en
-  // prenant la racine quadratique de leur somme plutôt que la somme brute.
-  const combined = Math.sqrt(timeDecay ** 2 + vertDecay ** 2 + timeDecay * vertDecay);
-  return clamp(1 - combined, 0.45, 1);
+  const vertDecay =
+    (model.pctPer1000mVert / 100) *
+    (independentVertM(elapsedS, cumulativeVertM, model.vertRateMh) / 1000);
+  return clamp(1 - timeDecay - vertDecay, 0.45, 1);
 }
 
 /**
@@ -315,7 +474,7 @@ export function durabilityAdjustedCs(
   cs: number,
   elapsedS: number,
   cumulativeVertM: number,
-  model: { pctPerHour: number; pctPer1000mVert: number },
+  model: DurabilityTerms,
 ): number {
   return cs * durabilityFactor(elapsedS, cumulativeVertM, model);
 }

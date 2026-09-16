@@ -6,11 +6,13 @@ import * as db from '@cairn/db';
 import {
   aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
   computeReadiness, decayedEnvelopeWithCompanion, fitCriticalSpeed, interpretAcwr, interpretTsb,
-  maximalEffortSupport, modelFromLabOnly, monotonize, projectFrom, type FieldEvidence,
-  type MmpCurve, type ReadinessDay,
+  maximalEffortSupport, modelFromLabOnly, monotonize, projectFrom, projectLoadRatios,
+  ratioExceedances, type DailyLoad, type FieldEvidence, type LoadRatioExceedance, type MmpCurve,
+  type ReadinessDay,
 } from '@cairn/physiology';
 import { absenceCovering } from './adapt.js';
 import { addDays } from './periodization.js';
+import { eccentricStrengthOf } from './sessionLibrary.js';
 
 /**
  * État de l'athlète.
@@ -54,6 +56,8 @@ export interface AthleteState {
     tsb: number;
     mechanicalTsb: number;
     acwr: number;
+    /** Ratio charge aiguë / chronique de la filière mécanique, circuits faits compris. */
+    mechanicalAcwr: number;
     rampRate: number;
     monotony: number;
     tsbLabel: string;
@@ -171,9 +175,13 @@ export async function rebuildPhysiologyModel(
           windows: [],
           sampleQuality: an.durabilitySignal.sampleQuality,
           r2Time: 0,
+          // Absente d'une analyse antérieure au moteur 1.3.0 : sa pente
+          // verticale ne prouve rien, et l'agrégat ne la compte pas.
+          timeVertCorrelation: an.durabilitySignal.timeVertCorrelation ?? null,
         },
         ageDays: (now - new Date(a.startDate).getTime()) / dayMs,
         durationS: a.movingTimeS,
+        vertM: a.totalElevationGainM,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
@@ -371,7 +379,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   if (!model) throw new Error("Aucun modèle physiologique disponible : importe d'abord un test d'effort.");
 
   const today = iso(new Date());
-  const loads = await db.getDailyLoads(athleteId, daysAgo(400));
+  const loads = await realizedDailyLoads(athleteId, daysAgo(400), today);
   const pmc = buildPmcSeries(loads, loads[0]?.date ?? daysAgo(90), today);
   const checkIns = await db.listCheckIns(athleteId, daysAgo(60));
 
@@ -379,6 +387,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const met = last(pmc.metabolic);
   const mech = last(pmc.mechanical);
   const acwr = last(pmc.acwr)?.value ?? 0;
+  const mechanicalAcwr = last(pmc.mechanicalAcwr)?.value ?? 0;
   const ramp = last(pmc.rampRate)?.value ?? 0;
   const monotony = last(pmc.monotony)?.value ?? 0;
 
@@ -433,6 +442,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
       tsb: met?.tsb ?? 0,
       mechanicalTsb: mech?.tsb ?? 0,
       acwr,
+      mechanicalAcwr,
       rampRate: ramp,
       monotony,
       tsbLabel: interpretTsb(met?.tsb ?? 0).label,
@@ -530,6 +540,91 @@ export async function fitnessAtPlanStart(
     addDays(planStart, -1),
   );
   return carryFitness(from, planStart, planned, state.absences);
+}
+
+/**
+ * Charges quotidiennes réalisées, sur les deux filières, jusqu'à `to` inclus.
+ *
+ * Le flux d'activité ne voit pas un circuit de renforcement : la filière
+ * mécanique ignorait tout l'excentrique hors course, et un palier de trois
+ * tours ne pesait rien le soir où il avait été fait. Une séance faite y compte
+ * ce que son circuit prescrivait — c'est tout ce qui existe de ce travail-là.
+ */
+export async function realizedDailyLoads(athleteId: string, from: string, to: string): Promise<DailyLoad[]> {
+  const measured = (await db.getDailyLoads(athleteId, from)).filter((l) => l.date <= to);
+  const strength = (await db.listPlannedSessions(athleteId, from, to))
+    .filter((s) => s.status === 'completed')
+    .map((s) => ({ date: s.date, metabolic: 0, mechanical: eccentricStrengthOf(s.blocks) }))
+    .filter((l) => l.mechanical > 0);
+  return [...measured, ...strength].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Ce qu'une séance attendue pèsera, sur les deux filières. */
+const plannedLoadOf = (s: PlannedSession): DailyLoad => ({
+  date: s.date,
+  metabolic: s.plannedLoad,
+  mechanical: s.plannedMechanicalLoad,
+});
+
+/** Séances qui pèseront encore : attendues, et hors d'une absence déclarée. */
+const expected = (sessions: readonly PlannedSession[], absences: DeclaredAbsence[]) =>
+  sessions.filter((s) => STANDING_STATUSES.has(s.status) && !absenceCovering(absences, s.date));
+
+/**
+ * Charges connues avant le premier jour d'un plan à construire : le réalisé
+ * jusqu'à aujourd'hui, puis ce que le plan actif prévoit encore d'ici là — les
+ * mêmes jours intercalaires que `carryFitness`. C'est la charge chronique sur
+ * laquelle le planificateur lit les ratios du plan qu'il écrit.
+ */
+export async function knownLoadsBefore(state: AthleteState, planStart: string): Promise<DailyLoad[]> {
+  const today = state.today.date;
+  const realized = await realizedDailyLoads(state.profile.id, addDays(today, -400), today);
+  const gap = addDays(planStart, -1) > today
+    ? expected(
+        await db.listPlannedSessions(state.profile.id, addDays(today, 1), addDays(planStart, -1)),
+        state.absences,
+      ).map(plannedLoadOf)
+    : [];
+  return [...realized, ...gap].filter((l) => l.date < planStart);
+}
+
+/** Ratios de charge du plan actif au-delà de leur seuil, avant et après une modification. */
+export interface RatioProjection {
+  from: string;
+  to: string;
+  before: LoadRatioExceedance[];
+  after: LoadRatioExceedance[];
+}
+
+/**
+ * Ce que le plan actif produit comme ratios de charge d'aujourd'hui à la veille
+ * de sa course, et ce qu'une modification de séance en ferait.
+ *
+ * Le réalisé fait foi jusqu'à aujourd'hui ; à partir d'aujourd'hui, les séances
+ * qu'on attend encore. C'est ce qui fait qu'un pic se voit quand la séance
+ * s'écrit, et pas seulement le soir où sa charge est réalisée. `null` quand il
+ * n'y a rien à projeter.
+ */
+export async function projectPlanRatios(
+  athleteId: string,
+  today: string,
+  change?: { sessionId: string; patch: Partial<PlannedSession> },
+): Promise<RatioProjection | null> {
+  const sessions = await db.listPlannedSessions(athleteId, today, addDays(today, 400));
+  if (sessions.length === 0) return null;
+  const race = sessions.find((s) => s.type === 'race' && s.date > today);
+  const to = race ? addDays(race.date, -1) : sessions[sessions.length - 1]!.date;
+  if (to < today) return null;
+
+  const absences = await db.listAbsences(athleteId, { from: today });
+  const realized = await realizedDailyLoads(athleteId, addDays(today, -400), today);
+  const exceedances = (list: readonly PlannedSession[]) =>
+    ratioExceedances(projectLoadRatios(realized, expected(list, absences).map(plannedLoadOf), today, to));
+
+  const modified = change
+    ? sessions.map((s) => (s.id === change.sessionId ? { ...s, ...change.patch } : s))
+    : sessions;
+  return { from: today, to, before: exceedances(sessions), after: exceedances(modified) };
 }
 
 function computeWeeklyTotals(

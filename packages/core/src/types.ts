@@ -158,16 +158,31 @@ export type TrainingDirective =
   | CadenceDirective
   | IntervalPolicyDirective;
 
-/** Trace de l'application d'une directive à une séance. */
+/**
+ * Trace de l'application d'une directive à une séance.
+ *
+ * Elle ne retient que ce que le contenu ne dit pas : quelle consigne, d'où elle
+ * vient, et ce que la semaine en dispense. Ce que la consigne produit sur la
+ * séance — la durée retenue, le dénivelé d'un seul tenant — se lit sur le
+ * contenu au moment où on le montre (`describeDirectives`). Écrit à côté, il
+ * annonçait encore 3 h 00 et 1 384 m D+ sur une rando-course réécrite à
+ * 3 h 30 et 1 146 m.
+ */
 export interface AppliedDirective {
   /**
    * Identifiant de la directive appliquée, ou `ambition` quand c'est l'ambition
    * de l'athlète — et non une consigne du dossier — qui a façonné la séance.
    */
   directiveId: string;
-  /** Ce que la directive a changé à cette séance, en une phrase. */
-  effect: string;
   origin: DirectiveOrigin;
+  /** Semaine qui dispense la séance du plancher d'une plage de durée. Un fait du plan, pas du contenu. */
+  exemption?: 'deload' | 'taper';
+}
+
+/** Une trace lue sur la séance telle qu'elle est. */
+export interface DescribedDirective extends AppliedDirective {
+  /** Ce que la directive produit sur le contenu actuel, en une phrase. */
+  effect: string;
 }
 
 /** Critère de réussite attaché à une séance prescrite. */
@@ -239,13 +254,23 @@ export interface PhysiologyModel {
   vt2: { hr: number; speedMs: number };
 
   /**
-   * Indice de durabilité : perte de rendement (%) par 1000 m D+ cumulés.
+   * Indice de durabilité : perte de rendement (%) par 1000 m D+ cumulés, à
+   * temps d'effort égal — ce que le dénivelé coûte indépendamment du temps.
    * Métrique clef en trail long — c'est elle qui sépare un bon coureur d'un
    * finisseur de 100 km.
    */
   durabilityPctPer1000mVert: number;
   /** Perte de rendement (%) par heure d'effort continu. */
   durabilityPctPerHour: number;
+  /**
+   * D+ par heure des séances qui ont mesuré `durabilityPctPerHour`, m/h.
+   *
+   * Une perte horaire mesurée sur des sorties qui montent contient déjà ce que
+   * leur dénivelé a coûté : seul le dénivelé au-delà de ce rythme s'y ajoute.
+   * Zéro quand la perte horaire est un repli. Absent des modèles construits
+   * avant qu'on le relève : la perte verticale s'ajoute alors entière.
+   */
+  durabilityVertRateMh?: number;
 
   /** Vitesse ascensionnelle max soutenue, m D+/h, par durée de référence. */
   vamCurve: Record<string, number>;
@@ -516,6 +541,12 @@ export interface ActivityAnalysis {
     efDeclinePctPer1000mVert: number | null;
     efDeclinePctPerHour: number | null;
     sampleQuality: 'good' | 'partial' | 'insufficient';
+    /**
+     * Corrélation entre temps écoulé et D+ cumulé sur les fenêtres mesurées.
+     * Absente des analyses antérieures au moteur 1.3.0 : leur pente verticale
+     * ne prouve pas qu'elle mesure autre chose que le temps.
+     */
+    timeVertCorrelation?: number | null;
   };
 
   /** Coût énergétique estimé, kcal, et besoins glucidiques associés. */
@@ -594,6 +625,12 @@ export interface PmcSeries {
   mechanical: PmcPoint[];
   /** Ratio charge aiguë / charge chronique (EWMA), sur la filière métabolique. */
   acwr: { date: string; value: number }[];
+  /**
+   * Le même ratio sur la filière mécanique, circuits de renforcement compris.
+   * L'excentrique ne se lit pas sur le métabolique : la veille d'un palier de
+   * trois tours, l'un peut rester à 1,3 quand l'autre passe 1,8.
+   */
+  mechanicalAcwr: { date: string; value: number }[];
   /** Monotonie de Foster (moyenne/écart-type des charges quotidiennes sur 7 j). */
   monotony: { date: string; value: number }[];
   /** Contrainte de Foster = charge hebdo × monotonie. */

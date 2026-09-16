@@ -195,12 +195,14 @@ describe('Borne de l\'instant', () => {
   const descent = verticalCapacity(PIERRE_MODEL, 'descent');
 
   it('borne la descente du 03/10 par ce qui reste après la montée, et en hérite la valeur par défaut', () => {
-    // 1 197 m montés, 1 h 58 de séance, puis 42 min de descente.
+    // 1 197 m montés, 1 h 58 de séance, puis 42 min de descente. La perte
+    // horaire contient déjà 328 m/h de D+ : seuls les 553 m au-delà ajoutent la
+    // perte par 1 000 m. La racine quadratique donnait 1 465 m/h.
     const fresh = descent.at(2532);
     const now = descent.after({ elapsedS: 7070, gainM: 1197, lossM: 0 }).at(2532);
     expect(fresh.vamMh).toBeCloseTo(1708, 0);
     expect(fresh.provenance).toBe('field');
-    expect(now.vamMh).toBeCloseTo(1465, -1);
+    expect(now.vamMh).toBeCloseTo(1479, -1);
     expect(now.provenance).toBe('default');
   });
 

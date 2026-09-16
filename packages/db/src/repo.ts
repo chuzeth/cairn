@@ -9,7 +9,8 @@ import * as t from './schema.js';
 
 /** Version du moteur d'analyse. Toute modification invalide les analyses en cache. */
 /** 1.2.0 : l'analyse conserve la courbe de descente, pas seulement celle de montée. */
-export const ENGINE_VERSION = '1.2.0';
+/** 1.3.0 : la durabilité porte la corrélation temps / D+, et ne mesure le dénivelé que là où il ne suit pas le temps. */
+export const ENGINE_VERSION = '1.3.0';
 
 const uid = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 const dateKey = (iso: string) => iso.slice(0, 10);

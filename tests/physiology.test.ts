@@ -13,7 +13,8 @@ import {
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
   matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
   eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
-  type ReadinessDay,
+  type ReadinessDay, ACWR_SPIKE, analyzeDurability, buildPmcSeries, durabilityFactor,
+  projectLoadRatios, type DurabilitySample,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -297,6 +298,36 @@ describe('Projection du PMC sur des charges à venir', () => {
   });
 });
 
+describe('Ratio de charge de chaque filière', () => {
+  const day = (i: number) => new Date(Date.UTC(2026, 8, 1 + i)).toISOString().slice(0, 10);
+
+  it('donne son ratio à la filière mécanique, qui s\'emballe quand la métabolique ne bouge pas', () => {
+    // Quatre semaines régulières, puis un palier excentrique : la charge
+    // cardiovasculaire est la même, le freinage sextuple.
+    const loads = Array.from({ length: 29 }, (_, i) => ({
+      date: day(i), metabolic: 60, mechanical: i === 28 ? 40 : 6,
+    }));
+    const pmc = buildPmcSeries(loads);
+    expect(pmc.acwr[28]!.value).toBeLessThanOrEqual(1.3);
+    expect(pmc.mechanicalAcwr[28]!.value).toBeGreaterThan(ACWR_SPIKE.mechanical);
+  });
+
+  it('lit un pic prévu contre la charge chronique réalisée avant lui', () => {
+    const history = Array.from({ length: 40 }, (_, i) => ({ date: day(i), metabolic: 50, mechanical: 20 }));
+    const planned = [
+      { date: day(40), metabolic: 50, mechanical: 60 },
+      // Hors fenêtre : ne pèse rien.
+      { date: day(60), metabolic: 500, mechanical: 500 },
+    ];
+    const points = projectLoadRatios(history, planned, day(40), day(41));
+    expect(points.map((p) => p.date)).toEqual([day(40), day(41)]);
+    const mechanical = computeAcwr([...history, planned[0]!].map((l) => ({ date: l.date, load: l.mechanical })));
+    expect(points[0]!.mechanical).toBe(mechanical[40]!.value);
+    // Sans l'historique, le même jour ne mesure plus rien : la série part de lui.
+    expect(projectLoadRatios([], planned, day(40), day(41))[0]!.mechanical).toBe(1);
+  });
+});
+
 describe('Vitesse critique', () => {
   it('retrouve CS et D\' depuis une courbe synthétique', () => {
     const CS = 4.6;
@@ -468,6 +499,7 @@ describe('Durabilité', () => {
   const durabilityEntry = (
     pctPerHour: number,
     pctPer1000mVert: number | null,
+    timeVertCorrelation: number | null = 0.5,
   ): { result: DurabilityResult; ageDays: number; durationS: number } => ({
     result: {
       pctPerHour,
@@ -476,6 +508,7 @@ describe('Durabilité', () => {
       windows: [],
       sampleQuality: 'good',
       r2Time: 0.8,
+      timeVertCorrelation,
     },
     ageDays: 10,
     durationS: 5400,
@@ -523,6 +556,50 @@ describe('Durabilité', () => {
     const after3hVert = durabilityAdjustedCs(cs, 3 * 3600, 1500, m);
     expect(after3h).toBeLessThan(cs);
     expect(after3hVert).toBeLessThan(after3h);
+  });
+
+  it('ne compte qu\'une fois la perte que le dénivelé réexprime', () => {
+    // Une perte horaire de 6 % mesurée sur des sorties à 300 m D+/h, et une
+    // perte par 1 000 m qui n'en est que la réexpression : 20 %. Sur 3 h et
+    // 900 m, les deux termes disent la même perte de 18 %, pas √3 fois elle.
+    const model = { pctPerHour: 6, pctPer1000mVert: 20, vertRateMh: 300 };
+    expect(durabilityFactor(3 * 3600, 900, model)).toBeCloseTo(0.82, 6);
+    // Le dénivelé au-delà de ce rythme, lui, est indépendant du temps et s'ajoute.
+    expect(durabilityFactor(3 * 3600, 1500, model)).toBeCloseTo(1 - 0.18 - 0.2 * 0.6, 6);
+    // Sans rythme connu, rien n'est contenu : les deux pertes s'additionnent.
+    expect(durabilityFactor(3 * 3600, 1200, { pctPerHour: 3, pctPer1000mVert: 4 })).toBeCloseTo(0.862, 6);
+  });
+
+  it('ne fait pas passer pour mesurée une pente verticale colinéaire au temps', () => {
+    // Deux heures de montée régulière : le D+ cumulé suit exactement le temps.
+    const samples: DurabilitySample[] = Array.from({ length: 7200 }, (_, t) => ({
+      t, dt: 1, speedMs: 2.5, grade: 0.08, hr: 140 + (15 * t) / 7200,
+      cumulativeVertM: 2.5 * Math.sin(Math.atan(0.08)) * t,
+    }));
+    const steady = analyzeDurability(samples, { hrMin: 120, hrMax: 180 });
+    expect(steady.pctPerHour).toBeGreaterThan(0);
+    expect(steady.timeVertCorrelation).toBeCloseTo(1, 3);
+    expect(steady.pctPer1000mVert).toBeNull();
+
+    // Une pente par 1 000 m intérieure à ses bornes ne suffit plus : sa séance
+    // doit prouver qu'elle sépare le dénivelé du temps. Sans corrélation — une
+    // analyse d'avant le moteur 1.3.0 —, rien n'est prouvé.
+    const collinear = aggregateDurability([18.1, 17.9, 18.4].map((v) => durabilityEntry(6, v, 0.97)));
+    expect(collinear.measured.perVert).toBe(false);
+    expect(collinear.pctPer1000mVert).toBe(4.0);
+    const legacy = aggregateDurability([18.1, 17.9, 18.4].map((v) => durabilityEntry(6, v, null)));
+    expect(legacy.measured.perVert).toBe(false);
+    const separated = aggregateDurability([18.1, 17.9, 18.4].map((v) => durabilityEntry(6, v, 0.5)));
+    expect(separated.measured.perVert).toBe(true);
+    expect(separated.pctPer1000mVert).toBeCloseTo(18.1, 6);
+  });
+
+  it('situe la perte horaire par le D+ horaire des séances qui la mesurent', () => {
+    const entries = [300, 350, 900].map((vertM) => ({ ...durabilityEntry(6, null), durationS: 3600, vertM }));
+    expect(aggregateDurability(entries).vertRateMh).toBe(350);
+    // Une perte horaire tombée au repli ne contient le dénivelé de personne.
+    const fallback = [300, 350, 900].map((vertM) => ({ ...durabilityEntry(16, null), durationS: 3600, vertM }));
+    expect(aggregateDurability(fallback).vertRateMh).toBeNull();
   });
 });
 
@@ -807,7 +884,7 @@ describe('Provenance de la disponibilité', () => {
     metabolic: [{ date: '2026-09-02', ctl: 50, atl: 50, tsb: 0, load: 50 }],
     mechanical: [{ date: '2026-09-02', ctl: 30, atl: 30, tsb: 0, load: 30 }],
     acwr: [{ date: '2026-09-02', value: 1.0 }],
-    monotony: [], strain: [], rampRate: [],
+    mechanicalAcwr: [], monotony: [], strain: [], rampRate: [],
     ...over,
   });
   const at = (checkIns: DailyCheckIn[] = [], series = pmc()) =>
@@ -904,7 +981,7 @@ describe('Fatigue perçue', () => {
     metabolic: [{ date: '2026-09-02', ctl: 50, atl: 50, tsb: 0, load: 50 }],
     mechanical: [{ date: '2026-09-02', ctl: 30, atl: 30, tsb: 0, load: 30 }],
     acwr: [{ date: '2026-09-02', value: 1.0 }],
-    monotony: [], strain: [], rampRate: [],
+    mechanicalAcwr: [], monotony: [], strain: [], rampRate: [],
   });
   const at = (over: Partial<DailyCheckIn>) =>
     computeReadiness({
@@ -935,7 +1012,7 @@ describe('Ligne de base du ressenti', () => {
     metabolic: [{ date: '2026-09-30', ctl: 50, atl: 50, tsb: 0, load: 50 }],
     mechanical: [{ date: '2026-09-30', ctl: 30, atl: 30, tsb: 0, load: 30 }],
     acwr: [{ date: '2026-09-30', value: 1.0 }],
-    monotony: [], strain: [], rampRate: [],
+    mechanicalAcwr: [], monotony: [], strain: [], rampRate: [],
   });
   /** `n` jours d'historique à `sleepHours` heures, puis le jour évalué. */
   const withHistory = (n: number, past: number, todayHours: number): DailyCheckIn[] => {
@@ -999,7 +1076,7 @@ describe('Conseil du jour', () => {
     metabolic: [{ date: '2026-09-12', ctl: 50, atl: 50 - tsb, tsb, load: 0 }],
     mechanical: [{ date: '2026-09-12', ctl: 30, atl: 30 - tsb, tsb, load: 0 }],
     acwr: [{ date: '2026-09-12', value: 1.0 }],
-    monotony: [], strain: [], rampRate: [],
+    mechanicalAcwr: [], monotony: [], strain: [], rampRate: [],
   });
   const at = (day?: ReadinessDay, tsb = 0) =>
     computeReadiness({ date: '2026-09-12', pmc: pmc(tsb), checkIns: [], day });

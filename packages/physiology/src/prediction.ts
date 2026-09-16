@@ -1,5 +1,5 @@
 import type { CourseProfile, PacingSegment, PhysiologyModel, RaceGoal, RacePrediction } from '@cairn/core';
-import { durabilityAdjustedCs } from './durability.js';
+import { independentVertM } from './durability.js';
 import { FLAT_RUNNING_COST, gaitForSpeed, locomotionCost, speedForMetabolicPower } from './grade.js';
 import {
   descentSpeedCeiling, environmentalFactor, nightFactor,
@@ -183,11 +183,14 @@ export function predictRace(input: PredictionInput): RacePrediction & { segments
   const avgAltitude = segments.reduce((a, s) => a + s.altitudeM * s.lengthM, 0) / Math.max(1, course.distanceM);
 
   // Correction de durabilité : écart de l'athlète à la référence, plus la
-  // pénalité propre au dénivelé (absente des modèles routiers).
+  // pénalité propre au dénivelé (absente des modèles routiers) — le seul
+  // dénivelé que la perte horaire ne contient pas déjà, sans quoi une perte
+  // mesurée sur des sorties qui montent se compterait deux fois.
   const durabilityFactorFor = (hours: number): number => {
     const relative =
       ((REFERENCE_DURABILITY_PCT_PER_HOUR - model.durabilityPctPerHour) / 100) * hours * 0.45;
-    const vertical = (model.durabilityPctPer1000mVert / 100) * (totalGain / 1000) * 0.25;
+    const independent = independentVertM(hours * 3600, totalGain, model.durabilityVertRateMh);
+    const vertical = (model.durabilityPctPer1000mVert / 100) * (independent / 1000) * 0.25;
     return clamp(1 + relative - vertical, 0.72, 1.12);
   };
 

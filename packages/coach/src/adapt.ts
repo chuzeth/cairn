@@ -1,7 +1,10 @@
 import type { DeclaredAbsence, PhysiologyModel, PlannedSession } from '@cairn/core';
 import * as db from '@cairn/db';
 import { sessionDuration } from '@cairn/core';
-import { elevationGainOf, restateVert, transformSession } from './sessionLibrary.js';
+import { ACWR_SPIKE } from '@cairn/physiology';
+import {
+  eccentricStrengthOf, elevationGainOf, restateVert, scaledRounds, transformSession,
+} from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
 
 /**
@@ -27,6 +30,8 @@ export interface Adjustment {
   date: string;
   action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw';
   factor?: number;
+  /** Facteur appliqué aux tours des circuits excentriques, sur `scale`. Absent : ils restent entiers. */
+  eccentric?: number;
   newDate?: string;
   /** Absence déclarée à l'origine du retrait, sur `withdraw`. */
   absenceId?: string;
@@ -41,6 +46,19 @@ const midnight = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 
 /** Séances à forte contrainte excentrique. */
 const ECCENTRIC_TYPES = new Set(['downhill', 'long_trail', 'long_run', 'race_pace']);
+
+/** Une séance qui sollicite à nouveau l'excentrique : en descendant, ou par un circuit de renforcement. */
+const carriesEccentric = (s: PlannedSession) =>
+  ECCENTRIC_TYPES.has(s.type) || s.plannedMechanicalLoad >= 35 || eccentricStrengthOf(s.blocks) > 0;
+
+/** Ce qu'un allègement excentrique retire aux circuits d'une séance, en clair. */
+function roundsCut(s: PlannedSession, factor: number): string {
+  const cuts = s.blocks
+    .map((b) => b.circuit?.rounds)
+    .filter((r): r is number => r != null && scaledRounds(r, factor) < r)
+    .map((r) => `de ${r} à ${scaledRounds(r, factor)} tour${scaledRounds(r, factor) > 1 ? 's' : ''}`);
+  return cuts.length ? `, et son circuit excentrique ramené ${cuts.join(' puis ')}` : '';
+}
 
 /** L'absence déclarée qui recouvre ce jour, s'il y en a une. Bornes incluses. */
 export function absenceCovering(
@@ -174,8 +192,32 @@ export function evaluateAdjustments(
     }
   }
 
-  // ── Règle 3 : pic de charge ───────────────────────────────────────────────
-  if (state.today.acwr > 1.5) {
+  // ── Règle 3 : pic de charge excentrique ───────────────────────────────────
+  // Le ratio de la filière mécanique, circuits de renforcement faits compris,
+  // contre son propre seuil (`ACWR_SPIKE`). Elle passe avant le pic
+  // métabolique : pour une séance qui descend ou qui porte un circuit, elle
+  // allège autant, et retire en plus des tours — sans quoi un palier
+  // excentrique, la charge même qui s'emballe, restait intact.
+  if (state.today.mechanicalAcwr > ACWR_SPIKE.mechanical) {
+    const factor = 0.75;
+    for (const s of future.filter((x) => daysUntil(x.date) <= 5 && x.priority !== 'key' && carriesEccentric(x))) {
+      push({
+        sessionId: s.id,
+        date: s.date,
+        action: 'scale',
+        factor,
+        eccentric: factor,
+        rule: 'mechanical_acwr_spike',
+        reason:
+          `Ratio charge aiguë/chronique excentrique à ${state.today.mechanicalAcwr.toFixed(2)} : au-delà de ` +
+          `${ACWR_SPIKE.mechanical}, les tissus encaissent plus de freinage que les semaines passées ne les y ont préparés. ` +
+          `Séance allégée de 25 %${roundsCut(s, factor)}.`,
+      });
+    }
+  }
+
+  // ── Règle 3 bis : pic de charge métabolique ───────────────────────────────
+  if (state.today.acwr > ACWR_SPIKE.metabolic) {
     for (const s of future.filter((x) => daysUntil(x.date) <= 5 && x.priority !== 'key')) {
       push({
         sessionId: s.id,
@@ -295,7 +337,11 @@ export async function applyAdjustments(
         // phrase qui l'annonce plus haut. Ce que la séance a dû céder pour rester
         // exécutable s'ajoute au motif.
         model ??= await currentModel(athleteId);
-        const { amendments, ...content } = transformSession(session, adj.factor ?? 1, model);
+        const { amendments, ...content } = transformSession(
+          session,
+          { duration: adj.factor ?? 1, eccentric: adj.eccentric ?? 1 },
+          model,
+        );
         const title =
           content.plannedElevationGainM !== elevationGainOf(session.blocks)
             ? restateVert(session.title, content.plannedElevationGainM)
@@ -331,7 +377,7 @@ export async function applyAdjustments(
         before: byId.get(a.sessionId)?.title ?? a.sessionId,
         after:
           a.action === 'scale'
-            ? `charge × ${a.factor}`
+            ? `charge × ${a.factor}${a.eccentric != null ? `, tours excentriques × ${a.eccentric}` : ''}`
             : a.action === 'move'
               ? `déplacée au ${a.newDate}`
               : a.action === 'withdraw'

@@ -89,7 +89,8 @@ export function computePmc(
 /**
  * Ratio charge aiguë / charge chronique, méthode EWMA (Williams et al., 2017),
  * plus fidèle que la moyenne glissante car elle pondère les jours récents.
- * Fenêtre de confort : 0,8-1,3. Au-delà de 1,5, le risque de blessure grimpe.
+ * Fenêtre de confort : 0,8-1,3. Au-delà du seuil de pic de sa filière
+ * (`ACWR_SPIKE`), le risque de blessure grimpe.
  */
 export function computeAcwr(daily: readonly { date: string; load: number }[]): { date: string; value: number }[] {
   const lambdaA = 2 / (7 + 1);
@@ -145,6 +146,25 @@ export function computeRampRate(pmc: readonly PmcPoint[]): { date: string; value
   });
 }
 
+/**
+ * Seuil de pic du ratio charge aiguë / charge chronique, par filière.
+ *
+ * Métabolique, 1,5 : la borne au-delà de laquelle la littérature EWMA (Gabbett
+ * 2016, Williams et al. 2017) voit le risque de blessure grimper nettement, et
+ * que l'historique de Pierre n'a jamais franchie (1,46 au plus, du 27/05 au
+ * 13/09/2026).
+ *
+ * Mécanique, 1,6 : la charge excentrique est concentrée par nature — le jour
+ * le plus lourd de la semaine en porte 49 %, contre 37 % de la métabolique —,
+ * si bien que le jour de pointe d'une semaine ordinaire sort déjà plus haut
+ * (1,27 contre 1,20), et qu'à 1,5 la règle aurait allégé la semaine après une
+ * sortie ordinaire de 490 m (1,53 le 09/07). Pas davantage pour autant : les
+ * dégâts excentriques croissent avec la nouveauté du stimulus bien plus que la
+ * fatigue cardiovasculaire, et à 1,6 la règle se déclenche après les deux plus
+ * grosses sorties de l'été (1,99 le 26/07, 1,61 le 29/08).
+ */
+export const ACWR_SPIKE = { metabolic: 1.5, mechanical: 1.6 } as const;
+
 /** Assemble la série PMC complète, sur les deux filières. */
 export function buildPmcSeries(loads: readonly DailyLoad[], from?: string, to?: string): PmcSeries {
   const daily = densifyDailyLoads(loads, from, to);
@@ -159,10 +179,74 @@ export function buildPmcSeries(loads: readonly DailyLoad[], from?: string, to?: 
     metabolic,
     mechanical,
     acwr: computeAcwr(metaDaily),
+    mechanicalAcwr: computeAcwr(mechDaily),
     monotony,
     strain: computeStrain(metaDaily, monotony),
     rampRate: computeRampRate(metabolic),
   };
+}
+
+/** Ratios charge aiguë / charge chronique d'une journée, sur les deux filières. */
+export interface LoadRatioPoint {
+  date: string;
+  metabolic: number;
+  mechanical: number;
+}
+
+/** Une journée où un ratio dépasse le seuil de pic de sa filière. */
+export interface LoadRatioExceedance {
+  date: string;
+  channel: 'metabolic' | 'mechanical';
+  value: number;
+  limit: number;
+}
+
+/**
+ * Ratios de charge sur les deux filières, d'une date à une autre, sur des
+ * charges connues puis prévues.
+ *
+ * `known` est ce qui a déjà eu lieu, ou qu'on attend encore avant la fenêtre ;
+ * `planned`, ce que la fenêtre prévoit — seules comptent ses charges datées
+ * entre `from` et `to`. Les deux s'additionnent jour par jour, et les jours sans
+ * charge valent zéro. La série part du premier jour connu : un ratio calculé
+ * sans la charge chronique qui le précède ne mesure rien.
+ *
+ * C'est ce qui permet de voir un pic au moment où une séance s'écrit, et pas
+ * seulement le soir où sa charge est réalisée.
+ */
+export function projectLoadRatios(
+  known: readonly DailyLoad[],
+  planned: readonly DailyLoad[],
+  from: string,
+  to: string,
+): LoadRatioPoint[] {
+  if (to < from) return [];
+  const loads = [
+    { date: from, metabolic: 0, mechanical: 0 },
+    ...known.filter((l) => l.date <= to),
+    ...planned.filter((l) => l.date >= from && l.date <= to),
+  ];
+  const first = loads.reduce((a, l) => (l.date < a ? l.date : a), from);
+  const daily = densifyDailyLoads(loads, first, to);
+  const metabolic = computeAcwr(daily.map((d) => ({ date: d.date, load: d.metabolic })));
+  const mechanical = computeAcwr(daily.map((d) => ({ date: d.date, load: d.mechanical })));
+  return daily.flatMap((d, i) =>
+    d.date < from
+      ? []
+      : [{ date: d.date, metabolic: metabolic[i]!.value, mechanical: mechanical[i]!.value }],
+  );
+}
+
+/** Les journées où un ratio dépasse son seuil de pic, filière par filière. */
+export function ratioExceedances(
+  points: readonly LoadRatioPoint[],
+  limits: { metabolic: number; mechanical: number } = ACWR_SPIKE,
+): LoadRatioExceedance[] {
+  return points.flatMap((p) =>
+    (['metabolic', 'mechanical'] as const)
+      .filter((channel) => p[channel] > limits[channel])
+      .map((channel) => ({ date: p.date, channel, value: p[channel], limit: limits[channel] })),
+  );
 }
 
 /**
@@ -240,12 +324,15 @@ export function interpretTsb(tsb: number): { label: string; state: 'fresh' | 'ne
   return { label: 'Surcharge marquée — surveiller de près la tolérance', state: 'strained' };
 }
 
-/** Lecture de l'ACWR. */
-export function interpretAcwr(acwr: number): { label: string; risk: 'low' | 'moderate' | 'high' } {
+/** Lecture de l'ACWR, contre le seuil de pic de sa filière. */
+export function interpretAcwr(
+  acwr: number,
+  spike: number = ACWR_SPIKE.metabolic,
+): { label: string; risk: 'low' | 'moderate' | 'high' } {
   if (acwr === 0) return { label: 'Données insuffisantes', risk: 'low' };
   if (acwr < 0.8) return { label: 'Charge aiguë faible : détraînement possible', risk: 'moderate' };
   if (acwr <= 1.3) return { label: 'Zone optimale de progression', risk: 'low' };
-  if (acwr <= 1.5) return { label: 'Progression rapide — vigilance', risk: 'moderate' };
+  if (acwr <= spike) return { label: 'Progression rapide — vigilance', risk: 'moderate' };
   return { label: 'Pic de charge : risque de blessure nettement accru', risk: 'high' };
 }
 

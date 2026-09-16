@@ -521,6 +521,43 @@ describe('Règles d\'ajustement automatique', () => {
     expect(adj!.reason).not.toContain('31 min');
   });
 
+  it('protège la filière mécanique quand son ratio s\'emballe, circuit excentrique compris', () => {
+    const palier = session({
+      id: 'palier', date: '2026-09-02', type: 'endurance', plannedLoad: 25, plannedMechanicalLoad: 10,
+      blocks: [
+        { label: 'Footing en endurance aérobie', zone: 'Z2', durationS: 1260 },
+        {
+          label: 'Circuit force', zone: 'Z2', durationS: 420,
+          circuit: {
+            rounds: 3,
+            exercises: [{ movement: 'split_squat', reps: 8 }, { movement: 'eccentric_calf', reps: 12 }],
+          },
+        },
+      ],
+    });
+    // Le métabolique est calme ; seul l'excentrique a dépassé son seuil.
+    const state = baseState({
+      today: { date: '2026-09-01', ctl: 50, atl: 55, tsb: -5, mechanicalTsb: 0, acwr: 1.0, mechanicalAcwr: 1.87, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
+    });
+    const [adj] = evaluateAdjustments(state, [palier]);
+    expect(adj!.rule).toBe('mechanical_acwr_spike');
+    expect(adj!.reason).toContain('de 3 à 2 tours');
+    const lighter = lib.transformSession(palier, { duration: adj!.factor!, eccentric: adj!.eccentric! }, model);
+    const circuit = lighter.blocks[1]!.circuit!;
+    expect(circuit.rounds).toBe(2);
+    expect(lighter.blocks[1]!.durationS).toBe(lib.circuitDurationS(circuit));
+    expect(lighter.plannedMechanicalLoad).toBeLessThan(lib.sessionTotals(model, palier.blocks).mechanicalLoad);
+
+    // Le pic métabolique seul allège ce qui se court et laisse les trois tours :
+    // c'était la seule règle, et l'excentrique n'était protégé par rien.
+    const metabolic = baseState({
+      today: { date: '2026-09-01', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8, mechanicalAcwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
+    });
+    const [spike] = evaluateAdjustments(metabolic, [palier]);
+    expect(spike!.rule).toBe('acwr_spike');
+    expect(lib.transformSession(palier, spike!.factor!, model).blocks[1]!.circuit!.rounds).toBe(3);
+  });
+
   it('n\'applique qu\'une règle par séance', () => {
     const state = baseState({
       today: { date: '2026-09-01', ctl: 50, atl: 95, tsb: -45, mechanicalTsb: -35, acwr: 1.9, rampRate: 12, monotony: 2.5, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
@@ -1174,7 +1211,7 @@ describe('Plan qui lit le dossier entier', () => {
     const traced = weeks.flatMap((w) => w.sessions).filter((s) => (s.directives?.length ?? 0) > 0);
     expect(traced.length).toBeGreaterThan(20);
     for (const s of traced) {
-      for (const d of s.directives ?? []) {
+      for (const d of lib.describeDirectives(s, directives)) {
         expect(d.origin.quote.length).toBeGreaterThan(10);
         expect(d.origin.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         expect(d.effect.length).toBeGreaterThan(10);
@@ -1182,6 +1219,38 @@ describe('Plan qui lit le dossier entier', () => {
     }
     // Sans directives, rien n'est tracé : le plan ne prétend pas lire ce qu'il ne lit pas.
     expect(plain.flatMap((w) => w.sessions).every((s) => s.directives == null)).toBe(true);
+  });
+});
+
+describe('Ratios de charge du plan écrit', () => {
+  const race: RaceGoal = {
+    id: 'grisemottes', athleteId: 'pierre', name: 'Trail des Grisemottes', date: '2026-10-18', priority: 'A',
+    course: { distanceM: 32000, elevationGainM: 1200, elevationLossM: 1200, technicality: 3, expectedTempC: 12 },
+  };
+  // Trois mois réguliers, puis onze jours de coupure avant le plan.
+  const history = Array.from({ length: 90 }, (_, i) => {
+    const date = new Date(Date.UTC(2026, 5, 16 + i)).toISOString().slice(0, 10);
+    return date >= '2026-09-03'
+      ? { date, metabolic: 0, mechanical: 0 }
+      : { date, metabolic: 50, mechanical: 8 };
+  });
+  const common = {
+    athleteId: 'pierre', model, constraints: PIERRE.constraints, race,
+    currentCtl: 33.3, currentAtl: 18.3, estimatedRaceDurationS: 13162, startDate: '2026-09-14',
+    directives: directivesFor(PIERRE), ambition: PIERRE.ambition,
+  };
+
+  it('montre au moment où le plan s\'écrit le pic excentrique que le TSB ne voit pas', () => {
+    const { plan, ratioCheck } = buildTrainingPlan({ ...common, loadHistory: history });
+    expect(ratioCheck).toMatchObject({ from: '2026-09-14', to: '2026-10-17', historyDays: 90 });
+    const mechanical = ratioCheck.exceedances.filter((e) => e.channel === 'mechanical');
+    expect(mechanical.length).toBeGreaterThan(0);
+    for (const e of ratioCheck.exceedances) {
+      expect(e.value).toBeGreaterThan(e.limit);
+      expect(e.date >= ratioCheck.from && e.date <= ratioCheck.to).toBe(true);
+    }
+    // Le journal du plan le dit, avec la date et la valeur.
+    expect(plan.revisionLog[0]!.summary).toContain(`mécanique ${mechanical[0]!.value.toFixed(2)} le ${mechanical[0]!.date}`);
   });
 });
 

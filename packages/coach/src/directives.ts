@@ -1,8 +1,11 @@
 import type {
-  AppliedDirective, AthleteAmbition, BlockKind, CadenceDirective, IntervalPolicyDirective,
-  PlannedSession, SessionBlock, SessionDurationDirective, SessionSuccessCriterion,
-  SessionType, SuccessCriterionDirective, TrainingDirective, WeeklyFrequencyDirective,
+  AppliedDirective, AthleteAmbition, BlockKind, CadenceDirective, DescribedDirective,
+  IntervalPolicyDirective, PlannedSession, SessionBlock, SessionDurationDirective,
+  SessionSuccessCriterion, SessionType, SuccessCriterionDirective, TrainingDirective,
+  WeeklyFrequencyDirective,
 } from '@cairn/core';
+import { DURABILITY_MEASURABLE } from '@cairn/physiology';
+import { elevationGainOf, isPrescribed, totalDuration } from './sessionLibrary.js';
 
 /**
  * Application des directives du dossier.
@@ -16,7 +19,8 @@ import type {
  * Une directive appliquée laisse une trace sur la séance (`directives`), avec
  * l'extrait qui la fonde. C'est la même exigence que la provenance d'un
  * paramètre physiologique : ce qu'on demande à l'athlète doit être remontable
- * jusqu'à la phrase qui l'a demandé.
+ * jusqu'à la phrase qui l'a demandé. Ce que la directive produit sur la séance
+ * ne s'écrit pas dans la trace : il se lit sur le contenu (`describeDirectives`).
  */
 
 export interface DirectiveSet {
@@ -202,14 +206,115 @@ export const formatDirectiveDuration = (s: number): string =>
     ? `${Math.floor(s / 3600)} h ${String(Math.round((s % 3600) / 60)).padStart(2, '0')}`
     : `${Math.round(s / 60)} min`;
 
-/** Trace par défaut d'une directive appliquée : ce qu'elle a produit. */
-export function applied(directive: TrainingDirective, effect?: string): AppliedDirective {
-  return { directiveId: directive.id, effect: effect ?? describe(directive), origin: directive.origin };
+/** Trace d'une directive appliquée : laquelle, d'où elle vient, et ce dont la semaine dispense. */
+export function applied(
+  directive: TrainingDirective,
+  exemption?: AppliedDirective['exemption'],
+): AppliedDirective {
+  return { directiveId: directive.id, origin: directive.origin, ...(exemption ? { exemption } : {}) };
 }
 
 /** Trace d'une séance façonnée par l'ambition plutôt que par le dossier. */
-export function appliedAmbition(ambition: AthleteAmbition, effect: string): AppliedDirective {
-  return { directiveId: 'ambition', effect, origin: ambition.origin[0] as AppliedDirective['origin'] };
+export function appliedAmbition(ambition: AthleteAmbition): AppliedDirective {
+  return { directiveId: 'ambition', origin: ambition.origin[0] as AppliedDirective['origin'] };
+}
+
+/** Ce que `describeDirectives` lit d'une séance. */
+export type DescribableSession = Pick<
+  PlannedSession,
+  'type' | 'blocks' | 'plannedDurationS' | 'plannedElevationGainM' | 'directives'
+>;
+
+/**
+ * Les traces d'une séance, lues sur son contenu actuel.
+ *
+ * Ce qu'une directive produit — la durée retenue dans une plage, le dénivelé
+ * d'un seul tenant, la cadence tenue — se déduit du contenu, et se déduit ici,
+ * chaque fois qu'on le montre. Écrit dans la trace au moment de la
+ * construction, il survivait aux réécritures : deux rando-courses réécrites à
+ * 3 h / 1 010 m et 3 h 30 / 1 146 m annonçaient encore « 3 h 00 retenues » et
+ * 1 227 / 1 384 m D+. Une trace enregistrée avant ce changement porte encore
+ * cette phrase ; elle n'est plus lue.
+ *
+ * `dossier` est la liste des directives de l'athlète (`directivesFor`) : elle
+ * donne les bornes d'une plage ou d'une fenêtre.
+ */
+export function describeDirectives(
+  session: DescribableSession,
+  dossier: readonly TrainingDirective[],
+): DescribedDirective[] {
+  return (session.directives ?? []).map(({ directiveId, origin, exemption }) => {
+    const trace: AppliedDirective = { directiveId, origin, ...(exemption ? { exemption } : {}) };
+    return { ...trace, effect: effectOf(trace, dossier.find((d) => d.id === directiveId), session) };
+  });
+}
+
+function effectOf(
+  trace: AppliedDirective,
+  directive: TrainingDirective | undefined,
+  s: DescribableSession,
+): string {
+  // Le temps d'un seul tenant : ce qui se court, sans les blocs annexes qu'une
+  // fréquence hebdomadaire a pu adosser à la séance.
+  const running = s.blocks.length
+    ? totalDuration(s.blocks.filter((b) => !isPrescribed(b)))
+    : s.plannedDurationS;
+  const retained = formatDirectiveDuration(running);
+
+  if (trace.directiveId === 'ambition') {
+    const vert = s.blocks.length ? elevationGainOf(s.blocks) : Math.round(s.plannedElevationGainM ?? 0);
+    const measurable =
+      running >= DURABILITY_MEASURABLE.minDurationS && vert >= DURABILITY_MEASURABLE.minVertM;
+    return measurable
+      ? `Sortie longue privilégiée par l'ambition trail long : ${retained} et ${vert} m D+ d'un seul tenant, ` +
+          `de quoi mesurer la perte horaire au lieu de la supposer.`
+      : `Sortie longue privilégiée par l'ambition trail long, mais trop courte cette semaine pour produire ` +
+          `une mesure de durabilité — il y faut ${formatDirectiveDuration(DURABILITY_MEASURABLE.minDurationS)} ` +
+          `et ${DURABILITY_MEASURABLE.minVertM} m D+.`;
+  }
+  if (!directive) return `Consigne « ${trace.directiveId} », absente du dossier actuel.`;
+
+  switch (directive.kind) {
+    case 'session_duration': {
+      const plage = `${formatDirectiveDuration(directive.minS)} – ${formatDirectiveDuration(directive.maxS)}`;
+      if (running >= directive.minS && running <= directive.maxS) {
+        return `Plage prescrite ${plage} : ${retained} retenues.`;
+      }
+      // Dire « plancher dispensé » d'une séance que rien ne dispense serait un
+      // mensonge de plus dans une trace censée expliquer d'où vient la consigne.
+      if (running < directive.minS && trace.exemption) {
+        return (
+          `Plage prescrite ${plage} ; ${retained} retenues — ` +
+          `${trace.exemption === 'deload' ? 'semaine de décharge' : "semaine d'affûtage"}, le plancher ne s'y applique pas.`
+        );
+      }
+      return `Plage prescrite ${plage} ; ${retained} retenues — hors de la plage.`;
+    }
+    case 'cadence_target': {
+      const off = s.blocks.find(
+        (b) =>
+          b.cadenceTargetSpm != null &&
+          (b.cadenceTargetSpm < directive.minSpm || b.cadenceTargetSpm > directive.maxSpm),
+      );
+      return off
+        ? `Cadence hors de la fenêtre ${directive.minSpm}-${directive.maxSpm} ppm : ${off.cadenceTargetSpm} ppm sur « ${off.label} ».`
+        : `Cadence tenue dans la fenêtre ${directive.minSpm}-${directive.maxSpm} ppm.`;
+    }
+    case 'weekly_frequency':
+      return s.blocks.some((b) => b.kind === directive.block)
+        ? describe(directive)
+        : `${BLOCK_LABEL[directive.block]} — ${directive.timesPerWeek} × ${formatDirectiveDuration(directive.durationS)} ` +
+            `par semaine prescrits, absente de cette séance.`;
+    case 'interval_policy': {
+      const format = INTERVAL_FORMAT[s.type];
+      return format
+        ? `Le fractionné de la semaine, format ${format === 'short' ? 'court' : 'moyen'} — ` +
+            `le dossier n'en autorise qu'un, en alternant court et moyen.`
+        : describe(directive);
+    }
+    case 'success_criterion':
+      return describe(directive);
+  }
 }
 
 function describe(d: TrainingDirective): string {

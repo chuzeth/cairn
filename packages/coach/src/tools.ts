@@ -4,20 +4,22 @@ import type {
 import { directivesFor } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration, formatPace,
-  goalProbability, interpretDurability, msToKmh, predictRace, summarizeForCoach, targetRaceDayTsb,
-  verticalCapacity,
+  ACWR_SPIKE, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration,
+  formatPace, goalProbability, interpretAcwr, interpretDurability, msToKmh, predictRace, summarizeForCoach,
+  targetRaceDayTsb, verticalCapacity, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
+import { describeDirectives } from './directives.js';
 import { mondayOf } from './periodization.js';
-import { assumedCtl, buildTrainingPlan, summarizeWeek } from './planner.js';
+import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
 import { PRESCRIPTION_MARGIN } from './plausibility.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
   eccentricStrengthOf, elevationGainOf, renderSession, restateVert, sessionTotals, transformSession,
 } from './sessionLibrary.js';
 import {
-  currentCriticalSpeed, currentModel, fitnessAtPlanStart, loadAthleteState, rebuildPhysiologyModel,
+  currentCriticalSpeed, currentModel, fitnessAtPlanStart, knownLoadsBefore, loadAthleteState,
+  projectPlanRatios, rebuildPhysiologyModel,
 } from './state.js';
 
 /**
@@ -190,7 +192,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_fitness_state',
     description:
-      "État de forme du jour : charge chronique (CTL), charge aiguë (ATL), fraîcheur (TSB) sur les filières métabolique ET mécanique, ratio charge aiguë/chronique, monotonie, vitesse de progression, score de disponibilité et son détail. C'est l'état qui doit dicter toute décision d'ajustement.",
+      "État de forme du jour : charge chronique (CTL), charge aiguë (ATL), fraîcheur (TSB) sur les filières métabolique ET mécanique, ratio charge aiguë/chronique de chacune avec son seuil de pic, monotonie, vitesse de progression, score de disponibilité et son détail. C'est l'état qui doit dicter toute décision d'ajustement.",
     input_schema: obj({}),
   },
   {
@@ -288,7 +290,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'rebuild_plan',
     description:
-      "Reconstruit intégralement le plan d'entraînement jusqu'à une course cible, à partir de l'état de forme actuel. À utiliser lors d'un changement d'objectif, de date, d'ambition, ou après une interruption importante. Renvoie un résumé semaine par semaine.",
+      "Reconstruit intégralement le plan d'entraînement jusqu'à une course cible, à partir de l'état de forme actuel. À utiliser lors d'un changement d'objectif, de date, d'ambition, ou après une interruption importante. Renvoie un résumé semaine par semaine, et les jours où le plan porte un ratio charge aiguë/chronique — métabolique ou mécanique — au-delà de son seuil.",
     input_schema: obj(
       {
         race_id: str("Identifiant de la course cible."),
@@ -301,7 +303,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'modify_session',
     description:
-      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge, ou remplacement du contenu prescrit. C'est le contenu que l'athlète exécute — un titre changé sans ses blocs ne change rien à la séance qu'il fera. Toute modification est journalisée avec sa justification.",
+      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge, ou remplacement du contenu prescrit. C'est le contenu que l'athlète exécute — un titre changé sans ses blocs ne change rien à la séance qu'il fera. Toute modification est journalisée avec sa justification. La réponse porte les jours où le plan, modification comprise, dépasse le seuil de ratio charge aiguë/chronique d'une filière, et ceux d'avant la modification : un dépassement se lit au moment où la séance s'écrit.",
     input_schema: obj(
       {
         session_id: str('Identifiant de la séance.'),
@@ -439,6 +441,9 @@ export async function executeTool(
             durabilite: {
               perte_pct_par_heure: model.durabilityPctPerHour,
               perte_pct_par_1000m_denivele: model.durabilityPctPer1000mVert,
+              // Ce que la perte horaire contient déjà de dénivelé : seul le D+
+              // au-delà de ce rythme ajoute la perte par 1 000 m.
+              denivele_par_heure_des_seances_mesurees_m: model.durabilityVertRateMh ?? 0,
               lecture: interpretDurability(model.durabilityPctPerHour),
             },
             aisance_descente: model.descentSkill ?? 1,
@@ -512,7 +517,21 @@ export async function executeTool(
             tsb: state.today.mechanicalTsb,
             note: 'Fatigue musculaire liée à la descente. Un TSB mécanique très négatif interdit une séance de qualité même si le TSB métabolique est bon.',
           },
-          acwr: { valeur: state.today.acwr, lecture: state.today.acwrLabel, risque: state.today.acwrRisk },
+          acwr: {
+            valeur: state.today.acwr,
+            seuil: ACWR_SPIKE.metabolic,
+            lecture: state.today.acwrLabel,
+            risque: state.today.acwrRisk,
+          },
+          acwr_mecanique: {
+            valeur: state.today.mechanicalAcwr,
+            seuil: ACWR_SPIKE.mechanical,
+            lecture: interpretAcwr(state.today.mechanicalAcwr, ACWR_SPIKE.mechanical).label,
+            risque: interpretAcwr(state.today.mechanicalAcwr, ACWR_SPIKE.mechanical).risk,
+            note:
+              'Ratio de la filière mécanique : descente courue, et circuits de renforcement des séances faites. ' +
+              'Il a son propre seuil, et la règle « mechanical_acwr_spike » le lit.',
+          },
           progression_ctl_par_semaine: state.today.rampRate,
           monotonie: state.today.monotony,
           disponibilite: state.readiness,
@@ -661,6 +680,8 @@ export async function executeTool(
       const plan = await db.getActivePlan(athleteId);
       const sessions = await db.listPlannedSessions(athleteId, from, to);
       const absences = await db.listAbsences(athleteId, { from, to });
+      const profile = await db.getAthlete(athleteId);
+      const dossier = profile ? directivesFor(profile) : [];
 
       return {
         summary: plan
@@ -720,12 +741,16 @@ export async function executeTool(
               extrait: c.origin.quote,
               date_document: c.origin.date,
             })) ?? null,
-            directives_appliquees: s.directives?.map((d) => ({
-              directive: d.directiveId,
-              effet: d.effect,
-              extrait: d.origin.quote,
-              date_document: d.origin.date,
-            })) ?? null,
+            // L'effet se lit sur le contenu actuel, jamais sur ce qu'une trace
+            // en disait quand la séance a été construite.
+            directives_appliquees: s.directives
+              ? describeDirectives(s, dossier).map((d) => ({
+                  directive: d.directiveId,
+                  effet: d.effect,
+                  extrait: d.origin.quote,
+                  date_document: d.origin.date,
+                }))
+              : null,
             ...(detailed ? { detail: renderSession(s) } : {}),
           })),
         },
@@ -891,7 +916,7 @@ export async function executeTool(
       const planStart = mondayOf(startDate ?? iso(new Date()));
       const start = await fitnessAtPlanStart(state, planStart);
 
-      const { plan, weeks, tsbCheck } = buildTrainingPlan({
+      const { plan, weeks, tsbCheck, ratioCheck } = buildTrainingPlan({
         athleteId,
         model: state.model,
         constraints: state.profile.constraints,
@@ -904,6 +929,9 @@ export async function executeTool(
         // Le dossier au complet, pas seulement ses quatre nombres.
         directives: directivesFor(state.profile),
         ambition: state.profile.ambition,
+        // La charge chronique des deux filières, pour que les ratios du plan
+        // se lisent avant qu'il ne soit couru.
+        loadHistory: await knownLoadsBefore(state, planStart),
       });
 
       // L'historique des décisions survit à la reconstruction : on reporte le
@@ -924,7 +952,10 @@ export async function executeTool(
         summary:
           `Plan reconstruit : ${weeks.length} semaines jusqu'à « ${race.name} » — ` +
           `TSB projeté à la veille ${signedTsb(tsbCheck.projected)} pour une cible de ` +
-          `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}`,
+          `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}` +
+          (ratioCheck.exceedances.length
+            ? ` — ⚠ ratio de charge au-delà de son seuil : ${describeRatioExceedances(ratioCheck.exceedances)}`
+            : ''),
         content: {
           plan_id: plan.id,
           course: race.name,
@@ -939,6 +970,12 @@ export async function executeTool(
           cible_atteinte: tsbCheck.onTarget,
           profondeur_affutage: tsbCheck.taperScale,
           cible_manquee_parce_que: tsbCheck.shortfall,
+          ratios_de_charge: {
+            ...ratioContent(ratioCheck.exceedances),
+            du: ratioCheck.from,
+            au: ratioCheck.to,
+            jours_de_charge_connus_avant_le_plan: ratioCheck.historyDays,
+          },
           temps_predit: formatClock(prediction.predictedTimeS),
           charge_de_depart: Math.round(start.ctl),
           charge_de_depart_estimee: ctlIsAssumed,
@@ -1034,25 +1071,49 @@ export async function executeTool(
         if (amendments.length) patch.rationale = [rationale, ...amendments].join(' ');
       }
 
+      // Les ratios de charge que le plan produira, cette modification comprise,
+      // lus avant qu'elle ne s'enregistre : un pic se voit quand la séance
+      // s'écrit, pas le soir où sa charge est réalisée. Ils ne bloquent rien —
+      // les règles de charge décident —, ils se montrent.
+      const ratios = await projectPlanRatios(athleteId, iso(new Date()), {
+        sessionId,
+        patch: patch as Partial<PlannedSession>,
+      });
+      const ratioWarning = ratios?.after.length
+        ? ` ⚠ Ratio de charge projeté au-delà de son seuil : ${describeRatioExceedances(ratios.after)}.`
+        : '';
+
       await db.updateSession(sessionId, patch as never);
       const plan = await db.getActivePlan(athleteId);
       if (plan) {
         await db.appendPlanRevision(plan.plan.id, {
           at: new Date().toISOString(),
           trigger: 'chat_request',
-          summary: rationale,
+          summary: rationale + ratioWarning,
           changes: [{ date: newDate ?? '', before: sessionId, after: JSON.stringify(patch), reason: rationale }],
         });
       }
       return {
-        summary: blocks
-          ? `Séance ${sessionId} modifiée — contenu remplacé (${blocks.length} bloc(s))`
-          : `Séance ${sessionId} modifiée${amendments.length ? ' — le dénivelé a dû céder' : ''}`,
+        summary:
+          (blocks
+            ? `Séance ${sessionId} modifiée — contenu remplacé (${blocks.length} bloc(s))`
+            : `Séance ${sessionId} modifiée${amendments.length ? ' — le dénivelé a dû céder' : ''}`) +
+          (ratios?.after.length ? ` — ⚠ ${ratios.after.length} jour(s) au-delà d'un seuil de ratio de charge` : ''),
         content: {
           session_id: sessionId,
           modifications: patch,
           // Ce que la séance a dû céder pour rester exécutable : à relayer tel quel.
           ...(amendments.length ? { amendements: amendments } : {}),
+          ...(ratios
+            ? {
+                ratios_de_charge: {
+                  ...ratioContent(ratios.after),
+                  du: ratios.from,
+                  au: ratios.to,
+                  depassements_avant_modification: ratioContent(ratios.before).depassements,
+                },
+              }
+            : {}),
           // Ce que l'athlète lira : le contenu prescrit, pas le titre.
           ...(blocks && target
             ? { apercu: renderSession({ title: (title ?? target.title), intent: intent ?? target.intent, blocks }) }
@@ -1256,6 +1317,19 @@ export async function executeTool(
     default:
       throw new Error(`Outil inconnu : ${name}`);
   }
+}
+
+/** Dépassements de ratio de charge, tels que le coach les lit. */
+function ratioContent(exceedances: readonly LoadRatioExceedance[]) {
+  return {
+    seuils: { metabolique: ACWR_SPIKE.metabolic, mecanique: ACWR_SPIKE.mechanical },
+    depassements: exceedances.map((e) => ({
+      date: e.date,
+      filiere: e.channel === 'mechanical' ? 'mécanique' : 'métabolique',
+      ratio: e.value,
+      seuil: e.limit,
+    })),
+  };
 }
 
 /** Recalcule le modèle physiologique — exposé séparément (opération lourde). */
