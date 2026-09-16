@@ -4,26 +4,42 @@
  * s'ils tombent ; Tailscale Serve les expose en HTTPS au réseau privé, et à lui
  * seul — les deux serveurs n'écoutent que sur 127.0.0.1.
  *
- *   npm run service -- install     construit, installe, démarre, expose
- *   npm run service -- update      après un changement de code : reconstruit, redémarre
- *   npm run service -- uninstall   arrête, désinstalle, retire l'exposition
- *   npm run service -- status      état launchd, réponses des serveurs, adresse HTTPS
+ * Le service n'exécute que du code construit et vérifié. `install` et `update`
+ * copient les sources dans un instantané (`.service.nosync/releases/<date>`), y passent
+ * `npm test` et `npx tsc -b`, y construisent le site, puis basculent
+ * `.service.nosync/current` dessus. launchd ne lance que `current` : un plantage, un
+ * réveil ou une ouverture de session relancent le code vérifié, quoi que le
+ * dossier de travail contienne entre-temps.
  *
- * `run` est la commande que launchd exécute. En production rien ne se recharge
- * seul : une modification n'atteint le téléphone qu'après `update`.
+ *   npm run service -- install     vérifie, construit, installe, démarre, expose
+ *   npm run service -- update      après un changement de code : vérifie, construit, bascule
+ *   npm run service -- uninstall   arrête, désinstalle, retire l'exposition et les instantanés
+ *   npm run service -- status      état launchd, instantané, réponses, adresse HTTPS
+ *
+ * `run` est la commande que launchd exécute, depuis l'instantané.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
+  renameSync, rmSync, statSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
 
 const SELF = fileURLToPath(import.meta.url);
-const ROOT = dirname(dirname(SELF));
-const WEB = join(ROOT, 'apps/web');
-const NEXT = join(ROOT, 'node_modules/next/dist/bin/next');
+/** Le code qui s'exécute : le dossier de travail pour les commandes, l'instantané pour `run`. */
+const CODE = dirname(dirname(SELF));
+/** Le dépôt, où vivent la base, `node_modules` et les instantanés (`<dépôt>/.service.nosync/releases/<date>`). */
+const REPO = basename(dirname(CODE)) === 'releases' ? dirname(dirname(dirname(CODE))) : CODE;
+/** `.nosync` : Documents est synchronisé par iCloud, les instantanés et leurs builds n'ont pas à y monter. */
+const SERVICE = join(REPO, '.service.nosync');
+const RELEASES = join(SERVICE, 'releases');
+const CURRENT = join(SERVICE, 'current');
+const LOCK = join(SERVICE, 'lock');
+const NEXT = join(REPO, 'node_modules/next/dist/bin/next');
 
 const LABEL = 'com.pchuze.cairn';
 const DOMAIN = `gui/${process.getuid()}`;
@@ -32,17 +48,15 @@ const LOG = join(homedir(), 'Library/Logs/Cairn/cairn.log');
 
 /** Le service garde les ports documentés ; `npm run dev` prend 3001 et 4001. */
 const WEB_PORT = 3000;
-const API_PORT = Number(readEnv().API_PORT ?? 4000);
-/** Dossier de build du service, distinct du `.next` des builds de vérification. */
-const DIST_DIR = '.next-service';
+const API_PORT = Number(readEnv(CODE).API_PORT ?? 4000);
 /** Tailscale standalone n'installe pas de commande dans le PATH : c'est le binaire de l'application. */
 const TAILSCALE = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function readEnv() {
+function readEnv(dir) {
   try {
-    return parseEnv(readFileSync(join(ROOT, '.env'), 'utf8'));
+    return parseEnv(readFileSync(join(dir, '.env'), 'utf8'));
   } catch {
     return {};
   }
@@ -58,13 +72,25 @@ function run() {
   // réveil. `-w` la lie à ce processus : elle tombe avec lui, quoi qu'il arrive.
   spawn('/usr/bin/caffeinate', ['-s', '-w', String(process.pid)], { stdio: 'ignore' }).unref();
 
-  const env = { ...process.env, NODE_ENV: 'production', CAIRN_WEB_DIST_DIR: DIST_DIR };
+  // La base appartient au dépôt, pas à l'instantané : `packages/db` résout un
+  // chemin relatif depuis l'emplacement de son propre code, qui est ici la
+  // copie — il y créerait une base vide à côté de la vraie, sans rien signaler.
+  const raw = readEnv(CODE).DATABASE_URL ?? 'file:./data/cairn.sqlite';
+  const database = raw.startsWith('file:') ? `file:${resolve(REPO, raw.slice(5))}` : raw;
+  if (database.startsWith('file:') && !existsSync(database.slice(5))) {
+    log('service', `base introuvable : ${database.slice(5)}`);
+    process.exit(1);
+  }
+
+  const env = { ...process.env, NODE_ENV: 'production', DATABASE_URL: database };
   const stdio = ['ignore', 'pipe', 'pipe'];
   const servers = {
-    api: spawn(process.execPath, [`--env-file-if-exists=${join(ROOT, '.env')}`, '--import', 'tsx', 'src/index.ts'], {
-      cwd: join(ROOT, 'apps/api'), env, stdio,
+    api: spawn(process.execPath, [`--env-file-if-exists=${join(CODE, '.env')}`, '--import', 'tsx', 'src/index.ts'], {
+      cwd: join(CODE, 'apps/api'), env, stdio,
     }),
-    web: spawn(process.execPath, [NEXT, 'start', '-p', String(WEB_PORT), '-H', '127.0.0.1'], { cwd: WEB, env, stdio }),
+    web: spawn(process.execPath, [NEXT, 'start', '-p', String(WEB_PORT), '-H', '127.0.0.1'], {
+      cwd: join(CODE, 'apps/web'), env, stdio,
+    }),
   };
 
   let stopping = false;
@@ -93,7 +119,9 @@ function run() {
 
   const t0 = Date.now();
   void waitReady(120_000).then((ok) =>
-    log('service', ok ? `prêt en ${((Date.now() - t0) / 1000).toFixed(1)} s` : 'ne répond toujours pas après 2 min'),
+    log('service', ok
+      ? `prêt en ${((Date.now() - t0) / 1000).toFixed(1)} s, instantané ${basename(CODE)}`
+      : 'ne répond toujours pas après 2 min'),
   );
 }
 
@@ -134,16 +162,20 @@ async function probe(port, path) {
 }
 
 /**
- * Prêt quand les deux serveurs répondent, puis quand l'état du jour traverse le
- * relais — ce qui chauffe au passage le chemin qu'ouvre le téléphone. L'API est
+ * Prêt quand l'état du jour traverse le relais du site jusqu'à l'API — ce qui
+ * chauffe au passage le chemin qu'ouvre le téléphone. `/` ne prouve rien : un
+ * `next dev` d'un autre projet peut écouter sur le port 3000 de toutes les
+ * interfaces et répondre à la place d'un site pas encore démarré. L'API est
  * interrogée directement d'abord : par le relais, son absence au démarrage
  * remplirait le journal d'erreurs de connexion.
  */
 async function waitReady(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const [api, page] = await Promise.all([probe(API_PORT, '/health'), probe(WEB_PORT, '/')]);
-    if (api.ok && page.ok) return (await probe(WEB_PORT, '/api/state')).ok;
+    if ((await probe(API_PORT, '/health')).ok) {
+      const state = await probe(WEB_PORT, '/api/state');
+      if (state.ok && state.body.includes('"athlete"')) return true;
+    }
     await sleep(500);
   }
   return false;
@@ -154,43 +186,35 @@ async function waitReady(timeoutMs) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function install() {
-  build();
+  lock();
+  const dir = release();
   mkdirSync(dirname(LOG), { recursive: true });
+  mkdirSync(dirname(PLIST), { recursive: true });
   rotateLog();
-  writeFileSync(PLIST, plist());
   await unload();
-  const loaded = launchctl('bootstrap', DOMAIN, PLIST);
-  if (loaded.status !== 0) fail(`launchctl bootstrap : ${loaded.stderr.trim()}`);
-  await started(null);
+  writeFileSync(PLIST, plist());
+  await activate(dir);
   expose();
   await status();
 }
 
 async function update() {
-  const previous = servicePid();
-  if (previous == null) fail('Service non installé : npm run service -- install');
-  build();
+  if (servicePid() == null) fail('Service non installé : npm run service -- install');
+  lock();
+  const dir = release();
   rotateLog();
-  launchctl('kickstart', '-k', `${DOMAIN}/${LABEL}`);
-  await started(previous);
+  await activate(dir);
   expose();
   await status();
 }
 
 async function uninstall() {
-  const tailscale = tailnet();
-  if (!tailscale.error && serving()) tailscaleCli('serve', '--https=443', 'off');
+  lock();
+  if (!tailnet().error && serving()) tailscaleCli('serve', '--https=443', 'off');
   await unload();
   rmSync(PLIST, { force: true });
+  rmSync(SERVICE, { recursive: true, force: true });
   console.log(`Service désinstallé. Journaux conservés : ${LOG}`);
-}
-
-/** `bootout` rend la main avant que launchd ait fini : on attend que le service ait disparu. */
-async function unload() {
-  if (servicePid() == null) return;
-  launchctl('bootout', `${DOMAIN}/${LABEL}`);
-  for (let i = 0; servicePid() != null && i < 100; i++) await sleep(200);
-  if (servicePid() != null) fail("launchd n'a pas déchargé le service.");
 }
 
 async function status() {
@@ -198,7 +222,9 @@ async function status() {
   if (job.status !== 0) return console.log(`${LABEL} : non installé`);
   const field = (key) => new RegExp(`\\n\\s*${key} = ([^\\n]+)`).exec(job.stdout)?.[1];
   const pid = field('pid');
+  const current = currentRelease();
   console.log(`launchd   ${LABEL} : ${field('state')}, pid ${pid ?? '—'}, ${field('runs')} démarrage(s), dernier arrêt ${field('last exit code')}`);
+  console.log(`code      instantané ${current ? basename(current) : 'aucun'}`);
 
   const [page, state, health] = [await probe(WEB_PORT, '/'), await probe(WEB_PORT, '/api/state'), await probe(API_PORT, '/health')];
   console.log(`site      http://127.0.0.1:${WEB_PORT}/ → ${page.status} en ${page.ms} ms ; /api/state → ${state.status} en ${state.ms} ms`);
@@ -219,38 +245,116 @@ async function status() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Instantanés
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * `next build` vide son dossier avant de compiler : une copie (clone APFS,
- * instantanée) laisse le service sur la version précédente si le build échoue.
- * Next réécrit aussi `next-env.d.ts` vers ce dossier ; le fichier est suivi par
- * git, il retrouve son contenu.
+ * Un instantané : les sources de cet instant, vérifiées et construites sur place.
+ * Ce qui tourne ensuite est exactement ce qui a été vérifié — une modification
+ * faite pendant `update` n'y entre pas, elle attendra le suivant.
  */
-function build() {
-  const dist = join(WEB, DIST_DIR);
-  const backup = `${dist}.prev`;
-  const nextEnv = join(WEB, 'next-env.d.ts');
-  const typings = readFileSync(nextEnv);
-
-  rmSync(backup, { recursive: true, force: true });
-  if (existsSync(dist)) execFileSync('/bin/cp', ['-cR', dist, backup]);
-  const { status: code } = spawnSync(process.execPath, [NEXT, 'build'], {
-    cwd: WEB,
-    stdio: 'inherit',
-    env: { ...process.env, NODE_ENV: 'production', CAIRN_WEB_DIST_DIR: DIST_DIR },
-  });
-  writeFileSync(nextEnv, typings);
-
-  if (code !== 0) {
-    if (existsSync(backup)) {
-      rmSync(dist, { recursive: true, force: true });
-      renameSync(backup, dist);
-      fail('Build du site en échec : le service reste sur la version précédente.');
+function release() {
+  const dir = join(RELEASES, new Date().toLocaleString('sv-SE').replace(' ', '_').replaceAll(':', ''));
+  copySources(dir);
+  const steps = [
+    ['npm test', 'npm', ['test'], dir],
+    ['npx tsc -b', 'npx', ['tsc', '-b'], dir],
+    ['next build', process.execPath, [NEXT, 'build'], join(dir, 'apps/web')],
+  ];
+  for (const [label, command, args, cwd] of steps) {
+    console.log(`\n── ${label} (${dir})`);
+    if (spawnSync(command, args, { cwd, stdio: 'inherit' }).status !== 0) {
+      rmSync(dir, { recursive: true, force: true });
+      const current = currentRelease();
+      fail(`${label} en échec : rien n'est remplacé, le service reste sur ${current ? `l'instantané ${basename(current)}` : 'ce qui tourne'}.`);
     }
-    fail('Build du site en échec.');
   }
-  rmSync(backup, { recursive: true, force: true });
+  return dir;
 }
+
+/**
+ * Les fichiers suivis ou non ignorés par git, plus `.env` : ce que `npm test` et
+ * `npx tsc -b` liraient dans le dossier de travail. Sans le verrou npm, Next
+ * prend le dépôt pour racine, là où sont les `node_modules` ; les paquets
+ * `@cairn/*`, eux, se résolvent dans la copie et jamais dans le dépôt.
+ */
+function copySources(dir) {
+  const files = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: REPO, encoding: 'utf8' });
+  for (const file of [...files.split('\0'), '.env']) {
+    const from = join(REPO, file);
+    if (!file || file === 'package-lock.json' || !existsSync(from) || !statSync(from).isFile()) continue;
+    mkdirSync(dirname(join(dir, file)), { recursive: true });
+    copyFileSync(from, join(dir, file), constants.COPYFILE_FICLONE);
+  }
+  mkdirSync(join(dir, 'node_modules/@cairn'), { recursive: true });
+  symlinkSync(join(REPO, 'node_modules/.bin'), join(dir, 'node_modules/.bin'));
+  for (const pkg of readdirSync(join(dir, 'packages'))) {
+    const { name } = JSON.parse(readFileSync(join(dir, 'packages', pkg, 'package.json'), 'utf8'));
+    symlinkSync(join('../../packages', pkg), join(dir, 'node_modules', name));
+  }
+}
+
+/**
+ * Bascule `current` sur le nouvel instantané et redémarre. L'ancien reste en
+ * place tant que le nouveau n'a pas répondu ; s'il ne répond pas, `current`
+ * revient sur l'ancien et le service redémarre dessus.
+ */
+async function activate(dir) {
+  const previous = currentRelease();
+  point(dir);
+  if (!(await restart())) {
+    if (!previous) {
+      await unload();
+      fail('Le nouvel instantané ne démarre pas.', true);
+    }
+    point(previous);
+    const back = await restart();
+    rmSync(dir, { recursive: true, force: true });
+    fail(`Le nouvel instantané ne démarre pas : ${back ? 'retour' : 'échec du retour'} sur l'instantané ${basename(previous)}.`, true);
+  }
+  for (const name of readdirSync(RELEASES)) {
+    if (join(RELEASES, name) !== dir) rmSync(join(RELEASES, name), { recursive: true, force: true });
+  }
+}
+
+/** `rename` remplace le lien d'un seul coup : launchd ne lit jamais un `current` absent. */
+function point(dir) {
+  const next = `${CURRENT}.next`;
+  rmSync(next, { force: true });
+  symlinkSync(join('releases', basename(dir)), next);
+  renameSync(next, CURRENT);
+}
+
+function currentRelease() {
+  try {
+    return realpathSync(CURRENT);
+  } catch {
+    return null;
+  }
+}
+
+/** Deux commandes simultanées se disputeraient `current`, launchd et les ports. */
+function lock() {
+  mkdirSync(dirname(LOCK), { recursive: true });
+  try {
+    writeFileSync(LOCK, String(process.pid), { flag: 'wx' });
+  } catch {
+    const holder = Number(readFileSync(LOCK, 'utf8'));
+    let running = true;
+    try {
+      process.kill(holder, 0);
+    } catch (e) {
+      running = e.code === 'EPERM';
+    }
+    if (running) fail(`Une autre commande du service est en cours (pid ${holder}).`);
+    writeFileSync(LOCK, String(process.pid));
+  }
+  process.on('exit', () => rmSync(LOCK, { force: true }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// launchd, journal, Tailscale
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** launchd rouvre le journal à chaque démarrage : le renommer juste avant suffit à le faire tourner. */
 function rotateLog() {
@@ -269,7 +373,7 @@ function plist() {
 <dict>
   <key>Label</key>${string(LABEL)}
   <key>ProgramArguments</key>
-  <array>${string(process.execPath)}${string(SELF)}${string('run')}</array>
+  <array>${string(process.execPath)}${string(join(CURRENT, 'scripts/service.mjs'))}${string('run')}</array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>${string(`${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`)}
@@ -295,14 +399,27 @@ function servicePid() {
   return Number(/\n\s*pid = (\d+)/.exec(job.stdout)?.[1] ?? 0);
 }
 
-/** Attend un processus neuf, puis des serveurs qui répondent. */
-async function started(previous) {
-  const deadline = Date.now() + 90_000;
+/** (Re)démarre le job, puis attend un processus neuf qui réponde. */
+async function restart() {
+  const previous = servicePid();
+  const res = previous == null
+    ? launchctl('bootstrap', DOMAIN, PLIST)
+    : launchctl('kickstart', '-k', `${DOMAIN}/${LABEL}`);
+  if (res.status !== 0) fail(`launchctl : ${res.stderr.trim()}`);
+  const deadline = Date.now() + 60_000;
   for (let pid = servicePid(); !pid || pid === previous; pid = servicePid()) {
-    if (Date.now() > deadline) fail("launchd n'a pas démarré le service.", true);
+    if (Date.now() > deadline) return false;
     await sleep(200);
   }
-  if (!(await waitReady(90_000))) fail('Le service tourne mais ne répond pas.', true);
+  return waitReady(60_000);
+}
+
+/** `bootout` rend la main avant que launchd ait fini : on attend que le service ait disparu. */
+async function unload() {
+  if (servicePid() == null) return;
+  launchctl('bootout', `${DOMAIN}/${LABEL}`);
+  for (let i = 0; servicePid() != null && i < 100; i++) await sleep(200);
+  if (servicePid() != null) fail("launchd n'a pas déchargé le service.");
 }
 
 function tailscaleCli(...args) {

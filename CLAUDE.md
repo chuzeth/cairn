@@ -32,8 +32,9 @@ npm run dev                           npm run sync -w @cairn/api -- sync [n]
 npm run service -- update             npm run service -- status
 ```
 
-Le téléphone ouvre le service installé, en production : un changement de code ne
-l'atteint qu'après `npm run service -- update`.
+Le téléphone ouvre le service installé, qui tourne sur un instantané vérifié : un
+changement de code ne l'atteint qu'après `npm run service -- update`, qui refuse
+de remplacer ce qui tourne si `npm test` ou `npx tsc -b` échoue.
 
 ## Méthode de travail
 
