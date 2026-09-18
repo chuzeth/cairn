@@ -85,6 +85,38 @@ export function blockDuration(seconds: number | null | undefined): string {
 }
 
 /**
+ * Minutes et secondes notées ′ et ″, comme dans le compte rendu du test d'effort.
+ *
+ * C'est la notation de la consigne : « 8 × 90″ » se lit d'un coup d'œil là où
+ * « 8 × 1 min 30 s » se déchiffre. Au-delà de l'heure, l'apostrophe ne tient
+ * plus le nombre et l'heure reprend la main.
+ */
+export function prime(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return '';
+  const s = Math.round(seconds);
+  if (s < 120) return `${s}\u2033`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const rest = s % 60;
+    return rest === 0 ? `${m}\u2032` : `${m}\u2032${String(rest).padStart(2, '0')}\u2033`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return m === 0 ? `${h}\u00a0h` : `${h}\u00a0h\u00a0${String(m).padStart(2, '0')}`;
+}
+
+/** La durée écrite en toutes lettres, pour la phrase qui ouvre la journée. */
+export function spelledDuration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return '';
+  const s = Math.round(seconds);
+  if (s < 3600) return `${Math.round(s / 60)} minutes`;
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  if (m === 0) return h === 1 ? 'une heure' : `${h} heures`;
+  return `${h}\u00a0h\u00a0${String(m).padStart(2, '0')}`;
+}
+
+/**
  * Ponctuation française : l'espace qui précède « : » ou ferme un guillemet ne
  * doit pas se retrouver en début de ligne. À 390 px, une ligne sur trois casse
  * à cet endroit.
@@ -94,6 +126,7 @@ export const nbsp = (text: string): string =>
 
 const DAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+const MONTHS_LONG = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
 export function frDate(isoDate: string, opts: { weekday?: boolean; year?: boolean } = {}): string {
   const d = new Date(isoDate.length <= 10 ? `${isoDate}T12:00:00Z` : isoDate);
@@ -102,6 +135,27 @@ export function frDate(isoDate: string, opts: { weekday?: boolean; year?: boolea
   const prefix = opts.weekday ? `${DAYS[d.getDay()]} ` : '';
   const suffix = opts.year ? ` ${d.getFullYear()}` : '';
   return `${prefix}${day}${suffix}`;
+}
+
+/** « Mardi 15 septembre » — la date telle qu'on la dit, en haut de l'écran du matin. */
+export function longDate(isoDate: string): string {
+  const d = new Date(isoDate.length <= 10 ? `${isoDate}T12:00:00Z` : isoDate);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  const day = DAYS[d.getDay()] as string;
+  return `${day[0]!.toUpperCase()}${day.slice(1)} ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`;
+}
+
+/**
+ * L'objectif en un mot.
+ *
+ * « Trail des Grisemottes » ne tient pas à côté de la date sur 390 px, et ce
+ * n'est pas la catégorie de l'épreuve qu'on compte en J−33 : c'est son nom.
+ */
+export function shortRace(name: string): string {
+  return name
+    .replace(/^[^\p{L}\d]+/u, '')
+    .replace(/^(?:ultra[-\s]?)?(?:trail|course|marathon|semi|corrida|ekiden|kilomètre vertical|km vertical)\s+(?:de la |de l'|des |du |de |d'|le |la |les )?/iu, '')
+    .trim() || name;
 }
 
 export function shortDate(isoDate: string): string {
@@ -364,9 +418,12 @@ export interface SessionRow {
     label: string; zone: string; repeat?: number; durationS?: number; distanceM?: number;
     /** Bloc non couru dont la fréquence est prescrite au dossier. */
     kind?: 'mobility' | 'respiratory';
+    /** Dénivelé du bloc, par répétition et hors récupération — le relief du profil. */
+    elevationGainM?: number; elevationLossM?: number;
     hrRange?: [number, number]; paceRange?: [string, string]; vamTargetMh?: number;
     cadenceTargetSpm?: number; notes?: string;
-    recovery?: { durationS: number; zone: string; active: boolean };
+    /** La récupération porte son propre dénivelé : la redescente d'une côte, la remontée d'une descente. */
+    recovery?: { durationS: number; zone: string; active: boolean; elevationGainM?: number; elevationLossM?: number };
     /** Contenu excentrique du bloc : c'est lui qui porte la charge mécanique. */
     circuit?: { rounds: number; exercises: { movement: string; reps: number }[] };
   }[];

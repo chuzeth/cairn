@@ -1,50 +1,59 @@
 /*
- * Système visuel de Cairn.
+ * Système visuel de Cairn — direction « Profil ».
  *
- * Registre : instrument de laboratoire, pas application grand public. Fond
- * profond, surfaces à peine détachées, densité d'information élevée, aucune
- * décoration gratuite. Les seules couleurs saturées portent du sens :
- * cyan = filière métabolique, ambre = filière mécanique, vert/ambre/rouge = état.
+ * Registre : la carte d'état-major et le dossard. Fond ardoise, blanc pierre,
+ * deux gris de sentier, un filet ; l'ocre des courbes de niveau pour ce qui
+ * monte. Aucune carte bordée, aucune pastille, aucune micro-étiquette en
+ * capitales : ce qui structure, c'est l'échelle typographique et le blanc.
+ *
+ * Les seules couleurs qui s'ajoutent portent du sens sur les vues de bureau —
+ * filière métabolique, filière mécanique, état — et elles sont tirées de la même
+ * terre que l'ocre, pour que l'instrument et l'écran du matin restent un seul
+ * produit. Sur l'écran du matin, l'ocre ne dit qu'une chose : ça monte.
  */
 
 :root {
   /* Fonds */
-  --bg: #08090d;
-  --bg-elev: #0e1116;
-  --bg-elev-2: #141821;
-  --bg-inset: #0b0d12;
+  --bg: #0e1316;
+  --bg-elev: #131a1d;
+  --bg-elev-2: #1a2225;
+  --bg-inset: #0b1012;
 
   /* Traits */
-  --border: #1c212c;
-  --border-strong: #2a3140;
+  --border: #232a2d;
+  --border-strong: #343d40;
 
   /* Texte */
-  --text: #e9ecf1;
-  --text-dim: #9aa3b2;
-  --text-faint: #616b7d;
+  --text: #ece8df;
+  --text-dim: #98a09c;
+  --text-faint: #5d6663;
+
+  /* L'ocre des courbes de niveau. Sur l'écran du matin : les montées, rien d'autre. */
+  --ochre: #d6a15c;
 
   /* Sémantique */
-  --metabolic: #4cc9f0;
-  --metabolic-dim: #1d5670;
-  --mechanical: #f4a261;
-  --mechanical-dim: #6b4526;
-  --good: #4ade80;
-  --watch: #fbbf24;
-  --warn: #f87171;
-  --accent: #7dd3a0;
+  --metabolic: #6f9ba6;
+  --metabolic-dim: #2c4850;
+  --mechanical: #d6a15c;
+  --mechanical-dim: #5d4527;
+  --good: #93a97e;
+  --watch: #d6a15c;
+  --warn: #c2705d;
+  --accent: #d6a15c;
 
   /* Zones d'entraînement */
-  --z1: #64748b;
-  --z2: #4cc9f0;
-  --z3: #4ade80;
-  --z4: #fbbf24;
-  --z5: #f87171;
+  --z1: #5d6663;
+  --z2: #6f9ba6;
+  --z3: #93a97e;
+  --z4: #d6a15c;
+  --z5: #c2705d;
 
   --radius: 10px;
   --radius-sm: 6px;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.3);
 
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  /* Archivo, chargée par next/font : rien ne part vers Google à l'ouverture. */
+  --font: var(--font-archivo), "Arial Narrow", system-ui, -apple-system, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
   color-scheme: dark;
@@ -71,6 +80,7 @@ html, body {
 
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; font-size: inherit; }
+:focus-visible { outline: 1px solid var(--ochre); outline-offset: 3px; }
 
 /* ── Structure ────────────────────────────────────────────────────────────── */
 
@@ -134,20 +144,21 @@ button { font-family: inherit; font-size: inherit; }
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
   /* Opaque, pas translucide : la page défile dessous, et un flou qui ne se
      calcule pas rendrait la barre illisible au lieu de la rendre discrète. */
-  background: var(--bg-elev);
+  background: var(--bg);
   border-top: 1px solid var(--border);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding: 0 8px env(safe-area-inset-bottom);
 }
 .tab {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  min-height: 56px; padding: 8px 4px 7px;
-  font-size: 10.5px; font-weight: 550;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 52px; padding: 6px 4px;
+  font-size: 10.5px; font-weight: 500;
   color: var(--text-faint); background: none; border: none; cursor: pointer;
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
-.tab .nav-icon { width: 21px; height: 21px; color: inherit; }
-.tab[data-active="true"] { color: var(--text); }
-.tab[data-active="true"] .nav-icon { color: var(--accent); }
+.tab .nav-icon { width: 22px; height: 22px; color: inherit; }
+/* L'onglet actif se distingue par la pierre, pas par l'ocre : l'ocre ne dit que
+   les montées, et la barre est sous le profil en permanence. */
+.tab[data-active="true"], .tab[data-active="true"] .nav-icon { color: var(--text); }
 
 .sheet-veil { display: none; position: fixed; inset: 0; z-index: 50; background: rgba(4, 5, 8, 0.62); }
 .sheet {
@@ -166,7 +177,7 @@ button { font-family: inherit; font-size: inherit; }
 }
 .sheet-link .nav-icon { width: 18px; height: 18px; }
 .sheet-link[data-active="true"] { background: var(--bg-elev-2); color: var(--text); }
-.sheet-link[data-active="true"] .nav-icon { color: var(--accent); }
+.sheet-link[data-active="true"] .nav-icon { color: inherit; }
 .sheet-foot { margin-top: 8px; padding: 12px 10px 0; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }
 
 /* Au téléphone, la barre latérale disparaît au profit d'une barre d'onglets
@@ -175,7 +186,7 @@ button { font-family: inherit; font-size: inherit; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
-  .main { padding: 18px 16px calc(76px + env(safe-area-inset-bottom)); }
+  .main { padding: calc(env(safe-area-inset-top) + 26px) 20px calc(96px + env(safe-area-inset-bottom)); }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .tabbar { display: grid; }
   .sheet-veil { display: block; }
@@ -413,86 +424,141 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   .checkin-send p { font-size: 11px; }
 }
 
-/* ── Le chemin du matin ───────────────────────────────────────────────────── */
+/* ── Le chemin du matin ──────────────────────────────────────────────────── */
 
-/* Une colonne, lue de haut en bas : la séance du jour, la réserve du système,
-   puis les chiffres. Les gros boutons de réponse (`.q-*`) sont ceux du point du
-   jour — même geste, même échelle, mêmes valeurs enregistrées. */
-.morning { max-width: 560px; display: flex; flex-direction: column; gap: 12px; }
-.morning .card { padding: 15px 16px; }
+/* Une colonne, lue de haut en bas : la date et l'échéance, la séance dessinée
+   puis dite, la réserve du jour, la question du matin. Aucune carte bordée : ce
+   qui sépare, ce sont le blanc et l'échelle typographique. */
+.morning { max-width: 420px; display: flex; flex-direction: column; gap: 22px; }
 
-.morning-head { margin-bottom: 2px; }
-.morning-date { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); font-weight: 600; }
-.morning-title { font-size: 27px; line-height: 1.16; letter-spacing: -0.03em; font-weight: 650; margin: 7px 0 0; }
-.morning-lede { font-size: 14px; line-height: 1.5; color: var(--text-dim); margin: 9px 0 0; }
-.morning-inline { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.morning-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600; margin-top: 6px; }
-.morning-after { font-size: 12.5px; line-height: 1.5; color: var(--text-faint); margin: 2px 2px 0; }
-.morning-done { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 550; }
+.m-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; color: var(--text-dim); }
+.m-goal { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
 
-/* ── La séance, telle qu'on la fait ───────────────────────────────────────── */
-
-.session-blocks { display: flex; flex-direction: column; gap: 13px; }
-.block { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 12px; align-items: start; }
-.block-time { font-size: 13px; font-weight: 600; text-align: right; padding-top: 1px; }
-.block-repeat { display: block; font-size: 11px; font-weight: 500; color: var(--text-faint); }
-.block-label { font-size: 14px; font-weight: 550; line-height: 1.3; }
-.block-targets { display: flex; flex-wrap: wrap; gap: 3px 9px; margin-top: 4px; color: var(--text-faint); }
-.block-zone { font-weight: 700; color: var(--text-dim); }
-.block-zone[data-zone="Z1"] { color: var(--z1); }
-.block-zone[data-zone="Z2"] { color: var(--z2); }
-.block-zone[data-zone="Z3"] { color: var(--z3); }
-.block-zone[data-zone="Z4"] { color: var(--z4); }
-.block-zone[data-zone="Z5"] { color: var(--z5); }
-.block-note { font-size: 12px; line-height: 1.45; color: var(--text-dim); margin-top: 5px; }
-
-.session-success {
-  margin: 13px 0 0; padding: 8px 11px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  font-size: 12.5px; color: var(--text-dim);
-  background: color-mix(in srgb, var(--good) 8%, transparent); border-left: 2px solid var(--good);
+.m-head { display: flex; flex-direction: column; gap: 8px; }
+/* Archivo étroite : à 54 px, la largeur 70 % fait tenir « 8 côtes de 90″ » sur
+   une ligne là où la largeur normale en prendrait deux. */
+.m-title {
+  margin: 0; font-stretch: 70%; font-weight: 640; font-size: 54px; line-height: 0.92;
+  letter-spacing: -0.005em; color: var(--text); overflow-wrap: break-word; text-wrap: balance;
 }
-.session-success strong { color: var(--text); font-weight: 600; }
-.session-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border);
-}
-.disclose {
-  background: none; border: none; padding: 4px 0; cursor: pointer;
-  font-size: 12px; color: var(--text-dim);
+.m-sub { margin: 0; font-size: 15px; line-height: 1.4; color: var(--text-dim); }
+.m-inline { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+
+.m-rule { height: 1px; background: var(--border); }
+.m-label { font-size: 12.5px; color: var(--text-faint); }
+.m-after { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--text-faint); }
+.m-after[data-warn] { color: var(--warn); }
+.m-faint { color: var(--text-faint); }
+
+/* Ces liens se touchent au pouce : le trait fait 13 px, la cible 30. */
+.m-link, .m-action, .m-more {
+  font-size: 13px; color: var(--text-dim); background: none; border: 0; padding: 8px 0 6px; cursor: pointer;
   text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong);
+  text-align: left;
 }
-.session-why { display: flex; flex-direction: column; gap: 9px; margin-top: 11px; color: var(--text-dim); line-height: 1.5; }
-.session-why p { margin: 0; }
+.m-more { font-size: 12.5px; }
+.m-actions { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 
-/* ── La réserve du jour ───────────────────────────────────────────────────── */
+/* ── La séance : le profil, puis la consigne ─────────────────────────────── */
 
-.avail-score { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.avail-value { font-size: 34px; font-weight: 650; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
-.avail-reco { font-size: 14px; line-height: 1.5; margin: 9px 0 0; }
-.avail-ask { margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--border); }
-.avail-ask .q-head { margin-bottom: 9px; }
-.avail-after { margin-top: 13px; }
-.avail-adjust {
-  margin-top: 9px; padding: 10px 12px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--bg-inset); border-left: 2px solid var(--accent);
+.m-session, .m-next { display: flex; flex-direction: column; gap: 16px; }
+.m-next { gap: 8px; }
+.m-title-next { font-size: 30px; }
+
+/* Le tracé n'a pas d'axe vertical : la hauteur ne se lit pas, elle se
+   reconnaît. Le nombre est dans la légende. */
+.m-trace { display: block; width: 100%; height: auto; overflow: visible; }
+.m-trace[data-muted="true"] { opacity: 0.45; }
+.m-trace-ground { fill: none; stroke: var(--border); stroke-width: 1; }
+.m-trace-line { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.m-trace-line[data-tone="climb"] { stroke: var(--ochre); }
+.m-trace-line[data-tone="work"] { stroke: var(--text); }
+.m-trace-line[data-tone="ease"] { stroke: var(--text-faint); }
+.m-trace-caption { font-size: 11px; fill: var(--text-faint); }
+.m-trace-caption[data-climb="true"] { fill: var(--ochre); }
+.m-trace-mark { font-size: 11px; fill: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+.m-blocks { display: flex; flex-direction: column; gap: 12px; }
+.m-block { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: baseline; }
+.m-block-time {
+  font-stretch: 70%; font-size: 20px; font-weight: 560; line-height: 1.1;
+  color: var(--text); font-variant-numeric: tabular-nums;
 }
-.avail-adjust .msg-content p:last-child { margin-bottom: 0; }
-.avail-more {
-  display: inline-block; margin-top: 13px; padding: 6px 0;
-  font-size: 13px; font-weight: 550; color: var(--accent);
-}
+/* L'ocre ne dit qu'une chose, ici comme sur le tracé : ça monte. */
+.m-block-time[data-climb="true"] { color: var(--ochre); }
+.m-block-body { font-size: 14px; line-height: 1.4; color: var(--text); }
+.m-block-note { display: block; color: var(--text-faint); }
 
-/* ── Les chiffres, en dernier ─────────────────────────────────────────────── */
+.m-success { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-dim); }
+.m-session-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text-faint); }
+.m-why { display: flex; flex-direction: column; gap: 9px; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+.m-why p { margin: 0; }
 
-.figures { display: flex; flex-direction: column; gap: 12px; }
-.figure { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: baseline; }
-.figure-name { font-size: 13px; color: var(--text-dim); }
-.figure-value { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; }
-.figure-note { grid-column: 1 / -1; }
-.figure-race {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+.m-quote {
+  margin: 0; padding-left: 12px; border-left: 1px solid var(--border-strong);
+  font-size: 14px; line-height: 1.45; color: var(--text-dim);
 }
+.m-note { display: flex; flex-direction: column; gap: 6px; }
+.m-note-head { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.m-note-date { font-size: 12px; color: var(--text-faint); }
+
+/* ── La réserve du jour ──────────────────────────────────────────────────── */
+
+/* La disponibilité se lit à la forme avant de se lire au nombre : trois barres,
+   dont le verdict occupe deux. Une couleur d'état demanderait de traduire ; une
+   barre remplie, non. */
+.m-avail { display: flex; flex-direction: column; gap: 18px; }
+.m-avail-grid { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: start; }
+.m-gauge { display: flex; flex-direction: column; gap: 9px; }
+.m-score {
+  font-stretch: 70%; font-size: 44px; font-weight: 600; line-height: 0.9;
+  color: var(--text); font-variant-numeric: tabular-nums;
+}
+.m-bars { display: block; width: 44px; height: 5px; }
+.m-bars rect { fill: var(--border-strong); }
+.m-bars rect[data-on="true"] { fill: var(--text); }
+.m-verdict { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-dim); text-wrap: pretty; }
+.m-verdict strong { color: var(--text); font-weight: 600; }
+
+/* Ce sur quoi repose le chiffre : hors du premier écran, jamais hors de
+   l'application. L'ocre n'entre pas ici — il ne dit que les montées. */
+.m-basis { display: flex; flex-direction: column; gap: 14px; }
+.m-basis .basis { margin-top: 0; }
+.m-basis .basis-fill { background: var(--text-dim); opacity: 1; }
+.m-basis .basis-fill[data-assumed="true"] {
+  background: repeating-linear-gradient(115deg, var(--text) 0 2px, transparent 2px 6px);
+}
+.m-basis .basis-src[data-assumed="true"] { color: var(--text-dim); }
+/* Pas de micro-étiquette en capitales sur cet écran : la provenance se lit
+   comme le reste, en bas de casse. */
+.m-basis .basis-src { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.m-figures { display: flex; flex-direction: column; gap: 10px; }
+.m-figure { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; font-size: 13px; color: var(--text-dim); }
+.m-figure-value { font-stretch: 70%; font-size: 19px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.m-figure .m-faint { grid-column: 1 / -1; font-size: 11.5px; }
+.m-adjust { padding-left: 12px; border-left: 1px solid var(--border-strong); font-size: 13px; color: var(--text-dim); }
+.m-adjust .msg-content p:last-child { margin-bottom: 0; }
+
+/* ── Le point du jour, répondable d'un pouce ─────────────────────────────── */
+
+/* Cinq mots sur une échelle ordonnée, du pire au meilleur — la même échelle et
+   les mêmes valeurs enregistrées que sur /point. Le trait qui les relie dit
+   qu'il s'agit d'un degré, pas de cinq boutons. */
+.m-ask { display: flex; flex-direction: column; gap: 6px; }
+.m-ask-head { font-size: 14px; color: var(--text); }
+.m-scale { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.m-scale-line { position: absolute; left: 10%; right: 10%; top: 12px; height: 1px; background: var(--border); }
+.m-step {
+  position: relative; min-height: 50px; padding: 9px 2px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  font-size: 14px; color: var(--text-dim); background: none; border: 0; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  user-select: none; -webkit-user-select: none;
+}
+.m-tick { display: block; width: 1px; height: 7px; background: var(--text-faint); }
+.m-step[data-on="true"] { color: var(--text); }
+.m-step[data-on="true"] .m-tick { width: 2px; height: 13px; margin-top: -6px; background: var(--text); }
+.m-step:disabled { cursor: default; }
 
 /* ── Divers ───────────────────────────────────────────────────────────────── */
 

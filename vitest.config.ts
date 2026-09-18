@@ -10,6 +10,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // Les sous-chemins d'abord : `@cairn/core` seul les avalerait, et le
+      // formatage des durées — partagé avec le web — ne se résoudrait plus.
+      '@cairn/core/': r('./packages/core/src/'),
       '@cairn/core': r('./packages/core/src/index.ts'),
       '@cairn/physiology': r('./packages/physiology/src/index.ts'),
       '@cairn/coach': r('./packages/coach/src/index.ts'),
