@@ -748,6 +748,33 @@ export interface ReadinessScore {
 
 export type RacePriority = 'A' | 'B' | 'C';
 
+/**
+ * Boucle répétée à cadence fixe — le format « backyard ».
+ *
+ * Une backyard ne se court pas sur une distance : la même boucle est relancée à
+ * chaque cloche, et la course s'arrête quand un seul coureur en termine une de
+ * plus que les autres. La distance parcourue est la conséquence du nombre
+ * d'heures tenues, jamais une donnée d'entrée — viser dix heures, c'est viser
+ * dix boucles. Ce qui est fixé, c'est la boucle et l'intervalle ; ce qui se
+ * gagne en finissant tôt se prend en repos avant la cloche suivante.
+ */
+export interface LapFormat {
+  /** Longueur d'une boucle, m. */
+  lengthM: number;
+  /** Intervalle entre deux départs, s. La cloche, pas le temps de boucle. */
+  intervalS: number;
+  /**
+   * D+ d'une boucle, m. `null` quand le profil de la boucle n'est pas connu :
+   * l'épreuve n'a pas été identifiée, ou son tracé n'a pas été relevé.
+   */
+  elevationGainM: number | null;
+  /** D− d'une boucle, m. `null` pour la même raison. */
+  elevationLossM: number | null;
+}
+
+/** Donnée de parcours qu'on n'a pas, et dont la valeur numérique est un repli. */
+export type CourseUnknown = 'elevation' | 'technicality';
+
 export interface CourseProfile {
   /** Points du profil : distance cumulée (m) → altitude (m). */
   points?: { distanceM: number; altitudeM: number }[];
@@ -765,6 +792,23 @@ export interface CourseProfile {
   expectedTempC?: number;
   /** Départ de nuit / portion nocturne, en heures. */
   nightHours?: number;
+  /**
+   * Format en boucles répétées. Présent, c'est lui qui gouverne : la distance
+   * et les dénivelés ci-dessus cessent d'être des données d'entrée pour devenir
+   * la conséquence du nombre de boucles visé, et la question posée au moteur
+   * n'est plus « combien de temps pour parcourir cette distance ».
+   */
+  lap?: LapFormat;
+  /**
+   * Ce que le parcours ne dit pas.
+   *
+   * La valeur numérique correspondante existe parce qu'il faut bien calculer,
+   * mais c'est un repli, pas une mesure : toute surface qui l'affiche lit cette
+   * liste d'abord. C'est l'invariant de provenance appliqué à un parcours — un
+   * dénivelé inconnu vaut zéro dans l'arithmétique et « inconnu » partout
+   * ailleurs, au lieu d'être comblé par une valeur plausible.
+   */
+  unknowns?: CourseUnknown[];
 }
 
 export interface RaceGoal {
@@ -782,6 +826,14 @@ export interface RaceGoal {
     fieldSize?: number;
     /** Résultats des éditions précédentes, pour calibrer le classement. */
     previousEditions?: { year: number; placing: number; timeS: number }[];
+    /**
+     * Ambition en boucles, sur un format à boucle répétée.
+     *
+     * La seule expression juste de l'ambition sur ce format : « tenir dix
+     * heures » se lit en boucles, et le temps d'arrivée n'est pas un objectif
+     * mais une conséquence de la cloche. Un `timeS` y serait un faux objectif.
+     */
+    laps?: number;
   };
   notes?: string;
 }
@@ -1075,6 +1127,122 @@ export interface RacePrediction {
   fueling: { carbGPerHour: number; fluidMlPerHour: number; sodiumMgPerHour: number; totalCarbG: number };
   /** Ce qui limite la performance aujourd'hui, classé par impact. */
   limiters: { factor: string; impactS: number; explanation: string }[];
+}
+
+/**
+ * Une boucle projetée : ce qu'elle coûte, et ce qu'elle laisse avant la cloche.
+ *
+ * Sur un format à boucle répétée, c'est la ligne utile — pas un temps d'arrivée.
+ * L'athlète a besoin de savoir à quelle allure il boucle, de combien cette
+ * allure dérive, et combien de minutes il lui reste pour manger et s'asseoir.
+ */
+export interface LapProjection {
+  index: number;
+  /** Heure de la cloche qui la lance, s depuis le départ. */
+  bellS: number;
+  /** Temps de boucle projeté, s. */
+  lapTimeS: number;
+  /** Repos avant la cloche suivante, s. Négatif : la boucle déborde. */
+  restS: number;
+  /** Vitesse moyenne sur la boucle, m/s. */
+  speedMs: number;
+  /** Fraction de la vitesse critique tenue sur cette boucle. */
+  fractionOfCs: number;
+  /** Fourchette de FC cible sur la boucle. */
+  targetHrRange: [number, number];
+  cue: string;
+}
+
+/** Facteur limitant d'un format à boucles : quand il arrive, et ce qu'il coûte. */
+export interface LapLimiter {
+  factor: string;
+  /** Première boucle où il pèse plus d'une minute. */
+  fromLap: number;
+  /** Ce qu'il coûte sur la boucle d'ambition, s. */
+  costAtTargetS: number;
+  /**
+   * Boucles supplémentaires que sa levée rendrait tenables.
+   *
+   * `null` quand la projection améliorée ne rencontre plus de cloche manquée
+   * dans l'horizon : le gain existe, mais le compter reviendrait à mesurer la
+   * longueur de l'horizon plutôt que celle de l'athlète.
+   */
+  lapsGained: number | null;
+  explanation: string;
+}
+
+/**
+ * Réponse du moteur à un format à boucle répétée.
+ *
+ * Aucun `predictedTimeS` : le temps d'arrivée est fixé par la cloche, et la
+ * distance est la conséquence des boucles tenues. Ce qui se prédit ici, c'est
+ * l'allure de boucle, sa dérive, la boucle où le temps de boucle atteint
+ * l'intervalle, et le repos qui reste en chemin.
+ */
+export interface LapRacePrediction {
+  raceId: string;
+  computedAt: string;
+  lap: LapFormat;
+  /** Ambition interrogée, en boucles. */
+  targetLaps: number;
+  /** Projection boucle par boucle, jusqu'à l'ambition ou jusqu'à la cloche manquée. */
+  laps: LapProjection[];
+  /**
+   * Dernière boucle que la projection tient pour tenable.
+   *
+   * Quand `horizonReason` vaut `cutoff`, c'est la dernière avant que le temps
+   * de boucle dépasse l'intervalle : une limite de l'athlète. Sinon, c'est la
+   * dernière que le modèle peut affirmer — la vraie limite est au-delà, et il
+   * ne sait pas où.
+   */
+  sustainableLaps: number;
+  /**
+   * Première boucle dont le temps atteint l'intervalle.
+   *
+   * `null` quand la projection s'arrête avant de l'atteindre — soit parce que
+   * l'horizon est épuisé, soit parce que la décroissance de durabilité a touché
+   * sa borne de sécurité. `horizonReason` dit lequel : une borne atteinte n'est
+   * pas une mesure, et ce qui suit ne se prédit pas.
+   */
+  cutoffLap: number | null;
+  horizonReason: 'cutoff' | 'durability-clamp' | 'horizon';
+  /**
+   * Probabilité de tenir l'ambition, %.
+   *
+   * `null` quand l'ambition dépasse ce que la projection vouche : il n'y a pas
+   * de chiffre à donner, et en donner un tiendrait une borne pour une mesure.
+   */
+  targetProbability: number | null;
+  /** Repos cumulé sur l'ambition, s — ce que le format rend à qui boucle vite. */
+  totalRestS: number;
+  /** Temps réellement couru sur l'ambition, s, hors repos. */
+  runningTimeS: number;
+  /** Distance parcourue à l'ambition, m — une conséquence, pas une donnée. */
+  distanceM: number;
+  /**
+   * Facteurs appliqués, pour l'explicabilité.
+   *
+   * Mêmes termes que `RacePrediction`, à une exception près : `durability` y
+   * est la part de capacité fraîche qui reste **à la boucle visée**, et non la
+   * correction moyenne appliquée à la course. Sur ce format, c'est le chiffre
+   * qui décide, et une moyenne le cacherait.
+   */
+  factors: {
+    terrain: number;
+    heat: number;
+    altitude: number;
+    durability: number;
+    freshness: number;
+  };
+  fueling: { carbGPerHour: number; fluidMlPerHour: number; sodiumMgPerHour: number; totalCarbG: number };
+  /** Ce qui limite, dans l'ordre où cela arrive. */
+  limiters: LapLimiter[];
+  /**
+   * Ce que la prédiction ne sait pas : le champ manquant, ce qui a été mis à la
+   * place, et ce que l'écart coûterait. Une prédiction qui tait ses trous fait
+   * passer un repli pour une mesure.
+   */
+  unknowns: { field: string; assumed: string; sensitivity: string }[];
 }
 
 export interface PacingSegment {

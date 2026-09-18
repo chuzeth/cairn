@@ -155,6 +155,79 @@ function synthesizeSegments(course: CourseProfile): CourseSegment[] {
   return out;
 }
 
+export interface SegmentSolveOptions {
+  technicality: 1 | 2 | 3 | 4 | 5;
+  /** Aisance en descente de l'athlète, 1,0 = bon trailer de référence. */
+  descentSkill?: number;
+  /**
+   * Modulation de la puissance le long du parcours, en fonction de la
+   * progression (0 au départ, 1 à l'arrivée). Par défaut : constante.
+   */
+  shape?: (progress: number) => number;
+}
+
+/**
+ * Résout un enchaînement de segments à puissance métabolique donnée.
+ *
+ * Deux contraintes s'appliquent : la puissance disponible — la technicité y
+ * entre comme surcoût de transport — et, en descente, un plafond mécanique et
+ * technique. Quand ce plafond mord, l'athlète produit moins que sa puissance
+ * cible ; une part de cette capacité inutilisée est reportée sur les segments
+ * non plafonnés (les montées), ce que fait naturellement un coureur qui gère
+ * bien. On n'en récupère qu'une fraction : la capacité aérobie ne se met pas en
+ * réserve indéfiniment.
+ *
+ * Sans cette redistribution, le modèle sous-estimerait le temps sur tout
+ * parcours comportant beaucoup de descente.
+ */
+export function solveSegmentTimes(
+  segments: readonly CourseSegment[],
+  targetPower: number,
+  opts: SegmentSolveOptions,
+): { times: number[]; elapsedS: number } {
+  const RECOVERED_SHARE = 0.5;
+  const shape = opts.shape ?? (() => 1);
+  const totalLength = segments.reduce((a, s) => a + s.lengthM, 0);
+  let boost = 1;
+  let times: number[] = [];
+  let elapsed = 0;
+
+  for (let pass = 0; pass < 5; pass++) {
+    times = [];
+    elapsed = 0;
+    let cumulativeLength = 0;
+    let deficitWork = 0;
+    let freeWork = 0;
+
+    for (const seg of segments) {
+      const progress = cumulativeLength / Math.max(1, totalLength);
+      const localPower = targetPower * shape(progress) * boost;
+      const costMult = technicalityCostMultiplier(opts.technicality, seg.grade);
+
+      // Vitesse que la puissance disponible permettrait, technicité incluse.
+      const desired = speedForMetabolicPower(localPower / costMult, seg.grade);
+      const ceiling = descentSpeedCeiling(seg.grade, opts.technicality, opts.descentSkill ?? 1);
+      const v = Math.max(0.35, Math.min(desired, ceiling));
+      const dt = seg.lengthM / v;
+
+      const actualPower = locomotionCost(v, seg.grade) * costMult * v;
+      if (desired > ceiling) deficitWork += (localPower - actualPower) * dt;
+      else freeWork += actualPower * dt;
+
+      times.push(dt);
+      elapsed += dt;
+      cumulativeLength += seg.lengthM;
+    }
+
+    if (deficitWork <= 0 || freeWork <= 0) break;
+    const nextBoost = clamp(1 + (RECOVERED_SHARE * deficitWork) / freeWork, 1, 1.18);
+    if (Math.abs(nextBoost - boost) < 0.002) break;
+    boost = nextBoost;
+  }
+
+  return { times, elapsedS: elapsed };
+}
+
 export interface PredictionInput {
   model: PhysiologyModel;
   course: CourseProfile;
@@ -220,63 +293,16 @@ export function predictRace(input: PredictionInput): RacePrediction & { segments
       model.criticalSpeedMs * f * durability * env.total * freshness * night;
     const targetPower = FLAT_RUNNING_COST * equivalentFlatSpeed;
 
-    // Résolution segment par segment.
-    //
-    // Deux contraintes s'appliquent : la puissance métabolique disponible, et —
-    // en descente — un plafond mécanique et technique. Quand le plafond mord,
-    // l'athlète produit moins que sa puissance cible : cette capacité inutilisée
-    // est redistribuée vers les segments non plafonnés (typiquement les montées),
-    // ce que fait naturellement un coureur qui gère bien sa course. Sans cette
-    // redistribution, le modèle sous-estimerait le temps sur tout parcours
-    // comportant beaucoup de descente.
-    // Deux contraintes s'appliquent : la puissance métabolique disponible — la
-    // technicité y entre comme surcoût de transport — et, en descente, un
-    // plafond mécanique et technique. Quand ce plafond mord, l'athlète produit
-    // moins que sa puissance cible ; une part de cette capacité inutilisée est
-    // reportée sur les segments non plafonnés (les montées), ce que fait
-    // naturellement un coureur qui gère bien. On n'en récupère qu'une fraction :
-    // la capacité aérobie ne se met pas en réserve indéfiniment.
-    const RECOVERED_SHARE = 0.5;
-    let boost = 1;
-    let elapsed = 0;
-    segmentTimes = [];
+    // Résolution segment par segment, à puissance cible décroissante :
+    // +2,5 % au départ, −2,5 % à l'arrivée.
+    const solved = solveSegmentTimes(segments, targetPower, {
+      technicality: course.technicality,
+      descentSkill: model.descentSkill,
+      shape: (progress) => 1.025 - 0.05 * progress,
+    });
+    segmentTimes = solved.times;
 
-    for (let pass = 0; pass < 5; pass++) {
-      segmentTimes = [];
-      elapsed = 0;
-      let cumulativeLength = 0;
-      let deficitWork = 0;
-      let freeWork = 0;
-
-      for (const seg of segments) {
-        const progress = cumulativeLength / Math.max(1, course.distanceM);
-        // Décroissance normalisée : +2,5 % au départ, −2,5 % à l'arrivée.
-        const shape = 1.025 - 0.05 * progress;
-        const localPower = targetPower * shape * boost;
-        const costMult = technicalityCostMultiplier(course.technicality, seg.grade);
-
-        // Vitesse que la puissance disponible permettrait, technicité incluse.
-        const desired = speedForMetabolicPower(localPower / costMult, seg.grade);
-        const ceiling = descentSpeedCeiling(seg.grade, course.technicality, model.descentSkill ?? 1);
-        const v = Math.max(0.35, Math.min(desired, ceiling));
-        const dt = seg.lengthM / v;
-
-        const actualPower = locomotionCost(v, seg.grade) * costMult * v;
-        if (desired > ceiling) deficitWork += (localPower - actualPower) * dt;
-        else freeWork += actualPower * dt;
-
-        segmentTimes.push(dt);
-        elapsed += dt;
-        cumulativeLength += seg.lengthM;
-      }
-
-      if (deficitWork <= 0 || freeWork <= 0) break;
-      const nextBoost = clamp(1 + (RECOVERED_SHARE * deficitWork) / freeWork, 1, 1.18);
-      if (Math.abs(nextBoost - boost) < 0.002) break;
-      boost = nextBoost;
-    }
-
-    const next = elapsed;
+    const next = solved.elapsedS;
     if (Math.abs(next - T) / T < 0.002) {
       T = next;
       break;

@@ -453,6 +453,16 @@ export function independentVertM(elapsedS: number, cumulativeVertM: number, vert
  * tenait lieu de recouvrement rendait, pour deux termes qui disent la même
  * perte, √3 fois cette perte.
  */
+/**
+ * Plancher de la décroissance : en deçà, le modèle linéaire n'a plus de sens.
+ *
+ * Il est exporté parce qu'une projection qui l'atteint doit le savoir. Une
+ * estimation arrivée à sa borne de sécurité n'est pas une mesure : la traiter
+ * comme telle propagerait silencieusement une droite devenue plate jusqu'à la
+ * prédiction de course.
+ */
+export const DURABILITY_FLOOR = 0.45;
+
 export function durabilityFactor(
   elapsedS: number,
   cumulativeVertM: number,
@@ -462,7 +472,7 @@ export function durabilityFactor(
   const vertDecay =
     (model.pctPer1000mVert / 100) *
     (independentVertM(elapsedS, cumulativeVertM, model.vertRateMh) / 1000);
-  return clamp(1 - timeDecay - vertDecay, 0.45, 1);
+  return clamp(1 - timeDecay - vertDecay, DURABILITY_FLOOR, 1);
 }
 
 /**

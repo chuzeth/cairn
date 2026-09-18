@@ -1,12 +1,15 @@
 import type {
-  AbsenceKind, CourseProfile, PhysiologyModel, PlannedSession, RaceGoal, SessionBlock,
+  AbsenceKind, CourseProfile, CourseUnknown, PhysiologyModel, PlannedSession, RaceGoal, SessionBlock,
 } from '@cairn/core';
-import { directivesFor } from '@cairn/core';
+import {
+  courseFromLapFormat, courseHasUnknown, describeLapFormat, directivesFor, isLapCourse, lapsForHours,
+  targetLaps,
+} from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   ACWR_SPIKE, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration,
-  formatPace, goalProbability, interpretAcwr, interpretDurability, msToKmh, predictRace, summarizeForCoach,
-  targetRaceDayTsb, verticalCapacity, type LoadRatioExceedance,
+  formatPace, goalProbability, interpretAcwr, interpretDurability, msToKmh, predictLapRace,
+  predictRace, summarizeForCoach, targetRaceDayTsb, verticalCapacity, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { describeDirectives } from './directives.js';
@@ -244,17 +247,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'upsert_race',
     description:
-      "Crée ou met à jour un objectif de course. À utiliser dès que l'athlète mentionne une inscription, un changement de date, une ambition ou des informations de parcours. Les résultats des éditions précédentes permettent de convertir un objectif de classement en temps cible.",
+      "Crée ou met à jour un objectif de course. À utiliser dès que l'athlète mentionne une inscription, un changement de date, une ambition ou des informations de parcours. Les résultats des éditions précédentes permettent de convertir un objectif de classement en temps cible. " +
+      "Pour un format à boucle répétée (backyard), décrire la boucle (`lap_length_m`, `lap_interval_s`) et l'ambition en boucles ou en heures (`target_laps` / `target_hours`) au lieu d'une distance : la distance y est la conséquence du nombre d'heures tenues. " +
+      "Ce qui n'est pas connu du parcours ne se comble pas : omettre `lap_elevation_gain_m` et `technicality` quand l'épreuve n'a pas été identifiée, l'objectif porte alors la mention du manque.",
     input_schema: obj(
       {
         id: str('Identifiant à mettre à jour. Omettre pour créer une nouvelle course.'),
         name: str('Nom de la course.'),
         date: str('Date de la course, YYYY-MM-DD.'),
         priority: str('Priorité : A (objectif principal), B (intermédiaire), C (course de préparation).', { enum: ['A', 'B', 'C'] }),
-        distance_km: num('Distance en kilomètres.'),
+        distance_km: num('Distance en kilomètres. Requise, sauf sur un format à boucle répétée.'),
         elevation_gain_m: num('Dénivelé positif en mètres.'),
         elevation_loss_m: num('Dénivelé négatif en mètres. Par défaut égal au D+.'),
-        technicality: num('Technicité du terrain, 1 (roulant) à 5 (alpin très technique). Défaut 3.', { minimum: 1, maximum: 5 }),
+        technicality: num(
+          "Technicité du terrain, 1 (roulant) à 5 (alpin très technique). Omettre quand le terrain n'est pas connu : la valeur 3 sert alors de repli, signalé comme tel.",
+          { minimum: 1, maximum: 5 },
+        ),
+        lap_length_m: num('Format à boucle répétée : longueur d\'une boucle, en mètres.'),
+        lap_interval_s: num('Intervalle entre deux départs, en secondes. Défaut 3600 (cloche horaire).'),
+        lap_elevation_gain_m: num("D+ d'une boucle, en mètres. Omettre si le tracé n'est pas connu — ne rien inventer."),
+        lap_elevation_loss_m: num("D− d'une boucle, en mètres. Par défaut égal au D+ de la boucle."),
+        target_laps: num('Ambition en nombre de boucles.'),
+        target_hours: num("Ambition en heures, convertie en boucles par l'intervalle. « Tenir 10 h » sur cloche horaire = 10 boucles."),
         expected_temp_c: num('Température attendue en °C.'),
         max_altitude_m: num('Altitude maximale du parcours.'),
         night_hours: num('Nombre d\'heures de course de nuit.'),
@@ -269,16 +283,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         notes: str('Notes libres sur la course.'),
       },
-      ['name', 'date', 'distance_km', 'elevation_gain_m'],
+      ['name', 'date'],
     ),
   },
   {
     name: 'predict_race',
     description:
-      "Prédit le temps sur une course : temps médian, intervalle de confiance, distance équivalente à plat, facteurs appliqués (terrain, chaleur, altitude, durabilité, fraîcheur), plan d'allure segment par segment avec cibles de FC et de vitesse ascensionnelle, stratégie de ravitaillement, et classement des facteurs limitants avec le temps que chacun coûte.",
+      "Prédit le temps sur une course : temps médian, intervalle de confiance, distance équivalente à plat, facteurs appliqués (terrain, chaleur, altitude, durabilité, fraîcheur), plan d'allure segment par segment avec cibles de FC et de vitesse ascensionnelle, stratégie de ravitaillement, et classement des facteurs limitants avec le temps que chacun coûte. " +
+      "Sur un format à boucle répétée, répond à la question du format et non à celle d'une distance : temps de boucle tour par tour, dérive, repos restant à chaque cloche, boucle où le temps de boucle atteint l'intervalle, facteurs limitants dans l'ordre où ils arrivent, et ce que chaque donnée manquante coûterait.",
     input_schema: obj({
       race_id: str("Identifiant d'une course enregistrée. Sinon, décrire le parcours ci-dessous."),
       distance_km: num('Distance en kilomètres.'),
+      lap_length_m: num("Format à boucle répétée : longueur d'une boucle, en mètres."),
+      lap_interval_s: num('Intervalle entre deux départs, en secondes. Défaut 3600.'),
+      lap_elevation_gain_m: num("D+ par boucle. Omettre si inconnu : la prédiction dira ce que le manque coûte."),
+      target_laps: num("Ambition en boucles. Par défaut, celle enregistrée sur l'objectif."),
+      target_hours: num('Ambition en heures, convertie par l\'intervalle.'),
       elevation_gain_m: num('Dénivelé positif en mètres.'),
       elevation_loss_m: num('Dénivelé négatif en mètres.'),
       technicality: num('Technicité 1-5. Défaut 3.'),
@@ -768,15 +788,7 @@ export async function executeTool(
           date: r.date,
           priorite: r.priority,
           jours_restants: Math.round((new Date(r.date).getTime() - Date.now()) / dayMs),
-          parcours: {
-            distance_km: round2(r.course.distanceM / 1000),
-            denivele_pos_m: r.course.elevationGainM,
-            denivele_neg_m: r.course.elevationLossM,
-            technicite: r.course.technicality,
-            altitude_max_m: r.course.maxAltitudeM ?? null,
-            temperature_attendue_c: r.course.expectedTempC ?? null,
-            heures_de_nuit: r.course.nightHours ?? null,
-          },
+          parcours: describeCourse(r.course, targetLaps(r)),
           objectif: r.target ?? null,
           notes: r.notes ?? null,
         })),
@@ -784,17 +796,59 @@ export async function executeTool(
     }
 
     case 'upsert_race': {
-      const distanceM = (arg<number>(input, 'distance_km') ?? 0) * 1000;
-      const gain = arg<number>(input, 'elevation_gain_m') ?? 0;
-      const course: CourseProfile = {
-        distanceM,
-        elevationGainM: gain,
-        elevationLossM: arg<number>(input, 'elevation_loss_m') ?? gain,
-        technicality: (arg<number>(input, 'technicality') ?? 3) as 1 | 2 | 3 | 4 | 5,
+      const declaredTech = arg<number>(input, 'technicality');
+      const common = {
+        technicality: (declaredTech ?? 3) as 1 | 2 | 3 | 4 | 5,
         maxAltitudeM: arg<number>(input, 'max_altitude_m'),
         expectedTempC: arg<number>(input, 'expected_temp_c'),
         nightHours: arg<number>(input, 'night_hours'),
       };
+      const lapLengthM = arg<number>(input, 'lap_length_m');
+      const lapAmbition = lapsFromInput(input, arg<number>(input, 'lap_interval_s') ?? 3600);
+
+      let course: CourseProfile;
+      let laps: number | undefined;
+
+      if (lapLengthM && lapLengthM > 0) {
+        // Format à boucle répétée. La distance n'est pas une donnée : elle se
+        // déduit de l'ambition, et le manque de tracé se porte au lieu de se
+        // combler.
+        if (lapAmbition == null) {
+          throw new Error(
+            "Ambition requise sur un format à boucle répétée : `target_laps` ou `target_hours`. " +
+              "Sans elle, il n'y a ni distance ni durée — seulement une boucle.",
+          );
+        }
+        const lapGain = arg<number>(input, 'lap_elevation_gain_m');
+        laps = lapAmbition;
+        course = courseFromLapFormat(
+          {
+            lengthM: lapLengthM,
+            intervalS: arg<number>(input, 'lap_interval_s') ?? 3600,
+            elevationGainM: lapGain ?? null,
+            elevationLossM: arg<number>(input, 'lap_elevation_loss_m') ?? lapGain ?? null,
+          },
+          lapAmbition,
+          common,
+          declaredTech == null ? ['technicality'] : [],
+        );
+      } else {
+        const distanceKm = arg<number>(input, 'distance_km');
+        const gain = arg<number>(input, 'elevation_gain_m');
+        if (!distanceKm || distanceKm <= 0 || gain == null) {
+          throw new Error(
+            'Course classique : `distance_km` et `elevation_gain_m` sont requis. ' +
+              'Course à boucle répétée : `lap_length_m` et une ambition en boucles ou en heures.',
+          );
+        }
+        course = {
+          ...common,
+          distanceM: distanceKm * 1000,
+          elevationGainM: gain,
+          elevationLossM: arg<number>(input, 'elevation_loss_m') ?? gain,
+        };
+      }
+
       const editions = arg<{ year: number; placing: number; time_s: number }[]>(input, 'previous_editions');
       const goal: RaceGoal = {
         id: arg<string>(input, 'id') ?? '',
@@ -804,18 +858,29 @@ export async function executeTool(
         priority: (arg<string>(input, 'priority') ?? 'A') as 'A' | 'B' | 'C',
         course,
         target: {
-          timeS: arg<number>(input, 'target_time_s'),
+          // Sur un format à boucles, le temps d'arrivée est fixé par la cloche :
+          // l'enregistrer comme objectif ferait poser la mauvaise question.
+          timeS: laps == null ? arg<number>(input, 'target_time_s') : undefined,
           placing: arg<number>(input, 'target_placing'),
           fieldSize: arg<number>(input, 'field_size'),
+          laps,
           previousEditions: editions?.map((e) => ({ year: e.year, placing: e.placing, timeS: e.time_s })),
         },
         notes: arg<string>(input, 'notes'),
       };
       const id = await db.upsertRaceGoal(goal);
+      const missing = goal.course.unknowns ?? [];
       return {
-        summary: `Course « ${goal.name} » enregistrée pour le ${goal.date}`,
+        summary:
+          `Course « ${goal.name} » enregistrée pour le ${goal.date}` +
+          (isLapCourse(goal.course) ? ` — ${describeLapFormat(goal.course.lap)}, objectif ${laps} boucles` : '') +
+          (missing.length ? ` · non renseigné : ${missing.map(unknownFr).join(', ')}` : ''),
         // L'identifiant final prime : une création en génère un nouveau.
-        content: { ...goal, id },
+        content: {
+          ...goal,
+          id,
+          parcours: describeCourse(goal.course, laps ?? null),
+        },
       };
     }
 
@@ -831,6 +896,26 @@ export async function executeTool(
         if (!goal) throw new Error(`Course introuvable : ${raceId}`);
         course = goal.course;
         raceName = goal.name;
+      } else if (arg<number>(input, 'lap_length_m')) {
+        const intervalS = arg<number>(input, 'lap_interval_s') ?? 3600;
+        const laps = lapsFromInput(input, intervalS);
+        if (laps == null) throw new Error('Ambition requise : `target_laps` ou `target_hours`.');
+        const declaredTech = arg<number>(input, 'technicality');
+        const lapGain = arg<number>(input, 'lap_elevation_gain_m');
+        course = courseFromLapFormat(
+          {
+            lengthM: arg<number>(input, 'lap_length_m') as number,
+            intervalS,
+            elevationGainM: lapGain ?? null,
+            elevationLossM: lapGain ?? null,
+          },
+          laps,
+          {
+            technicality: (declaredTech ?? 3) as 1 | 2 | 3 | 4 | 5,
+            expectedTempC: arg<number>(input, 'expected_temp_c'),
+          },
+          declaredTech == null ? ['technicality'] : [],
+        );
       } else {
         const gain = arg<number>(input, 'elevation_gain_m') ?? 0;
         course = {
@@ -841,6 +926,23 @@ export async function executeTool(
           expectedTempC: arg<number>(input, 'expected_temp_c'),
         };
       }
+
+      // Un format à boucle répétée ne se prédit pas en temps d'arrivée. On
+      // bascule sur la question du format avant toute autre chose : répondre
+      // « combien de temps pour 67 km » produirait un plan d'allure faux de
+      // bout en bout.
+      if (isLapCourse(course)) {
+        const laps =
+          lapsFromInput(input, course.lap.intervalS) ?? (goal ? targetLaps(goal) : null);
+        if (laps == null) {
+          throw new Error(
+            `« ${raceName} » est un format à boucle répétée sans ambition enregistrée. ` +
+              'Précise `target_laps` ou `target_hours`, ou renseigne-la sur la course.',
+          );
+        }
+        return predictLapRaceTool(state.model, course, laps, raceName, arg<number>(input, 'race_day_tsb'));
+      }
+
       if (course.distanceM <= 0) throw new Error('Distance de parcours requise.');
 
       const roughDuration = (course.distanceM / state.model.criticalSpeedMs) * 1.25;
@@ -901,14 +1003,47 @@ export async function executeTool(
       if (!race) throw new Error(`Course introuvable : ${raceId}`);
 
       const state = await loadAthleteState(athleteId);
-      const prediction = predictRace({
-        model: state.model,
-        course: race.course,
-        raceDayTsb: targetRaceDayTsb((race.course.distanceM / state.model.criticalSpeedMs) * 1.25).metabolic,
-        skipLimiters: true,
-      });
-      const racePaceMs =
-        prediction.predictedTimeS > 0 ? race.course.distanceM / prediction.predictedTimeS : undefined;
+
+      // Durée de course et allure spécifique — les deux seules choses que le
+      // planificateur prend de la prédiction. Sur un format à boucle répétée,
+      // les demander à `predictRace` reviendrait à chronométrer 67 km courus
+      // d'affilée : la durée serait fausse, donc l'affûtage et les séances
+      // d'allure spécifique avec elle.
+      let estimatedRaceDurationS: number;
+      let racePaceMs: number | undefined;
+
+      if (isLapCourse(race.course)) {
+        const laps = targetLaps(race);
+        if (laps == null) {
+          throw new Error(
+            `« ${race.name} » est un format à boucle répétée sans ambition enregistrée. ` +
+              'Renseigne-la (`target_laps` ou `target_hours`) avant de construire un plan : ' +
+              "sans elle, il n'y a pas de durée de course à préparer.",
+          );
+        }
+        estimatedRaceDurationS = laps * race.course.lap.intervalS;
+        const lapPrediction = predictLapRace({
+          model: state.model,
+          course: race.course,
+          targetLaps: laps,
+          raceDayTsb: targetRaceDayTsb(estimatedRaceDurationS).metabolic,
+          skipCounterfactuals: true,
+        });
+        // L'allure spécifique de ce format est celle de la boucle, pas celle
+        // d'une course continue de même distance.
+        racePaceMs =
+          lapPrediction.runningTimeS > 0 ? lapPrediction.distanceM / lapPrediction.runningTimeS : undefined;
+      } else {
+        const prediction = predictRace({
+          model: state.model,
+          course: race.course,
+          raceDayTsb: targetRaceDayTsb((race.course.distanceM / state.model.criticalSpeedMs) * 1.25).metabolic,
+          skipLimiters: true,
+        });
+        estimatedRaceDurationS = prediction.predictedTimeS;
+        racePaceMs =
+          prediction.predictedTimeS > 0 ? race.course.distanceM / prediction.predictedTimeS : undefined;
+      }
 
       // La charge de départ est celle du **premier jour du plan**, pas celle
       // d'aujourd'hui : entre les deux, la forme continue de vivre.
@@ -923,7 +1058,7 @@ export async function executeTool(
         race,
         currentCtl: start.ctl,
         currentAtl: start.atl,
-        estimatedRaceDurationS: prediction.predictedTimeS,
+        estimatedRaceDurationS,
         racePaceMs,
         startDate,
         // Le dossier au complet, pas seulement ses quatre nombres.
@@ -976,7 +1111,10 @@ export async function executeTool(
             au: ratioCheck.to,
             jours_de_charge_connus_avant_le_plan: ratioCheck.historyDays,
           },
-          temps_predit: formatClock(prediction.predictedTimeS),
+          // Sur un format à boucle répétée, ce n'est pas un temps prédit mais la
+          // durée que l'ambition enregistrée représente : la cloche la fixe.
+          temps_predit: formatClock(estimatedRaceDurationS),
+          duree_fixee_par_la_cloche: isLapCourse(race.course),
           charge_de_depart: Math.round(start.ctl),
           charge_de_depart_estimee: ctlIsAssumed,
           // Ce que la forme est devenue entre aujourd'hui et le départ du plan.
@@ -1392,3 +1530,146 @@ function verticalCapacityTable(model: PhysiologyModel) {
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Formats à boucle répétée
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ce que le parcours ne dit pas, en clair. */
+const unknownFr = (u: CourseUnknown): string =>
+  u === 'elevation' ? 'dénivelé de la boucle' : 'technicité du terrain';
+
+/**
+ * Ambition lue des arguments : en boucles, ou en heures converties par
+ * l'intervalle. `null` quand ni l'une ni l'autre n'est donnée — un cas qui se
+ * signale, car sans ambition un format à boucles n'a ni distance ni durée.
+ */
+function lapsFromInput(input: Record<string, unknown>, intervalS: number): number | null {
+  const laps = arg<number>(input, 'target_laps');
+  if (laps != null && laps > 0) return Math.round(laps);
+  const hours = arg<number>(input, 'target_hours');
+  if (hours != null && hours > 0) return lapsForHours(intervalS, hours);
+  return null;
+}
+
+/**
+ * Parcours rendu pour les outils.
+ *
+ * Un dénivelé inconnu sort en `null`, jamais en `0` : le zéro n'existe que dans
+ * l'arithmétique interne, et le faire franchir la frontière de l'outil
+ * reviendrait à annoncer une boucle plate qu'aucun relevé n'a établie.
+ */
+function describeCourse(course: CourseProfile, laps: number | null): Record<string, unknown> {
+  const unknowns = course.unknowns ?? [];
+  const vertUnknown = courseHasUnknown(course, 'elevation');
+  const base = {
+    technicite: course.technicality,
+    technicite_par_defaut: courseHasUnknown(course, 'technicality'),
+    altitude_max_m: course.maxAltitudeM ?? null,
+    temperature_attendue_c: course.expectedTempC ?? null,
+    heures_de_nuit: course.nightHours ?? null,
+    non_renseigne: unknowns.map(unknownFr),
+  };
+  if (!isLapCourse(course)) {
+    return {
+      ...base,
+      distance_km: round2(course.distanceM / 1000),
+      denivele_pos_m: course.elevationGainM,
+      denivele_neg_m: course.elevationLossM,
+    };
+  }
+  return {
+    ...base,
+    format: 'boucle répétée',
+    boucle: {
+      longueur_m: course.lap.lengthM,
+      intervalle_s: course.lap.intervalS,
+      denivele_pos_m: course.lap.elevationGainM,
+      denivele_neg_m: course.lap.elevationLossM,
+      resume: describeLapFormat(course.lap),
+    },
+    ambition_boucles: laps,
+    // Conséquences de l'ambition, pas données du parcours.
+    distance_si_ambition_tenue_km: laps != null ? round2((course.lap.lengthM * laps) / 1000) : null,
+    denivele_pos_si_ambition_tenue_m:
+      vertUnknown || laps == null ? null : (course.lap.elevationGainM ?? 0) * laps,
+  };
+}
+
+/** Réponse de `predict_race` sur un format à boucle répétée. */
+function predictLapRaceTool(
+  model: PhysiologyModel,
+  course: CourseProfile & { lap: NonNullable<CourseProfile['lap']> },
+  laps: number,
+  raceName: string,
+  raceDayTsbArg: number | undefined,
+): ToolResult {
+  const tsb = raceDayTsbArg ?? targetRaceDayTsb(laps * course.lap.intervalS).metabolic;
+  const p = predictLapRace({ model, course, targetLaps: laps, raceDayTsb: tsb });
+  const atTarget = p.laps[laps - 1];
+
+  const horizon =
+    p.horizonReason === 'cutoff'
+      ? `Le temps de boucle atteint l'intervalle à la boucle ${p.cutoffLap} : ${p.sustainableLaps} boucles tenables.`
+      : p.horizonReason === 'durability-clamp'
+        ? `La projection s'arrête à la boucle ${p.sustainableLaps} : au-delà, la décroissance de durabilité ` +
+          `atteint sa borne de sécurité et cesse d'être une mesure. La boucle où la cloche mord est au-delà, ` +
+          `et le modèle ne sait pas où.`
+        : `Aucune cloche manquée dans l'horizon de projection.`;
+
+  return {
+    summary:
+      `${raceName} — ${laps} boucles visées, ` +
+      (atTarget
+        ? `boucle ${laps} en ${formatClock(atTarget.lapTimeS)} (repos ${formatClock(Math.max(0, atTarget.restS))})`
+        : `au-delà de ce que la projection vouche (${p.sustainableLaps} boucles)`) +
+      ` · ${p.sustainableLaps} boucles tenables`,
+    content: {
+      course: raceName,
+      parcours: describeCourse(course, laps),
+      ambition_boucles: laps,
+      duree_de_course_si_tenue: formatClock(laps * course.lap.intervalS),
+      distance_si_tenue_km: round2(p.distanceM / 1000),
+      temps_couru_hors_repos: formatClock(p.runningTimeS),
+      repos_cumule: formatClock(p.totalRestS),
+      probabilite_ambition_pct: p.targetProbability,
+      probabilite_ambition_note:
+        p.targetProbability == null
+          ? "L'ambition dépasse ce que la projection vouche : aucun chiffre à donner ici."
+          : null,
+      boucles_tenables: p.sustainableLaps,
+      boucle_de_la_cloche_manquee: p.cutoffLap,
+      horizon: horizon,
+      facteurs: p.factors,
+      boucles: p.laps.map((l) => ({
+        tour: l.index,
+        cloche: formatClock(l.bellS),
+        temps_de_boucle: formatClock(l.lapTimeS),
+        repos: l.restS >= 0 ? formatClock(l.restS) : `−${formatClock(-l.restS)}`,
+        allure: `${formatPace(l.speedMs)}/km`,
+        fraction_vitesse_critique: l.fractionOfCs,
+        fc_cible: l.targetHrRange,
+        consigne: l.cue,
+      })),
+      ravitaillement: {
+        ...p.fueling,
+        note: 'Les grammes par heure se prennent sur la boucle ; le repos à la cloche est le moment de manger solide.',
+      },
+      facteurs_limitants: p.limiters.map((l) => ({
+        facteur: l.factor,
+        arrive_a_la_boucle: l.fromLap,
+        cout_sur_la_boucle_visee: formatClock(Math.abs(l.costAtTargetS)),
+        cout_sur_la_boucle_visee_s: l.costAtTargetS,
+        boucles_gagnees: l.lapsGained,
+        boucles_gagnees_note:
+          l.lapsGained == null ? "Au-delà de l'horizon de projection : le gain ne se compte pas en boucles." : null,
+        explication: l.explanation,
+      })),
+      ce_qui_manque: p.unknowns.map((u) => ({
+        donnee: u.field,
+        valeur_de_repli: u.assumed,
+        ce_que_l_ecart_couterait: u.sensitivity,
+      })),
+    },
+  };
+}

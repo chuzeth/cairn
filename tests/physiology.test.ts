@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { LAB_TEST_2025_07_24, PIERRE, type DailyCheckIn, type PlannedSession, type PmcSeries } from '@cairn/core';
+import {
+  LAB_TEST_2025_07_24, PIERRE, courseFromLapFormat, describeLapFormat, isLapCourse, lapsForHours,
+  type DailyCheckIn, type LapFormat, type PlannedSession, type PmcSeries,
+} from '@cairn/core';
 import {
   buildZones, computePmc, densifyDailyLoads, fitCriticalSpeed, formatClock,
   fractionalUtilization, gradeAdjustedSpeed, kmhToMs, locomotionCost, meanMaximal,
@@ -14,7 +17,7 @@ import {
   matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
   eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
   type ReadinessDay, ACWR_SPIKE, analyzeDurability, buildPmcSeries, durabilityFactor,
-  projectLoadRatios, type DurabilitySample,
+  projectLoadRatios, type DurabilitySample, predictLapRace,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -783,6 +786,170 @@ describe('Prédiction de course', () => {
     const min = p.predictedTimeS / 60;
     expect(min).toBeGreaterThan(165); // 2 h 45
     expect(min).toBeLessThan(215);    // 3 h 35
+  });
+});
+
+describe("Format à boucle répétée — l'enregistrement", () => {
+  const lap: LapFormat = { lengthM: 6706, intervalS: 3600, elevationGainM: null, elevationLossM: null };
+
+  it('lit une ambition en heures comme un nombre de boucles', () => {
+    expect(lapsForHours(lap.intervalS, 10)).toBe(10);
+    expect(lapsForHours(1800, 10)).toBe(20);
+    expect(lapsForHours(lap.intervalS, 0.5)).toBe(1); // jamais moins d'une boucle
+  });
+
+  it("fait de la distance une conséquence de l'ambition, jamais une donnée", () => {
+    const dix = courseFromLapFormat(lap, 10);
+    const vingt = courseFromLapFormat(lap, 20);
+    expect(dix.distanceM).toBe(67060);
+    expect(vingt.distanceM).toBe(134120);
+    expect(isLapCourse(dix)).toBe(true);
+    expect(dix.lap).toEqual(lap);
+  });
+
+  it('porte le dénivelé inconnu au lieu de le combler', () => {
+    const inconnu = courseFromLapFormat(lap, 10);
+    // Le zéro existe pour l'arithmétique ; l'étiquette dit qu'il n'est pas un plat.
+    expect(inconnu.elevationGainM).toBe(0);
+    expect(inconnu.unknowns).toContain('elevation');
+    expect(describeLapFormat(lap)).toContain('inconnu');
+
+    const connu = courseFromLapFormat({ ...lap, elevationGainM: 120, elevationLossM: 120 }, 10);
+    expect(connu.elevationGainM).toBe(1200);
+    expect(connu.unknowns ?? []).not.toContain('elevation');
+  });
+});
+
+describe('Format à boucle répétée — la prédiction', () => {
+  const lap: LapFormat = { lengthM: 6706, intervalS: 3600, elevationGainM: null, elevationLossM: null };
+  const course = courseFromLapFormat(lap, 10, { technicality: 3 }, ['technicality']);
+  // L'ancre de laboratoire ne mesure pas la durabilité : on lui donne celle que
+  // le terrain a relevée, puisque c'est elle qui décide de ce format.
+  const terrain = { ...model, durabilityPctPerHour: 4.4, durabilityVertRateMh: 316 };
+  const base = predictLapRace({ model: terrain, course, targetLaps: 10, raceDayTsb: 10 });
+
+  it('refuse de répondre à un parcours qui ne décrit pas de boucle', () => {
+    expect(() =>
+      predictLapRace({
+        model: terrain,
+        course: { distanceM: 67060, elevationGainM: 0, elevationLossM: 0, technicality: 3 },
+        targetLaps: 10,
+      }),
+    ).toThrow();
+  });
+
+  it("allonge la boucle tour après tour et réduit le repos d'autant", () => {
+    for (let i = 1; i < base.laps.length; i++) {
+      expect(base.laps[i]!.lapTimeS).toBeGreaterThan(base.laps[i - 1]!.lapTimeS);
+      expect(base.laps[i]!.restS).toBeLessThan(base.laps[i - 1]!.restS);
+    }
+    // Le repos est exactement ce que la cloche laisse.
+    for (const l of base.laps) {
+      expect(l.lapTimeS + l.restS).toBeCloseTo(lap.intervalS, 0);
+    }
+  });
+
+  it('répond par des boucles, pas par un temps de parcours', () => {
+    expect(base.distanceM).toBe(67060);
+    expect(base.targetLaps).toBe(10);
+    expect(base.runningTimeS).toBeLessThan(10 * lap.intervalS);
+    expect(base.totalRestS).toBeCloseTo(10 * lap.intervalS - base.runningTimeS, -1);
+  });
+
+  it('situe la boucle où le temps de boucle atteint la cloche', () => {
+    expect(base.horizonReason).toBe('cutoff');
+    expect(base.cutoffLap).not.toBeNull();
+    expect(base.sustainableLaps).toBe(base.cutoffLap! - 1);
+    expect(base.laps[base.cutoffLap! - 1]!.lapTimeS).toBeGreaterThanOrEqual(lap.intervalS);
+    expect(base.laps[base.cutoffLap! - 2]!.lapTimeS).toBeLessThan(lap.intervalS);
+  });
+
+  it('fait tenir moins de boucles à durabilité plus faible, vitesse critique égale', () => {
+    const fragile = predictLapRace({
+      model: { ...terrain, durabilityPctPerHour: terrain.durabilityPctPerHour + 2.6 },
+      course,
+      targetLaps: 10,
+      raceDayTsb: 10,
+      skipCounterfactuals: true,
+    });
+    expect(fragile.sustainableLaps).toBeLessThan(base.sustainableLaps);
+    // La première boucle bouge peu : c'est la dérive, pas le niveau, qui coûte.
+    expect(Math.abs(fragile.laps[0]!.lapTimeS - base.laps[0]!.lapTimeS)).toBeLessThan(
+      fragile.laps[9]!.lapTimeS - base.laps[9]!.lapTimeS,
+    );
+  });
+
+  it("classe les facteurs limitants dans l'ordre où ils arrivent", () => {
+    expect(base.limiters.length).toBeGreaterThan(0);
+    for (let i = 1; i < base.limiters.length; i++) {
+      expect(base.limiters[i]!.fromLap).toBeGreaterThanOrEqual(base.limiters[i - 1]!.fromLap);
+    }
+    // Sur ce format, la durabilité est un facteur — et elle a un prix chiffré.
+    const durabilite = base.limiters.find((l) => l.factor.startsWith('Durabilité'));
+    expect(durabilite).toBeDefined();
+    expect(durabilite!.costAtTargetS).toBeGreaterThan(60);
+  });
+
+  it('nomme ce qui manque et chiffre ce que le manque coûte', () => {
+    const vert = base.unknowns.find((u) => u.field.includes('Dénivelé'));
+    expect(vert).toBeDefined();
+    expect(vert!.assumed).toContain('plate');
+
+    const avecVert = predictLapRace({
+      model: terrain,
+      course: courseFromLapFormat({ ...lap, elevationGainM: 100, elevationLossM: 100 }, 10, {
+        technicality: 3,
+      }),
+      targetLaps: 10,
+      raceDayTsb: 10,
+      skipCounterfactuals: true,
+    });
+    // La sensibilité annoncée est celle qu'on mesure en renseignant le tracé.
+    expect(avecVert.laps[9]!.lapTimeS).toBeGreaterThan(base.laps[9]!.lapTimeS + 30);
+    expect(avecVert.unknowns).toEqual([]);
+  });
+
+  it("ne nomme pas de cloche manquée au-delà de sa calibration", () => {
+    // Durabilité de référence et ancre de laboratoire : la cloche ne mord
+    // qu'après l'horizon de projection. La réponse doit le dire au lieu
+    // d'extrapoler une courbe calibrée sur dix heures jusqu'à trente.
+    const solide = predictLapRace({
+      model: { ...model, durabilityPctPerHour: 3 },
+      course,
+      targetLaps: 10,
+      raceDayTsb: 10,
+      skipCounterfactuals: true,
+    });
+    expect(solide.horizonReason).toBe('horizon');
+    expect(solide.cutoffLap).toBeNull();
+    expect(solide.laps.length).toBe(solide.sustainableLaps);
+  });
+
+  it('arrête la projection quand la durabilité touche sa borne', () => {
+    // Une décroissance arrivée à son plancher n'est plus une mesure : rien de
+    // ce qui suit ne s'affiche, et la boucle de sortie reste inconnue.
+    const usé = predictLapRace({
+      model: { ...model, durabilityPctPerHour: 5.7 },
+      course,
+      targetLaps: 10,
+      raceDayTsb: 10,
+      skipCounterfactuals: true,
+    });
+    expect(usé.horizonReason).toBe('durability-clamp');
+    expect(usé.cutoffLap).toBeNull();
+    for (const l of usé.laps) expect(l.lapTimeS).toBeLessThan(lap.intervalS);
+  });
+
+  it("ne chiffre pas une ambition que la projection ne vouche pas", () => {
+    const trop = predictLapRace({
+      model: { ...model, durabilityPctPerHour: 5.7 },
+      course: courseFromLapFormat(lap, 40, { technicality: 3 }),
+      targetLaps: 40,
+      raceDayTsb: 10,
+      skipCounterfactuals: true,
+    });
+    expect(trop.targetProbability).toBeNull();
+    expect(trop.laps.length).toBeLessThan(40);
   });
 });
 

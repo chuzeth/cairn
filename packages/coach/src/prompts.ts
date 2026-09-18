@@ -1,4 +1,5 @@
 import type { AbsenceKind, ReadinessSource } from '@cairn/core';
+import { describeLapFormat, isLapCourse, targetLaps } from '@cairn/core';
 import type { AthleteState } from './state.js';
 import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
 
@@ -77,6 +78,20 @@ Vérifie systématiquement les deux avant de valider ou d'ajuster une séance.
 ## La durabilité
 
 Le troisième pilier de la performance d'endurance, après la VO2max et l'économie de course : la vitesse à laquelle le rendement s'effondre au fil de l'effort. C'est elle qui décide d'une seconde moitié de trail. Elle est mesurée en continu (perte de rendement en % par heure et par 1 000 m de D+) et elle est entraînable. Quand une prédiction de course déçoit, regarde d'abord la durabilité avant de conclure au manque de vitesse.
+
+## Les formats à boucle répétée
+
+Une backyard ne se court pas sur une distance. Une même boucle est relancée à chaque cloche — chez Pierre, 6,706 km toutes les heures — et la course s'arrête quand un seul coureur en termine une de plus que les autres. Il faut être sur la ligne à chaque cloche, et ce qu'on gagne en finissant tôt se prend en repos.
+
+Trois conséquences, et elles changent tout ce que tu dis de ce format.
+
+**La distance est une conséquence, jamais une donnée.** Viser dix heures, c'est viser dix boucles, soit 67 km — dans cet ordre. Un objectif enregistré en « 67 km » ferait calculer un temps de parcours continu sur 67 km, et le plan d'allure serait faux de bout en bout. Enregistre ces courses avec \`upsert_race\` en décrivant la boucle (\`lap_length_m\`, \`lap_interval_s\`) et l'ambition en boucles ou en heures (\`target_laps\`, \`target_hours\`). N'y mets pas de temps cible : le temps d'arrivée est fixé par la cloche.
+
+**La question utile n'est pas un temps d'arrivée.** Elle est : à quelle allure il boucle, de combien cette allure dérive tour après tour, à quelle boucle le temps de boucle atteint l'intervalle, et combien de repos reste à chaque cloche. \`predict_race\` répond exactement cela dès que l'objectif porte une boucle. Le repos est la vraie monnaie du format : c'est là qu'on mange, qu'on se change, qu'on s'assied — et il se réduit tout seul à mesure que la boucle s'allonge.
+
+**C'est la durabilité qui décide, pas la vitesse critique.** Sur dix heures, la vitesse critique fixe le niveau de départ et n'intervient presque plus ensuite ; ce qui allonge la boucle, c'est la perte de rendement par heure. Un athlète plus rapide mais moins durable tient moins de boucles. Dis-le dans cet ordre quand tu commentes une projection, et lis les facteurs limitants dans l'ordre où ils arrivent — c'est ainsi qu'ils sont rendus.
+
+**Ce qui n'est pas connu du parcours se dit, ne se comble pas.** Tant que l'épreuve n'a pas été identifiée, le dénivelé par boucle est inconnu : la prédiction calcule sur une boucle plate et le dit, avec ce que 100 m D+ par boucle coûteraient. Ne présente jamais ces chiffres comme s'ils décrivaient un parcours relevé, et ne remplis pas le trou par une valeur plausible — va chercher le tracé, ou annonce l'incertitude.
 
 ## Ton
 
@@ -212,13 +227,25 @@ export function buildContextSnapshot(state: AthleteState): string {
     lines.push('## Courses à venir');
     for (const r of state.upcomingRaces.slice(0, 5)) {
       const days = Math.round((new Date(r.date).getTime() - Date.now()) / 86_400_000);
-      const target = r.target?.placing
-        ? `top ${r.target.placing}`
-        : r.target?.timeS
-          ? formatDuration(r.target.timeS)
-          : 'sans objectif chiffré';
+      const laps = targetLaps(r);
+      const target = laps
+        ? `${laps} boucles (${formatDuration(laps * (r.course.lap?.intervalS ?? 3600))})`
+        : r.target?.placing
+          ? `top ${r.target.placing}`
+          : r.target?.timeS
+            ? formatDuration(r.target.timeS)
+            : 'sans objectif chiffré';
+      // Sur un format à boucles, annoncer une distance et un D+ ferait poser la
+      // mauvaise question : ce qui est fixé, c'est la boucle et la cloche.
+      const parcours = isLapCourse(r.course)
+        ? describeLapFormat(r.course.lap)
+        : `${(r.course.distanceM / 1000).toFixed(1)} km / ${r.course.elevationGainM} m D+`;
+      const missing = r.course.unknowns ?? [];
       lines.push(
-        `- **${r.name}** (${r.id}) — ${r.date}, dans ${days} j · ${(r.course.distanceM / 1000).toFixed(1)} km / ${r.course.elevationGainM} m D+ · priorité ${r.priority} · objectif ${target}`,
+        `- **${r.name}** (${r.id}) — ${r.date}, dans ${days} j · ${parcours} · priorité ${r.priority} · objectif ${target}` +
+          (missing.length
+            ? ` · **non renseigné : ${missing.map((u) => (u === 'elevation' ? 'dénivelé' : 'technicité')).join(', ')}** — à dire, pas à combler`
+            : ''),
       );
     }
     lines.push('');
