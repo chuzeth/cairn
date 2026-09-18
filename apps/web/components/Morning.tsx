@@ -204,10 +204,22 @@ function subline(session: SessionRow): string {
   return nbsp(parts.filter(Boolean).join(', '));
 }
 
-/** Le profil de la séance, et la consigne bloc par bloc sous le même tracé. */
+/**
+ * Le profil de la séance, et la consigne bloc par bloc sous le même tracé.
+ *
+ * Le bloc porte en clair ce qui le fait — sa durée, son nom, sa cible
+ * cardiaque, sa récupération. Les cibles à tenir et les mots du coach se
+ * déplient sous « les consignes », chacun sous son bloc : servis d'office, ils
+ * poussent la disponibilité du jour sous la ligne de flottaison, et on lirait
+ * comment exécuter la séance avant de savoir si le système a une réserve
+ * dessus.
+ */
 function Session({ session }: { session: SessionRow }) {
   const [why, setWhy] = useState(false);
+  const [said, setSaid] = useState(false);
   const profile = sessionProfile(session);
+  const notes = session.blocks.map(blockNote);
+  const hasSaid = session.blocks.some((b, i) => targets(b) || notes[i]);
 
   return (
     <section className="m-session">
@@ -222,29 +234,35 @@ function Session({ session }: { session: SessionRow }) {
             <span className="m-block-body">
               {blockLabel(b.label)}
               {hrText(b) && <span className="m-faint"> · {hrText(b)}</span>}
-              {secondLine(b) && <span className="m-block-note">{nbsp(secondLine(b))}</span>}
+              {shape(b) && <span className="m-block-note">{nbsp(shape(b))}</span>}
+              {said && (targets(b) || notes[i]) && (
+                <span className="m-block-said">
+                  {targets(b) && <span className="m-faint">{nbsp(targets(b))} </span>}
+                  {notes[i] && nbsp(notes[i]!)}
+                </span>
+              )}
             </span>
           </div>
         ))}
       </div>
-
-      {session.successCriteria?.map((c, i) => (
-        <p className="m-success" key={i}>
-          Réussie si {CRITERION_LABELS[c.metric] ?? c.metric}
-          {c.maxValue != null && ` ≤ ${c.maxValue}`}.
-        </p>
-      ))}
 
       <div className="m-session-foot">
         <span className="m-faint">
           {session.plannedLoad} pts
           {session.plannedMechanicalLoad > 0 && ` · ${session.plannedMechanicalLoad} méca`}
         </span>
-        {(session.intent || session.rationale || session.directives?.length) && (
-          <button type="button" className="m-more" aria-expanded={why} onClick={() => setWhy((w) => !w)}>
-            {why ? 'masquer' : 'pourquoi cette séance'}
-          </button>
-        )}
+        <span className="m-foot-more">
+          {hasSaid && (
+            <button type="button" className="m-more" aria-expanded={said} onClick={() => setSaid((s) => !s)}>
+              {said ? 'masquer' : 'les consignes'}
+            </button>
+          )}
+          {(session.intent || session.rationale || session.directives?.length || session.successCriteria?.length) && (
+            <button type="button" className="m-more" aria-expanded={why} onClick={() => setWhy((w) => !w)}>
+              {why ? 'masquer' : 'pourquoi cette séance'}
+            </button>
+          )}
+        </span>
       </div>
 
       {why && (
@@ -260,7 +278,11 @@ function Session({ session }: { session: SessionRow }) {
             </p>
           ))}
           {session.successCriteria?.map((c, i) => (
-            <p key={i} className="m-faint">« {c.origin.quote} » — {originLabel(c.origin)}</p>
+            <p key={i}>
+              Réussie si {CRITERION_LABELS[c.metric] ?? c.metric}
+              {c.maxValue != null && ` ≤ ${c.maxValue}`}.
+              <span className="m-faint"> « {c.origin.quote} » — {originLabel(c.origin)}</span>
+            </p>
           ))}
         </div>
       )}
@@ -283,31 +305,49 @@ function hrText(b: SessionRow['blocks'][number]): string {
 }
 
 /**
- * Le reste de la consigne, sur une ligne grise : la récupération d'abord — sans
- * elle, « 8 × 90″ » n'est pas exécutable — puis l'allure, la vitesse
- * ascensionnelle, la cadence, le circuit et les mots du coach.
- *
- * La première phrase des notes est retirée quand elle ne fait que redire la
- * cible affichée à côté : « Cible 1047 m D+/h, 171-175 bpm » deux fois sur la
- * même ligne, c'est du bruit qui pousse le conseil hors de l'écran.
+ * Ce que la durée du bloc ne dit pas et sans quoi il n'est pas exécutable : sa
+ * récupération — sans elle, « 8 × 90″ » ne veut rien dire — et sa distance
+ * quand elle en porte une. Deux nombres au plus : la hauteur de la liste reste
+ * prévisible, et le bas de l'écran atteignable.
  */
-function secondLine(b: SessionRow['blocks'][number]): string {
+function shape(b: SessionRow['blocks'][number]): string {
   const parts: string[] = [];
   if (b.recovery && b.recovery.durationS > 0) {
     parts.push(`récup ${prime(b.recovery.durationS)} ${b.recovery.active ? 'active' : 'passive'}`);
   }
   if (b.distanceM) parts.push(`${b.distanceM} m`);
+  return parts.join(' · ');
+}
+
+/**
+ * Les cibles à tenir : allure, vitesse ascensionnelle, cadence, circuit.
+ *
+ * Elles se lisent sur la montre pendant l'effort, pas au réveil — et la
+ * cardiaque, qui est la cible première en endurance, reste elle sur la ligne du
+ * bloc. Une rando-course répète la même plage d'allure sur ses quatre blocs :
+ * servies d'office, ces quatre lignes coûtent exactement la question du matin.
+ */
+function targets(b: SessionRow['blocks'][number]): string {
+  const parts: string[] = [];
   if (b.paceRange) {
     parts.push(b.paceRange[1] === '—' ? `plus lent que ${b.paceRange[0]}/km` : `${b.paceRange[0]}–${b.paceRange[1]}/km`);
   }
   if (b.vamTargetMh) parts.push(`${metres(b.vamTargetMh)} D+/h`);
   if (b.cadenceTargetSpm) parts.push(`${b.cadenceTargetSpm} ppm`);
   if (b.circuit) parts.push(circuitText(b.circuit));
-  const notes = b.notes && (b.vamTargetMh || b.hrRange)
-    ? b.notes.replace(/^\s*Cible[^.]*\.\s*/i, '')
-    : b.notes;
-  if (notes) parts.push(notes);
   return parts.join(' · ');
+}
+
+/**
+ * Ce que le coach dit du bloc, et qui ne tient pas en nombres.
+ *
+ * La première phrase est retirée quand elle ne fait que redire la cible
+ * affichée juste au-dessus : « Cible 1047 m D+/h, 171-175 bpm » deux fois dans
+ * le même bloc, c'est du bruit qui pousse le conseil plus bas.
+ */
+function blockNote(b: SessionRow['blocks'][number]): string {
+  if (!b.notes) return '';
+  return b.vamTargetMh || b.hrRange ? b.notes.replace(/^\s*Cible[^.]*\.\s*/i, '') : b.notes;
 }
 
 /**
@@ -479,12 +519,6 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
               {delta > 0 ? '+' : '−'}{Math.abs(delta)} depuis ta réponse.
             </p>
           )}
-          {missing.length > 0 && (
-            <p className="m-after">
-              Ce score ne regarde pas {missing.join(' ni ')} : faute de relevé,{' '}
-              {missing.length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une moyenne.
-            </p>
-          )}
           <button type="button" className="m-more" aria-expanded={basis} onClick={() => setBasis((b) => !b)}>
             {basis ? 'masquer' : 'sur quoi repose ce chiffre'}
           </button>
@@ -494,6 +528,14 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
       {basis && (
         <div className="m-basis">
           <ReadinessBasis readiness={readiness} before={result ? before : undefined} />
+          {/* Ce qui ne pèse rien se dit là où se lisent les poids, et pas trois
+              lignes avant la question du matin. */}
+          {missing.length > 0 && (
+            <p className="m-after">
+              Ce score ne regarde pas {missing.join(' ni ')} : faute de relevé,{' '}
+              {missing.length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une moyenne.
+            </p>
+          )}
           <div className="m-figures">
             {[
               { name: 'Charge chronique', value: String(Math.round(t.ctl)), note: `${signed(t.rampRate, 1)} pts/semaine` },

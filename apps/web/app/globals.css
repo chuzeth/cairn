@@ -488,9 +488,12 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-block-time[data-climb="true"] { color: var(--ochre); }
 .m-block-body { font-size: 14px; line-height: 1.4; color: var(--text); }
 .m-block-note { display: block; color: var(--text-faint); }
+/* Les mots du coach, sous leur bloc et non sous la séance : une consigne
+   détachée de ce qu'elle commande se lit deux fois avant d'être suivie. */
+.m-block-said { display: block; margin-top: 5px; color: var(--text-dim); }
 
-.m-success { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-dim); }
-.m-session-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text-faint); }
+.m-session-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 0 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-faint); }
+.m-foot-more { display: flex; align-items: baseline; gap: 18px; }
 .m-why { display: flex; flex-direction: column; gap: 9px; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
 .m-why p { margin: 0; }
 
