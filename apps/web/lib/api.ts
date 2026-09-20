@@ -51,6 +51,29 @@ export async function del<T>(path: string): Promise<T> {
 
 // ── Formatage ────────────────────────────────────────────────────────────────
 
+/**
+ * Tout nombre affiché passe par ici.
+ *
+ * Virgule décimale, espace fine insécable aux milliers, vrai signe moins : la
+ * typographie française n'est pas un détail d'esthétique, c'est ce qui fait
+ * qu'on lit « 16 199 m D+ » d'un coup d'œil au lieu de compter les chiffres.
+ * Une fonction unique parce que la corriger appel par appel revient à ne la
+ * corriger qu'aux endroits regardés le jour de l'audit.
+ *
+ * Écrite à la main plutôt que déléguée à `Intl` : le serveur et le téléphone
+ * doivent produire exactement la même chaîne, sinon React réhydrate sur un
+ * écart et la page se redessine en silence.
+ */
+export function num(value: number | null | undefined, digits = 0): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const fixed = Math.abs(value).toFixed(digits);
+  const [whole = '', decimals] = fixed.split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  // −0,0 n'existe pas : un arrondi ne doit pas inventer un signe.
+  const negative = value < 0 && Number(fixed) !== 0;
+  return `${negative ? '−' : ''}${grouped}${decimals ? `,${decimals}` : ''}`;
+}
+
 export function pace(speedMs: number | null | undefined): string {
   if (!speedMs || speedMs <= 0) return '—';
   const s = 1000 / speedMs;
@@ -143,10 +166,21 @@ const DAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'sa
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const MONTHS_LONG = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
-export function frDate(isoDate: string, opts: { weekday?: boolean; year?: boolean } = {}): string {
+/**
+ * Une date.
+ *
+ * `long` écrit le mois en toutes lettres : c'est la forme qu'appelle une phrase
+ * — « dimanche 18 octobre 2026 » —, l'abréviation restant pour ce qui s'aligne
+ * en colonne, où la largeur compte plus que la lecture.
+ */
+export function frDate(
+  isoDate: string,
+  opts: { weekday?: boolean; year?: boolean; long?: boolean } = {},
+): string {
   const d = new Date(isoDate.length <= 10 ? `${isoDate}T12:00:00Z` : isoDate);
   if (Number.isNaN(d.getTime())) return isoDate;
-  const day = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const month = (opts.long ? MONTHS_LONG : MONTHS)[d.getMonth()];
+  const day = `${d.getDate()} ${month}`;
   const prefix = opts.weekday ? `${DAYS[d.getDay()]} ` : '';
   const suffix = opts.year ? ` ${d.getFullYear()}` : '';
   return `${prefix}${day}${suffix}`;
@@ -199,7 +233,8 @@ export const todayIso = () => new Date().toISOString().slice(0, 10);
 export const isoOffset = (days: number) =>
   new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
-export const signed = (n: number, digits = 0) => `${n > 0 ? '+' : ''}${n.toFixed(digits)}`;
+/** Un écart se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. */
+export const signed = (n: number, digits = 0) => `${n > 0 ? '+' : ''}${num(n, digits)}`;
 
 /** Rendu Markdown minimal — suffisant pour ce que le coach produit, sans dépendance. */
 export function markdown(src: string): string {

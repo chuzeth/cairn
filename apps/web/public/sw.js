@@ -211,7 +211,10 @@ function absent(route) {
 <title>Cairn — hors réseau</title>
 <style>
   :root { color-scheme: dark; }
-  body { margin:0; padding:48px 20px; background:#0e1316; color:#ece8df;
+  /* La barre d'état recouvre le haut de l'écran : le titre se pose dessous,
+     ici comme dans l'application. */
+  body { margin:0; padding:calc(env(safe-area-inset-top) + 48px) 20px 48px;
+         background:#0e1316; color:#ece8df;
          font:16px/1.5 -apple-system, system-ui, sans-serif; }
   main { max-width:420px; margin:0 auto; }
   h1 { font-size:28px; line-height:1.1; margin:0 0 12px; font-weight:640; }

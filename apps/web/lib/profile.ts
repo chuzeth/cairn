@@ -19,6 +19,7 @@
  * remplir sa boîte quelles que soient les valeurs — et ce qui interdit de lire
  * une dent comme une mesure.
  */
+import { num } from './api';
 import type { SessionRow } from './api';
 
 type Block = SessionRow['blocks'][number];
@@ -158,13 +159,14 @@ export function legsOf(session: Pick<SessionRow, 'blocks'>): Leg[] {
 const NUMBERS = ['zéro', 'une', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix', 'onze', 'douze'];
 
 /**
- * Les mètres à la française : espace insécable, jamais de virgule.
+ * Les mètres du tracé : le groupement de {@link num}, son espace élargie.
  *
- * L'espace fine (U+202F) serait la bonne, mais Archivo la dessine à un pixel :
- * « 1 010 m » se lirait « 1010 m » sur le tracé, à onze pixels de corps.
+ * L'espace fine (U+202F) est la bonne partout ailleurs, mais Archivo la dessine
+ * à un pixel : sur le tracé, à onze pixels de corps, « 1 010 m » se lirait
+ * « 1010 m ». C'est la seule exception, et elle tient ici — pas dans les appels.
  */
 export const metres = (m: number): string =>
-  `${String(Math.round(m)).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0')}\u00a0m`;
+  `${num(m).replace(/\u202f/g, '\u00a0')}\u00a0m`;
 
 export function sessionProfile(session: Pick<SessionRow, 'blocks'>): SessionProfile {
   const legs = legsOf(session);

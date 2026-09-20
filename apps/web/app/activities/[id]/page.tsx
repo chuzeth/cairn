@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { use } from 'react';
 import Link from 'next/link';
-import { clock, duration, frDate, get, markdown, pace } from '@/lib/api';
+import { clock, duration, frDate, get, markdown, num, pace } from '@/lib/api';
 import { Badge, Card, ErrorBox, Legend, Loading, Metric, ZoneBar } from '@/components/ui';
 import { ElevationProfile, GradeProfileChart, StreamChart } from '@/components/charts';
 
@@ -55,17 +55,17 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
           <Link href="/activities" className="tiny faint">← Toutes les séances</Link>
           <h1 className="page-title" style={{ marginTop: 4 }}>{a.name}</h1>
           <p className="page-sub">
-            {frDate(a.startDateLocal, { weekday: true, year: true })} · {a.sportType}
+            {frDate(a.startDateLocal, { weekday: true, year: true, long: true })} · {a.sportType}
             {a.deviceName ? ` · ${a.deviceName}` : ''}
           </p>
         </div>
       </div>
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
-        <Card><Metric label="Distance" value={(a.distanceM / 1000).toFixed(2)} unit="km" /></Card>
+        <Card><Metric label="Distance" value={num(a.distanceM / 1000, 2)} unit="km" /></Card>
         <Card><Metric label="Durée" value={clock(a.movingTimeS)} note={a.elapsedTimeS > a.movingTimeS + 60 ? `${clock(a.elapsedTimeS)} écoulées` : undefined} /></Card>
-        <Card><Metric label="Dénivelé" value={Math.round(a.totalElevationGainM)} unit="m D+" note={`${Math.round(a.totalElevationLossM)} m D−`} /></Card>
-        <Card><Metric label="Allure moyenne" value={pace(a.averageSpeedMs)} unit="/km" note={a.averageHr ? `${Math.round(a.averageHr)} bpm moy · ${a.maxHr ? Math.round(a.maxHr) : '—'} max` : undefined} /></Card>
+        <Card><Metric label="Dénivelé" value={num(a.totalElevationGainM)} unit="m D+" note={`${num(a.totalElevationLossM)} m D−`} /></Card>
+        <Card><Metric label="Allure moyenne" value={pace(a.averageSpeedMs)} unit="/km" note={a.averageHr ? `${num(a.averageHr)} bpm moy · ${a.maxHr ? num(a.maxHr) : '—'} max` : undefined} /></Card>
       </div>
 
       {insight && (
@@ -99,13 +99,13 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
       ) : (
         <>
           <div className="grid grid-4" style={{ marginBottom: 14 }}>
-            <Card><Metric label="Charge métabolique" value={analysis.load.metabolic} tone="metabolic" note={`source : ${analysis.load.primarySource}`} /></Card>
-            <Card><Metric label="Charge mécanique" value={analysis.load.mechanical} tone="mechanical" note={`${Math.round(analysis.load.eccentricWorkKj)} kJ absorbés`} /></Card>
-            <Card><Metric label="Intensité relative" value={analysis.load.intensityFactor.toFixed(2)} note={`vitesse graduée ${(analysis.load.normalizedGradedSpeedMs * 3.6).toFixed(1)} km/h`} /></Card>
+            <Card><Metric label="Charge métabolique" value={num(analysis.load.metabolic, 1)} tone="metabolic" note={`source : ${analysis.load.primarySource}`} /></Card>
+            <Card><Metric label="Charge mécanique" value={num(analysis.load.mechanical, 1)} tone="mechanical" note={`${num(analysis.load.eccentricWorkKj)} kJ absorbés`} /></Card>
+            <Card><Metric label="Intensité relative" value={num(analysis.load.intensityFactor, 2)} note={`vitesse graduée ${num(analysis.load.normalizedGradedSpeedMs * 3.6, 1)} km/h`} /></Card>
             <Card>
               <Metric
                 label="Dérive cardiaque"
-                value={analysis.decoupling.pctDrift != null ? `${analysis.decoupling.pctDrift.toFixed(1)} %` : '—'}
+                value={analysis.decoupling.pctDrift != null ? `${num(analysis.decoupling.pctDrift, 1)} %` : '—'}
                 tone={analysis.decoupling.pctDrift != null && analysis.decoupling.pctDrift > 8 ? 'warn' : analysis.decoupling.pctDrift != null ? 'good' : undefined}
                 note={analysis.decoupling.valid ? 'rendement 1ʳᵉ vs 2ᵈᵉ moitié' : analysis.decoupling.reason}
               />
@@ -140,7 +140,7 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
           )}
 
           <div className="grid grid-2" style={{ marginBottom: 14 }}>
-            <Card title="Répartition d'intensité" hint={`Indice de polarisation ${analysis.zones.polarizationIndex.toFixed(2)}`}>
+            <Card title="Répartition d'intensité" hint={`Indice de polarisation ${num(analysis.zones.polarizationIndex, 2)}`}>
               <ZoneBar fractions={analysis.zones.fraction} />
               <Legend items={[
                 { color: 'var(--z1)', label: 'Z1 récup' }, { color: 'var(--z2)', label: 'Z2 endurance' },
@@ -153,7 +153,7 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
                     <tr key={z}>
                       <td style={{ width: 34 }}><span className="badge">{z}</span></td>
                       <td className="mono">{duration(analysis.zones.seconds[z] ?? 0)}</td>
-                      <td className="right mono muted">{Math.round((analysis.zones.fraction[z] ?? 0) * 100)} %</td>
+                      <td className="right mono muted">{num((analysis.zones.fraction[z] ?? 0) * 100)} %</td>
                     </tr>
                   ))}
                 </tbody>
@@ -166,7 +166,7 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
           </div>
 
           {analysis.intervals.length > 0 && (
-            <Card title={`Blocs d'effort détectés (${analysis.intervals.length})`} style={{ marginBottom: 14 }}>
+            <Card title={`Blocs d'effort détectés (${num(analysis.intervals.length)})`} style={{ marginBottom: 14 }}>
               <table>
                 <thead>
                   <tr><th>#</th><th className="right">Durée</th><th className="right">Distance</th><th className="right">Allure</th><th className="right">Allure corrigée</th><th className="right">Pente</th><th className="right">FC</th><th className="right">Cadence</th><th>Zone</th></tr>
@@ -174,14 +174,14 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
                 <tbody>
                   {analysis.intervals.map((iv) => (
                     <tr key={iv.index}>
-                      <td className="mono faint">{iv.index}</td>
+                      <td className="mono faint">{num(iv.index)}</td>
                       <td className="right mono">{clock(iv.durationS)}</td>
-                      <td className="right mono">{iv.distanceM} m</td>
+                      <td className="right mono">{num(iv.distanceM)} m</td>
                       <td className="right mono">{pace(iv.avgSpeedMs)}</td>
                       <td className="right mono" style={{ color: 'var(--metabolic)' }}>{pace(iv.avgGradedSpeedMs)}</td>
-                      <td className="right mono">{(iv.avgGrade * 100).toFixed(1)} %</td>
-                      <td className="right mono">{iv.avgHr ?? '—'}</td>
-                      <td className="right mono">{iv.avgCadence ?? '—'}</td>
+                      <td className="right mono">{num(iv.avgGrade * 100, 1)} %</td>
+                      <td className="right mono">{iv.avgHr != null ? num(iv.avgHr) : '—'}</td>
+                      <td className="right mono">{iv.avgCadence != null ? num(iv.avgCadence) : '—'}</td>
                       <td><span className="badge">{iv.zone}</span></td>
                     </tr>
                   ))}
@@ -193,11 +193,11 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
           <div className="grid grid-3">
             <Card title="Énergétique">
               <div className="stack" style={{ gap: 12 }}>
-                <Metric label="Dépense" value={analysis.energy.kcal} unit="kcal" />
-                <div className="row-between small"><span className="faint">Travail vertical</span><span className="mono">{Math.round(analysis.load.verticalWorkKj)} kJ</span></div>
-                <div className="row-between small"><span className="faint">Absorbé en descente</span><span className="mono">{Math.round(analysis.load.eccentricWorkKj)} kJ</span></div>
-                <div className="row-between small"><span className="faint">Glucides recommandés</span><span className="mono">{analysis.energy.carbTargetGPerHour} g/h</span></div>
-                <div className="row-between small"><span className="faint">Hydratation</span><span className="mono">{analysis.energy.fluidTargetMlPerHour} ml/h</span></div>
+                <Metric label="Dépense" value={num(analysis.energy.kcal)} unit="kcal" />
+                <div className="row-between small"><span className="faint">Travail vertical</span><span className="mono">{num(analysis.load.verticalWorkKj)} kJ</span></div>
+                <div className="row-between small"><span className="faint">Absorbé en descente</span><span className="mono">{num(analysis.load.eccentricWorkKj)} kJ</span></div>
+                <div className="row-between small"><span className="faint">Glucides recommandés</span><span className="mono">{num(analysis.energy.carbTargetGPerHour)} g/h</span></div>
+                <div className="row-between small"><span className="faint">Hydratation</span><span className="mono">{num(analysis.energy.fluidTargetMlPerHour)} ml/h</span></div>
               </div>
             </Card>
 
@@ -205,16 +205,16 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
               <div className="stack" style={{ gap: 12 }}>
                 <Metric
                   label="Perte de rendement"
-                  value={analysis.durabilitySignal.efDeclinePctPerHour != null ? `${analysis.durabilitySignal.efDeclinePctPerHour.toFixed(1)} %` : '—'}
+                  value={analysis.durabilitySignal.efDeclinePctPerHour != null ? `${num(analysis.durabilitySignal.efDeclinePctPerHour, 1)} %` : '—'}
                   unit="/h"
                 />
                 <div className="row-between small">
                   <span className="faint">Par 1 000 m D+</span>
-                  <span className="mono">{analysis.durabilitySignal.efDeclinePctPer1000mVert != null ? `${analysis.durabilitySignal.efDeclinePctPer1000mVert.toFixed(1)} %` : '—'}</span>
+                  <span className="mono">{analysis.durabilitySignal.efDeclinePctPer1000mVert != null ? `${num(analysis.durabilitySignal.efDeclinePctPer1000mVert, 1)} %` : '—'}</span>
                 </div>
                 <div className="row-between small">
                   <span className="faint">Réserve anaérobie min.</span>
-                  <span className="mono">{analysis.wPrimeBalanceMinM != null ? `${analysis.wPrimeBalanceMinM} m` : '—'}</span>
+                  <span className="mono">{analysis.wPrimeBalanceMinM != null ? `${num(analysis.wPrimeBalanceMinM)} m` : '—'}</span>
                 </div>
                 <p className="tiny faint" style={{ margin: 0 }}>
                   Mesurée sur les fenêtres de 10 minutes en régime aérobie stable. Sur une séance courte ou
@@ -227,16 +227,16 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
               <div className="stack" style={{ gap: 12 }}>
                 <Metric
                   label="Température"
-                  value={analysis.environment.avgTempC != null ? `${analysis.environment.avgTempC.toFixed(0)} °C` : '—'}
-                  note={analysis.environment.heatStressFactor > 1.02 ? `coût majoré de ${Math.round((analysis.environment.heatStressFactor - 1) * 100)} %` : 'conditions neutres'}
+                  value={analysis.environment.avgTempC != null ? `${num(analysis.environment.avgTempC)} °C` : '—'}
+                  note={analysis.environment.heatStressFactor > 1.02 ? `coût majoré de ${num((analysis.environment.heatStressFactor - 1) * 100)} %` : 'conditions neutres'}
                 />
                 <div className="row-between small">
                   <span className="faint">Altitude moyenne</span>
-                  <span className="mono">{analysis.environment.avgAltitudeM != null ? `${analysis.environment.avgAltitudeM} m` : '—'}</span>
+                  <span className="mono">{analysis.environment.avgAltitudeM != null ? `${num(analysis.environment.avgAltitudeM)} m` : '—'}</span>
                 </div>
                 <div className="row-between small">
                   <span className="faint">Cadence moyenne</span>
-                  <span className="mono">{a.averageCadenceSpm ? `${Math.round(a.averageCadenceSpm)} ppm` : '—'}</span>
+                  <span className="mono">{a.averageCadenceSpm ? `${num(a.averageCadenceSpm)} ppm` : '—'}</span>
                 </div>
                 {analysis.compliance && (
                   <div style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>

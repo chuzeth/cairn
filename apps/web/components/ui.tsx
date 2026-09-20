@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import { frDate, frStamp } from '@/lib/api';
+import { frDate, frStamp, num } from '@/lib/api';
 import type { DeclaredAbsence, Readiness, ReadinessComponent, ReadinessSource } from '@/lib/api';
 import { useOutbox } from '@/lib/offline';
 
@@ -91,7 +91,7 @@ export function ZoneBar({ fractions }: { fractions: Record<string, number> }) {
     <div className="zone-bar">
       {keys.map((k) => {
         const w = ((fractions[k] ?? 0) / total) * 100;
-        return w > 0 ? <div key={k} className={`zone-seg zone-${k}`} style={{ width: `${w}%` }} title={`${k} · ${w.toFixed(0)} %`} /> : null;
+        return w > 0 ? <div key={k} className={`zone-seg zone-${k}`} style={{ width: `${w}%` }} title={`${k} · ${num(w)} %`} /> : null;
       })}
     </div>
   );
@@ -104,9 +104,9 @@ export function ThreeZoneBar({ z }: { z: { low: number; moderate: number; high: 
     v > 0 ? <div style={{ width: `${(v / total) * 100}%`, background: color }} title={label} /> : null;
   return (
     <div className="zone-bar">
-      {seg(z.low, 'var(--z2)', `Bas ${Math.round((z.low / total) * 100)} %`)}
-      {seg(z.moderate, 'var(--z4)', `Modéré ${Math.round((z.moderate / total) * 100)} %`)}
-      {seg(z.high, 'var(--z5)', `Haut ${Math.round((z.high / total) * 100)} %`)}
+      {seg(z.low, 'var(--z2)', `Bas ${num((z.low / total) * 100)} %`)}
+      {seg(z.moderate, 'var(--z4)', `Modéré ${num((z.moderate / total) * 100)} %`)}
+      {seg(z.high, 'var(--z5)', `Haut ${num((z.high / total) * 100)} %`)}
     </div>
   );
 }
@@ -136,7 +136,7 @@ const STALE_HOURS = 36;
 
 /** « 37 h », puis « 3 jours » — au-delà de deux jours, les heures ne se lisent plus. */
 function since(hours: number): string {
-  return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} jours`;
+  return hours < 48 ? `${num(hours)} h` : `${num(Math.floor(hours / 24))} jours`;
 }
 
 /**
@@ -184,7 +184,7 @@ export function Waiting() {
   if (pending === 0) return null;
   return (
     <div className="stale">
-      {pending === 1 ? 'Une réponse' : `${pending} réponses`} en attente d&apos;envoi
+      {pending === 1 ? 'Une réponse' : `${num(pending)} réponses`} en attente d&apos;envoi
       {pending === 1 ? ' : elle partira' : ' : elles partiront'} au retour du réseau. Rien n&apos;est
       encore enregistré.
     </div>
@@ -215,7 +215,7 @@ export function AbsenceNotice({ absence, today }: { absence: DeclaredAbsence; to
     <div className="banner" data-tone="info" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 9 }}>
       <div className="row-between">
         <strong>
-          {ABSENCE_KIND_LABEL[absence.kind]} déclarée · {frDate(absence.startDate)} → {frDate(absence.endDate)}
+          {ABSENCE_KIND_LABEL[absence.kind]} déclarée · {frDate(absence.startDate, { long: true })} → {frDate(absence.endDate, { long: true })}
         </strong>
         <Badge tone={phase === 'en cours' ? 'watch' : undefined}>{phase}</Badge>
       </div>
@@ -224,7 +224,7 @@ export function AbsenceNotice({ absence, today }: { absence: DeclaredAbsence; to
         {n == null
           ? ''
           : n > 0
-            ? `${n} séance${plural} retirée${plural} du plan : ni à faire, ni manquée${plural}. `
+            ? `${num(n)} séance${plural} retirée${plural} du plan : ni à faire, ni manquée${plural}. `
             : 'Aucune séance du plan ne tombait sur cette période. '}
         {absence.source === 'athlete' ? 'Tu l’as annoncée toi-même. ' : ''}
         Ta charge chronique baisse sur cette période : c’est mesuré, et c’était prévu.
@@ -300,7 +300,7 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
             <span className="basis-src" data-assumed={assumed || idle}>
               {changedSource && <s className="faint">{READINESS_SOURCE_LABEL[before.sources[key]]}</s>}
               {READINESS_SOURCE_LABEL[source]}
-              <span className="basis-weight">pèse {Math.round(weight * 100)} %</span>
+              <span className="basis-weight">pèse {num(weight * 100)} %</span>
             </span>
             <div className="basis-meter">
               <div
@@ -310,10 +310,10 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
               />
             </div>
             <span className="basis-num mono">
-              {idle ? '—' : `${Math.round(value)}/100`}
+              {idle ? '—' : `${num(value)}/100`}
               {!idle && delta !== 0 && (
                 <span className="delta" data-dir={delta > 0 ? 'up' : 'down'} style={{ marginLeft: 5 }}>
-                  {delta > 0 ? '+' : ''}{Math.round(delta)}
+                  {delta > 0 ? '+' : ''}{num(delta)}
                 </span>
               )}
             </span>

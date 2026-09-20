@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, longDate, markdown, nbsp, prime, shortRace, signed, spelledDuration,
+  duration, frDate, longDate, markdown, nbsp, num, prime, shortRace, signed, spelledDuration,
   type CheckInResult, type DeclaredAbsence, type PlanResponse, type Readiness, type SessionRow,
   type StateResponse,
 } from '@/lib/api';
@@ -119,7 +119,7 @@ export function Morning({
       {openNext && (
         <section className="m-next">
           <div className="m-label">
-            {absence ? 'Ta reprise' : 'Prochaine séance'} · {frDate(openNext.date, { weekday: true })}
+            {absence ? 'Ta reprise' : 'Prochaine séance'} · {frDate(openNext.date, { weekday: true, long: true })}
           </div>
           <h2 className="m-title m-title-next">{sessionHeadline(openNext)}</h2>
           <p className="m-sub">{subline(openNext)}</p>
@@ -134,7 +134,7 @@ export function Morning({
       {state.pendingNotes.map((n) => (
         <section className="m-note" key={n.date}>
           <h2 className="m-note-head">Tu as écrit ça, et rien n&apos;en a été fait.</h2>
-          <div className="m-note-date">{frDate(n.date, { weekday: true })}</div>
+          <div className="m-note-date">{frDate(n.date, { weekday: true, long: true })}</div>
           <blockquote className="m-quote">{n.notes}</blockquote>
           <div className="m-actions">
             <Link href="/coach" className="m-action">En parler au coach</Link>
@@ -147,7 +147,7 @@ export function Morning({
 
       {next && !openNext && (
         <p className="m-after">
-          {isTomorrow(next.date, today) ? 'Demain' : 'Ensuite'}, {frDate(next.date, { weekday: true })}
+          {isTomorrow(next.date, today) ? 'Demain' : 'Ensuite'}, {frDate(next.date, { weekday: true, long: true })}
           {' : '}{sessionHeadline(next).toLocaleLowerCase('fr')}
           {next.plannedDurationS > 0 && <>, {prime(next.plannedDurationS)}</>}.
         </p>
@@ -188,7 +188,7 @@ function Headline({
     return head(
       'Rien aujourd’hui',
       <>
-        {ABSENCE_KIND_LABEL[absence.kind]} déclarée jusqu&apos;au {frDate(absence.endDate, { weekday: true })}
+        {ABSENCE_KIND_LABEL[absence.kind]} déclarée jusqu&apos;au {frDate(absence.endDate, { weekday: true, long: true })}
         {absence.source === 'athlete' ? ', par toi.' : '.'}
       </>,
     );
@@ -258,8 +258,8 @@ function Session({ session }: { session: SessionRow }) {
 
       <div className="m-session-foot">
         <span className="m-faint">
-          {session.plannedLoad} pts
-          {session.plannedMechanicalLoad > 0 && ` · ${session.plannedMechanicalLoad} méca`}
+          {num(session.plannedLoad)} pts
+          {session.plannedMechanicalLoad > 0 && ` · ${num(session.plannedMechanicalLoad)} méca`}
         </span>
         <span className="m-foot-more">
           {hasSaid && (
@@ -305,13 +305,13 @@ const climbs = (b: SessionRow['blocks'][number]) => (b.elevationGainM ?? 0) > (b
 /** Le tracé, pour qui ne le voit pas : la séance bloc par bloc, dans l'ordre. */
 const spoken = (session: SessionRow) =>
   session.blocks
-    .map((b) => `${b.repeat ? `${b.repeat} fois ` : ''}${duration(b.durationS)} ${blockLabel(b.label)}`)
+    .map((b) => `${b.repeat ? `${num(b.repeat)} fois ` : ''}${duration(b.durationS)} ${blockLabel(b.label)}`)
     .join(', ');
 
 /** La cible cardiaque, dite comme on la lit sur la montre. */
 function hrText(b: SessionRow['blocks'][number]): string {
   if (!b.hrRange) return '';
-  return b.hrRange[0] > 0 ? `${b.hrRange[0]}–${b.hrRange[1]}` : `sous ${b.hrRange[1]}`;
+  return b.hrRange[0] > 0 ? `${num(b.hrRange[0])}–${num(b.hrRange[1])}` : `sous ${num(b.hrRange[1])}`;
 }
 
 /**
@@ -325,7 +325,7 @@ function shape(b: SessionRow['blocks'][number]): string {
   if (b.recovery && b.recovery.durationS > 0) {
     parts.push(`récup ${prime(b.recovery.durationS)} ${b.recovery.active ? 'active' : 'passive'}`);
   }
-  if (b.distanceM) parts.push(`${b.distanceM} m`);
+  if (b.distanceM) parts.push(`${num(b.distanceM)} m`);
   return parts.join(' · ');
 }
 
@@ -343,7 +343,7 @@ function targets(b: SessionRow['blocks'][number]): string {
     parts.push(b.paceRange[1] === '—' ? `plus lent que ${b.paceRange[0]}/km` : `${b.paceRange[0]}–${b.paceRange[1]}/km`);
   }
   if (b.vamTargetMh) parts.push(`${metres(b.vamTargetMh)} D+/h`);
-  if (b.cadenceTargetSpm) parts.push(`${b.cadenceTargetSpm} ppm`);
+  if (b.cadenceTargetSpm) parts.push(`${num(b.cadenceTargetSpm)} ppm`);
   // La récupération est un segment de la séance : sans allure, « récup 90 s
   // active » se court au juger.
   if (b.recovery?.paceRange) {
@@ -565,10 +565,10 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
           )}
           <div className="m-figures">
             {[
-              { name: 'Charge chronique', value: String(Math.round(t.ctl)), note: `${signed(t.rampRate, 1)} pts/semaine` },
+              { name: 'Charge chronique', value: num(t.ctl), note: `${signed(t.rampRate, 1)} pts/semaine` },
               { name: 'Fraîcheur métabolique', value: signed(t.tsb), note: t.tsbLabel },
               { name: 'Fraîcheur mécanique', value: signed(t.mechanicalTsb), note: 'fatigue musculaire de descente' },
-              { name: 'Charge aiguë / chronique', value: t.acwr.toFixed(2), note: t.acwrLabel },
+              { name: 'Charge aiguë / chronique', value: num(t.acwr, 2), note: t.acwrLabel },
             ].map((f) => (
               <div className="m-figure" key={f.name}>
                 <span>{f.name}</span>
@@ -577,7 +577,7 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
               </div>
             ))}
           </div>
-          <p className="m-after">Modèle physiologique du {frDate(state.model.asOf)}.</p>
+          <p className="m-after">Modèle physiologique du {frDate(state.model.asOf, { long: true, year: true })}.</p>
           <Link href="/point" className="m-link">Le point du jour en entier →</Link>
         </div>
       )}
@@ -627,7 +627,7 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
 
       {result && (
         <p className="m-after">
-          Ton ressenti pèse {Math.round(readiness.weights.subjective * 100)} % de ta disponibilité
+          Ton ressenti pèse {num(readiness.weights.subjective * 100)} % de ta disponibilité
           {before.weights.subjective === 0 ? ", là où il n'en pesait rien." : '.'}
         </p>
       )}

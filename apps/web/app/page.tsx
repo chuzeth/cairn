@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, get, getStamped, post, signed, shortDate,
+  duration, frDate, get, getStamped, num, post, signed, shortDate,
   type ActivityRow, type InsightRow, type PlanResponse, type PmcResponse, type StateResponse,
 } from '@/lib/api';
 import { useOutbox } from '@/lib/offline';
@@ -165,8 +165,9 @@ export default function Dashboard() {
         <div>
           <h1 className="page-title">Tableau de bord</h1>
           <p className="page-sub">
-            {frDate(today.date, { weekday: true, year: true })} · modèle physiologique du {frDate(state.model.asOf)}
-            {' · '}confiance {Math.round(state.model.confidence * 100)} %
+            {frDate(today.date, { weekday: true, year: true, long: true })} · modèle physiologique du{' '}
+            {frDate(state.model.asOf, { long: true, year: true })}
+            {' · '}confiance {num(state.model.confidence * 100)} %
           </p>
         </div>
         <div className="row">
@@ -182,7 +183,7 @@ export default function Dashboard() {
           <strong>Ce que tu as écrit, et dont rien n&apos;a encore été fait.</strong>
           {state.pendingNotes.map((n) => (
             <div key={n.date} style={{ marginTop: 8 }}>
-              <div className="tiny faint" style={{ marginBottom: 4 }}>{frDate(n.date, { weekday: true })}</div>
+              <div className="tiny faint" style={{ marginBottom: 4 }}>{frDate(n.date, { weekday: true, long: true })}</div>
               <blockquote className="note-quote">{n.notes}</blockquote>
               <div className="row wrap" style={{ gap: 8, marginTop: 8 }}>
                 <Link href="/coach" className="btn" data-variant="primary">En parler au coach</Link>
@@ -247,7 +248,7 @@ export default function Dashboard() {
         <Card>
           <Metric
             label="Charge chronique"
-            value={Math.round(today.ctl)}
+            value={num(today.ctl)}
             note={`${signed(today.rampRate, 1)} pts/semaine`}
             tone="metabolic"
           />
@@ -271,7 +272,7 @@ export default function Dashboard() {
         <Card>
           <Metric
             label="Charge aiguë / chronique"
-            value={today.acwr.toFixed(2)}
+            value={num(today.acwr, 2)}
             note={today.acwrLabel}
             tone={today.acwrRisk === 'high' ? 'warn' : today.acwrRisk === 'moderate' ? 'watch' : 'good'}
           />
@@ -367,7 +368,7 @@ export default function Dashboard() {
                     <div style={{ fontWeight: 550, marginTop: 2, fontSize: 13.5 }}>{s.title}</div>
                   </div>
                   <div style={{ textAlign: 'right', flex: 'none' }}>
-                    <div className="mono small">{s.plannedLoad} pts</div>
+                    <div className="mono small">{num(s.plannedLoad)} pts</div>
                     <div className="tiny faint">{duration(s.plannedDurationS)}</div>
                   </div>
                 </Link>
@@ -382,7 +383,7 @@ export default function Dashboard() {
                   <div style={{ fontWeight: 600 }}>{nextRace.name}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div className="metric-value" style={{ fontSize: 21 }}>J−{nextRace.daysUntil}</div>
+                  <div className="metric-value" style={{ fontSize: 21 }}>J−{num(nextRace.daysUntil ?? 0)}</div>
                   <div className="tiny faint">{frDate(nextRace.date)}</div>
                 </div>
               </div>
@@ -440,13 +441,13 @@ export default function Dashboard() {
                     <td className="mono tiny faint">{shortDate(a.startDateLocal)}</td>
                     <td>
                       <div style={{ fontWeight: 500 }}>{a.name.length > 26 ? `${a.name.slice(0, 26)}…` : a.name}</div>
-                      <div className="tiny faint">{a.distanceKm} km · {a.durationLabel} · {Math.round(a.totalElevationGainM)} m D+</div>
+                      <div className="tiny faint">{num(a.distanceKm, 1)} km · {a.durationLabel} · {num(a.totalElevationGainM)} m D+</div>
                     </td>
                     <td className="right mono">
                       {a.load ? (
                         <>
-                          <div style={{ color: 'var(--metabolic)' }}>{Math.round(a.load.metabolic)}</div>
-                          <div className="tiny" style={{ color: 'var(--mechanical)' }}>{Math.round(a.load.mechanical)}</div>
+                          <div style={{ color: 'var(--metabolic)' }}>{num(a.load.metabolic)}</div>
+                          <div className="tiny" style={{ color: 'var(--mechanical)' }}>{num(a.load.mechanical)}</div>
                         </>
                       ) : '—'}
                     </td>

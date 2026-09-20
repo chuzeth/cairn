@@ -57,6 +57,11 @@
      atteindre — la réserve est donc exacte, et la même partout. */
   --tabbar: 56px;
   --bars: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  /* La même règle en haut : la barre d'état de l'iPhone recouvre le premier
+     écran, et un titre qui passe dessous ne se lit pas. Nommée ici pour que
+     tout ce qui commence en haut de page la reprenne — et non la seule page
+     qu'on regardait le jour où on s'en est aperçu. */
+  --safe-top: env(safe-area-inset-top);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.3);
 
   /* Archivo, chargée par next/font : rien ne part vers Google à l'ouverture. */
@@ -128,6 +133,7 @@ button { font-family: inherit; font-size: inherit; }
 /* ── Cartes ───────────────────────────────────────────────────────────────── */
 
 .card {
+  min-width: 0;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -194,10 +200,122 @@ button { font-family: inherit; font-size: inherit; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
-  .main { padding: calc(env(safe-area-inset-top) + 26px) 20px var(--bars); }
-  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .main { padding: calc(var(--safe-top) + 26px) 20px var(--bars); }
+  /* `minmax(0, 1fr)` et non `1fr` : une piste en `1fr` a pour largeur minimale
+     celle de son contenu, si bien qu'un tableau large l'élargit au lieu d'y
+     défiler — et c'est la page entière qui part de côté. */
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: minmax(0, 1fr); }
   .tabbar { display: grid; }
   .sheet-veil { display: block; }
+
+  /* Un tableau large ne se rétrécit pas : ses colonnes se tassent jusqu'à
+     couper les mots, puis débordent quand même. Celui qui ne tient pas défile
+     dans sa carte — la page, elle, ne défile jamais de côté. Les deux vues où
+     ce serait la lecture principale ne sont pas des tableaux ici : le plan
+     devient une liste de jours, les séances des cartes. */
+  .card table { display: block; width: 100%; overflow-x: auto; }
+  .card table th, .card table td.right, .card table td.mono { white-space: nowrap; }
+  /* Une colonne de prose a besoin d'une largeur pour rester une colonne : sans
+     plancher, l'algorithme de tableau lui laisse ce que les colonnes de chiffres
+     n'ont pas pris, et la phrase tombe en ruban d'un mot par ligne. */
+  .card table td:not(.right):not(.mono) { min-width: 150px; }
+}
+
+/* ── La semaine du plan ───────────────────────────────────────────────────── */
+
+/* Sur un écran large, sept colonnes : la semaine se lit d'un coup, et les jours
+   vides comptent autant que les autres. Sur 375 px, sept colonnes font 45 px —
+   « Récupération » y tient sur six lignes d'une lettre et demie. La semaine
+   redevient alors ce qu'elle est au téléphone : une liste de jours. */
+.plan-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+
+.plan-day {
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px; min-height: 108px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.plan-day[data-today="true"] { background: var(--bg-elev-2); border-color: var(--accent); }
+
+.plan-date { font-size: 11.5px; font-weight: 600; color: var(--text-faint); white-space: nowrap; }
+.plan-day[data-today="true"] .plan-date { color: var(--text); }
+/* Le jour s'écrit d'une lettre dans la grille, de trois dans la liste : « L »
+   au-dessus d'une colonne de 45 px se devine par la position, seul sur une
+   ligne il ne se devine plus. */
+.plan-dow-long { display: none; }
+
+.plan-slots { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.plan-slot {
+  text-align: left; border: none; cursor: pointer; padding: 0;
+  background: transparent; color: inherit; width: 100%;
+}
+.plan-session { border-left: 2.5px solid var(--border-strong); padding-left: 6px; }
+.plan-session[data-faded="true"] { opacity: 0.45; }
+.plan-name { font-size: 11.5px; font-weight: 600; line-height: 1.25; }
+.plan-figures { font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); }
+/* Manquée, remplacée, retirée : ces mots disent ce qu'est devenue une décision.
+   Tronqués, ils ne disent plus rien — ils ne se coupent donc pas. */
+.plan-status { font-size: 11.5px; white-space: nowrap; }
+.plan-status[data-tone="done"] { color: var(--good); }
+.plan-status[data-tone="off"] { color: var(--warn); }
+.plan-status[data-tone="mute"] { color: var(--text-faint); }
+.plan-done-link { font-size: 11.5px; color: var(--metabolic); }
+
+@media (max-width: 760px) {
+  .plan-week { grid-template-columns: 1fr; gap: 0; }
+  /* Un jour par ligne, séparés d'un filet plutôt que de sept cadres empilés. */
+  .plan-day {
+    min-height: 0; border: 0; border-bottom: 1px solid var(--border);
+    border-radius: 0; background: none; padding: 9px 0;
+    flex-direction: row; align-items: baseline; gap: 12px;
+  }
+  .plan-day:last-child { border-bottom: 0; padding-bottom: 0; }
+  /* Aujourd'hui se distingue par un repère en marge, pas par un cadre : dans
+     une liste, c'est le bord gauche qu'on suit du regard. */
+  .plan-day[data-today="true"] {
+    background: none; border-color: var(--border);
+    margin-inline: -10px; padding-inline: 8px;
+    border-left: 2px solid var(--accent);
+  }
+  .plan-date { flex: none; width: 52px; font-size: 12.5px; }
+  .plan-dow-long { display: inline; }
+  .plan-dow-short { display: none; }
+  .plan-slots { flex: 1; }
+  .plan-session { border-left: 0; padding-left: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .plan-name { font-size: 13.5px; }
+  .plan-figures, .plan-status, .plan-done-link { font-size: 12px; }
+}
+
+/* ── Les séances, au téléphone ────────────────────────────────────────────── */
+
+/* Dix colonnes ne rentrent pas dans 375 px, et une séance n'a pas besoin de dix
+   colonnes pour se reconnaître : son nom, sa date, et ce qu'elle a coûté. Le
+   reste est sur sa page. */
+.act-cards { display: flex; flex-direction: column; }
+.act-card {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 13px 0; border-bottom: 1px solid var(--border);
+}
+.act-card:first-child { padding-top: 0; }
+.act-card:last-child { padding-bottom: 0; border-bottom: 0; }
+.act-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.act-name { font-size: 14.5px; font-weight: 550; line-height: 1.3; }
+.act-when { font-size: 12px; color: var(--text-faint); }
+.act-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.act-figure { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.act-figure-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.act-figure-label { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+
+/* Le sélecteur de période : quatre parts égales sur une ligne, jamais un
+   libellé cassé en deux. */
+.act-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.act-range { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.act-range .btn { padding: 6px 11px; }
+
+@media (max-width: 760px) {
+  .act-controls { width: 100%; }
+  .act-controls input { flex: 1 1 100%; }
+  .act-range { width: 100%; }
+  .act-range .btn { padding: 6px 4px; }
 }
 
 /* ── Métriques ────────────────────────────────────────────────────────────── */
@@ -215,12 +333,17 @@ button { font-family: inherit; font-size: inherit; }
 
 /* ── Badges ───────────────────────────────────────────────────────────────── */
 
+/* Un badge est une pastille : sa forme tient à ce que son texte tienne sur une
+   ligne. Cassé en deux, il devient un cercle bosselé qu'on ne lit plus comme
+   une étiquette — et il ne rétrécit pas non plus, parce qu'un voisin
+   compressible doit céder avant lui. À charge de la rangée de s'enrouler. */
 .badge {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 8px; border-radius: 999px;
   font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em;
   border: 1px solid var(--border-strong); color: var(--text-dim);
   background: var(--bg-inset);
+  white-space: nowrap; flex: none;
 }
 .badge[data-tone="good"] { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, transparent); background: color-mix(in srgb, var(--good) 10%, transparent); }
 .badge[data-tone="watch"] { color: var(--watch); border-color: color-mix(in srgb, var(--watch) 35%, transparent); background: color-mix(in srgb, var(--watch) 10%, transparent); }
@@ -246,11 +369,16 @@ td.right, th.right { text-align: right; }
 
 /* ── Boutons & champs ─────────────────────────────────────────────────────── */
 
+/* Un libellé de bouton ne se casse pas : deux boutons côte à côte dont l'un
+   passe à la ligne ne font plus une rangée, et la hauteur commune — celle du
+   texte sur une ligne — est ce qui la tient. À la rangée de s'enrouler quand
+   la place manque ; au bouton de rester entier. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   padding: 8px 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: var(--bg-elev-2); color: var(--text);
-  font-size: 13.5px; font-weight: 550; cursor: pointer;
+  font-size: 13.5px; font-weight: 550; line-height: 1.45; cursor: pointer;
+  white-space: nowrap; min-height: 38px;
   transition: background 120ms, border-color 120ms, opacity 120ms;
 }
 .btn:hover:not(:disabled) { background: #1a1f2a; border-color: #37404f; }
@@ -259,7 +387,18 @@ td.right, th.right { text-align: right; }
 .btn[data-variant="primary"]:hover:not(:disabled) { background: #93e0b4; border-color: #93e0b4; }
 .btn[data-variant="ghost"] { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn[data-variant="ghost"]:hover:not(:disabled) { background: var(--bg-elev-2); color: var(--text); }
-.btn[data-variant="danger"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+/* Détruire n'est pas une action courante, et ne doit pas se cliquer comme
+   telle : pas de cadre, pas de fond, la couleur d'alerte seulement quand la
+   main s'y pose. Le geste reste à une frappe ; il ne se propose plus. */
+.btn[data-variant="danger"] {
+  background: transparent; border-color: transparent;
+  color: var(--text-dim); font-weight: 500;
+}
+.btn[data-variant="danger"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  color: var(--warn);
+}
 
 input, textarea, select {
   width: 100%; padding: 8px 11px;
@@ -640,8 +779,10 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .banner[data-tone="info"] { background: color-mix(in srgb, var(--metabolic) 8%, var(--bg-elev)); border-color: color-mix(in srgb, var(--metabolic) 25%, transparent); }
 
 .stack { display: flex; flex-direction: column; gap: 14px; }
-.row { display: flex; align-items: center; gap: 10px; }
-.row-between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* Une rangée s'enroule. C'est le pendant du bouton et du badge qui ne se
+   cassent pas : il faut bien que quelque chose cède, et c'est la rangée. */
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .wrap { flex-wrap: wrap; }
 .muted { color: var(--text-dim); }
 .faint { color: var(--text-faint); }

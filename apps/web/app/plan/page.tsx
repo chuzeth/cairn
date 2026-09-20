@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  blockDuration, duration, frDate, get, todayIso,
+  blockDuration, duration, frDate, get, num, todayIso,
   type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
@@ -10,8 +10,16 @@ import {
 } from '@/lib/sessions';
 import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
 
-/** Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. */
-const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v)}`;
+/**
+ * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
+ * décimale ne s'écrit que si elle existe — la cible est un entier, ce que le
+ * plan en fait ne l'est pas.
+ */
+const signed = (v: number) => `${v > 0 ? '+' : ''}${num(v, Number.isInteger(v) ? 0 : 1)}`;
+
+/** Le jour de la semaine : une lettre dans la grille, trois dans la liste. */
+const DOW_SHORT = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+const DOW_LONG = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'];
 
 function weekStartOf(date: string): string {
   const d = new Date(`${date}T00:00:00Z`);
@@ -77,7 +85,7 @@ export default function PlanPage() {
             {data.plan.projectedRaceDayTsb != null && (
               <> · le plan y amène {signed(data.plan.projectedRaceDayTsb)}</>
             )}
-            {' · '}{data.sessions.length} séances sur {weeks.length} semaines
+            {' · '}{num(data.sessions.length)} séances sur {num(weeks.length)} semaines
           </p>
         </div>
         <Link href="/coach" className="btn">Ajuster avec le coach</Link>
@@ -116,65 +124,54 @@ export default function PlanPage() {
             <Card
               key={weekStart}
               style={isCurrent ? { borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)' } : undefined}
-              title={`Semaine du ${frDate(weekStart)}`}
-              hint={`${Math.round(total)} points · ${duration(totalTime)} · ${Math.round(totalVert)} m D+`}
+              title={`Semaine du ${frDate(weekStart, { long: true })}`}
+              hint={`${num(total)} points · ${duration(totalTime)} · ${num(totalVert)} m D+`}
               action={isCurrent ? <Badge tone="good">en cours</Badge> : undefined}
             >
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 8 }}>
-                {days.map((date) => {
+              <div className="plan-week">
+                {days.map((date, i) => {
                   const daily = sessions.filter((s) => s.date === date);
                   const completed = data.completedByDate[date];
-                  const isToday = date === today;
                   return (
-                    <div
-                      key={date}
-                      style={{
-                        background: isToday ? 'var(--bg-elev-2)' : 'var(--bg-inset)',
-                        border: `1px solid ${isToday ? 'var(--accent)' : 'var(--border)'}`,
-                        borderRadius: 8, padding: 9, minHeight: 108,
-                        display: 'flex', flexDirection: 'column', gap: 6,
-                      }}
-                    >
-                      <div className="tiny faint" style={{ fontWeight: 600 }}>
-                        {['L', 'M', 'M', 'J', 'V', 'S', 'D'][days.indexOf(date)]} {date.slice(8, 10)}
+                    <div key={date} className="plan-day" data-today={date === today}>
+                      <div className="plan-date">
+                        <span className="plan-dow-short">{DOW_SHORT[i]}</span>
+                        <span className="plan-dow-long">{DOW_LONG[i]}</span> {date.slice(8, 10)}
                       </div>
-                      {daily.length === 0 && <div className="tiny faint">—</div>}
-                      {daily.map((s) => (
-                        <button
-                          key={s.id}
-                          onClick={() => setOpen(open === s.id ? null : s.id)}
-                          style={{
-                            textAlign: 'left', border: 'none', cursor: 'pointer', padding: 0,
-                            background: 'transparent', color: 'inherit', width: '100%',
-                          }}
-                        >
-                          <div style={{
-                            borderLeft: `2.5px solid ${TYPE_COLORS[s.type] ?? 'var(--border-strong)'}`,
-                            paddingLeft: 6,
-                            opacity: s.status === 'missed' || s.status === 'withdrawn' ? 0.45 : 1,
-                          }}>
-                            <div className="tiny" style={{ fontWeight: 600, lineHeight: 1.25 }}>
-                              {TYPE_LABELS[s.type] ?? s.type}
+                      <div className="plan-slots">
+                        {daily.length === 0 && <div className="plan-figures">—</div>}
+                        {daily.map((s) => (
+                          <button
+                            key={s.id}
+                            className="plan-slot"
+                            onClick={() => setOpen(open === s.id ? null : s.id)}
+                          >
+                            <div
+                              className="plan-session"
+                              data-faded={s.status === 'missed' || s.status === 'withdrawn'}
+                              style={{ borderLeftColor: TYPE_COLORS[s.type] ?? 'var(--border-strong)' }}
+                            >
+                              <div className="plan-name">{TYPE_LABELS[s.type] ?? s.type}</div>
+                              {s.type !== 'rest' && (
+                                <div className="plan-figures">
+                                  {duration(s.plannedDurationS)} · {num(s.plannedLoad)}
+                                </div>
+                              )}
+                              {s.status === 'completed' && <span className="plan-status" data-tone="done">✓ faite</span>}
+                              {s.status === 'replaced' && <span className="plan-status" data-tone="off">remplacée</span>}
+                              {s.status === 'missed' && <span className="plan-status" data-tone="off">manquée</span>}
+                              {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait
+                                  annoncée. Le ton neutre est le fond de l'affaire. */}
+                              {s.status === 'withdrawn' && <span className="plan-status" data-tone="mute">retirée</span>}
                             </div>
-                            {s.type !== 'rest' && (
-                              <div className="tiny faint mono">
-                                {duration(s.plannedDurationS)} · {s.plannedLoad}
-                              </div>
-                            )}
-                            {s.status === 'completed' && <span className="tiny" style={{ color: 'var(--good)' }}>✓ faite</span>}
-                            {s.status === 'replaced' && <span className="tiny" style={{ color: 'var(--warn)' }}>remplacée</span>}
-                            {s.status === 'missed' && <span className="tiny" style={{ color: 'var(--warn)' }}>manquée</span>}
-                            {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait
-                                annoncée. Le ton neutre est le fond de l'affaire. */}
-                            {s.status === 'withdrawn' && <span className="tiny faint">retirée</span>}
-                          </div>
-                        </button>
-                      ))}
-                      {completed && !daily.some((s) => s.completedActivityId === completed.id) && (
-                        <Link href={`/activities/${completed.id}`} className="tiny" style={{ color: 'var(--metabolic)' }}>
-                          ↗ séance faite
-                        </Link>
-                      )}
+                          </button>
+                        ))}
+                        {completed && !daily.some((s) => s.completedActivityId === completed.id) && (
+                          <Link href={`/activities/${completed.id}`} className="plan-done-link">
+                            ↗ séance faite
+                          </Link>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -186,15 +183,15 @@ export default function PlanPage() {
                     <strong>{s.title}</strong>
                     <div className="row" style={{ gap: 6 }}>
                       <Badge tone={s.priority === 'key' ? 'good' : undefined}>{s.priority === 'key' ? 'séance clef' : s.priority === 'support' ? 'soutien' : 'facultative'}</Badge>
-                      <Badge tone="metabolic">{s.plannedLoad} pts</Badge>
-                      {s.plannedMechanicalLoad > 0 && <Badge tone="mechanical">{s.plannedMechanicalLoad} méca</Badge>}
+                      <Badge tone="metabolic">{num(s.plannedLoad)} pts</Badge>
+                      {s.plannedMechanicalLoad > 0 && <Badge tone="mechanical">{num(s.plannedMechanicalLoad)} méca</Badge>}
                     </div>
                   </div>
                   <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
 
                   {s.blocks.some((b) => b.circuit) && (
                     <div className="tiny faint" style={{ marginTop: 6 }}>
-                      Une part de ces {s.plannedMechanicalLoad} points méca vient du renforcement excentrique :
+                      Une part de ces {num(s.plannedMechanicalLoad)} points méca vient du renforcement excentrique :
                       aucun flux d’activité ne le porte, le réalisé mesuré y affichera 0.
                     </div>
                   )}
@@ -210,7 +207,7 @@ export default function PlanPage() {
                       }}
                     >
                       <strong>Réussite :</strong> {CRITERION_LABELS[c.metric] ?? c.metric}
-                      {c.maxValue != null && ` ≤ ${c.maxValue}`}
+                      {c.maxValue != null && ` ≤ ${num(c.maxValue)}`}
                       <div className="tiny faint" style={{ marginTop: 3 }}>« {c.origin.quote} » — {originLabel(c.origin)}</div>
                     </div>
                   ))}
@@ -220,15 +217,15 @@ export default function PlanPage() {
                       <div key={i} style={{ borderLeft: '2px solid var(--border-strong)', paddingLeft: 10 }}>
                         <div className="row wrap" style={{ gap: 8 }}>
                           <strong className="small">
-                            {b.repeat ? `${b.repeat} × ` : ''}
+                            {b.repeat ? `${num(b.repeat)} × ` : ''}
                             {blockDuration(b.durationS)}
-                            {b.distanceM ? ` ${b.distanceM} m` : ''}
+                            {b.distanceM ? ` ${num(b.distanceM)} m` : ''}
                           </strong>
                           <span className="small muted">{b.label}</span>
                           <Badge>{b.zone}</Badge>
                           {b.hrRange && (
                             <span className="tiny mono faint">
-                              {b.hrRange[0] > 0 ? `${b.hrRange[0]}-${b.hrRange[1]}` : `< ${b.hrRange[1]}`} bpm
+                              {b.hrRange[0] > 0 ? `${num(b.hrRange[0])}-${num(b.hrRange[1])}` : `< ${num(b.hrRange[1])}`} bpm
                             </span>
                           )}
                           {b.paceRange && (
@@ -236,8 +233,8 @@ export default function PlanPage() {
                               {b.paceRange[1] === '—' ? `> ${b.paceRange[0]}` : `${b.paceRange[0]}-${b.paceRange[1]}`}/km
                             </span>
                           )}
-                          {b.vamTargetMh && <span className="tiny mono faint">{b.vamTargetMh} m D+/h</span>}
-                          {b.cadenceTargetSpm && <span className="tiny mono faint">{b.cadenceTargetSpm} ppm</span>}
+                          {b.vamTargetMh && <span className="tiny mono faint">{num(b.vamTargetMh)} m D+/h</span>}
+                          {b.cadenceTargetSpm && <span className="tiny mono faint">{num(b.cadenceTargetSpm)} ppm</span>}
                           {/* Une cible qu'on demande de tenir est un paramètre
                               physiologique : elle porte sa provenance, comme la
                               vitesse critique sur l'écran de physiologie. */}

@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { get, post, type StateResponse } from '@/lib/api';
+import { frDate, get, num, post, type StateResponse } from '@/lib/api';
 import { Badge, Card, ErrorBox, Loading, Metric } from '@/components/ui';
 import { DurationCurve } from '@/components/charts';
 
@@ -85,7 +85,7 @@ export default function PhysiologyPage() {
         <div>
           <h1 className="page-title">Physiologie</h1>
           <p className="page-sub">
-            Modèle du {m.asOf} · confiance {Math.round(m.confidence * 100)} % ·
+            Modèle du {frDate(m.asOf, { long: true, year: true })} · confiance {num(m.confidence * 100)} % ·
             {' '}chaque paramètre indique s'il vient du laboratoire ou du terrain
             {/* L'âge de la dernière preuve d'effort maximal explique à lui seul
                 l'essentiel de la confiance : sans effort au seuil récent, la
@@ -95,7 +95,7 @@ export default function PhysiologyPage() {
                 <br />
                 {m.criticalSpeedEvidence.lastProofAgeDays == null
                   ? "Aucun effort maximal identifié dans la courbe : la vitesse critique n'est pas mesurée."
-                  : `Dernier effort maximal il y a ${m.criticalSpeedEvidence.lastProofAgeDays} j — la vitesse critique s'appuie dessus à ${Math.round(m.criticalSpeedEvidence.support * 100)} %.`}
+                  : `Dernier effort maximal il y a ${num(m.criticalSpeedEvidence.lastProofAgeDays)} j — la vitesse critique s'appuie dessus à ${num(m.criticalSpeedEvidence.support * 100)} %.`}
               </>
             )}
           </p>
@@ -112,14 +112,14 @@ export default function PhysiologyPage() {
         <Card style={{ marginBottom: 14 }}>
           <div className="row wrap" style={{ gap: 8, alignItems: 'baseline' }}>
             <strong>Ambition — {AMBITION_LABELS[state.athlete.ambition.format] ?? state.athlete.ambition.format}</strong>
-            <span className="tiny faint">au dossier depuis le {state.athlete.ambition.since}</span>
+            <span className="tiny faint">au dossier depuis le {frDate(state.athlete.ambition.since, { long: true, year: true })}</span>
           </div>
           <div className="stack" style={{ gap: 4, marginTop: 6 }}>
             {state.athlete.ambition.origin.map((o, i) => (
               <div key={i} className="small muted">
                 « {o.quote} »
                 <span className="tiny faint">
-                  {' — '}{o.source === 'lab_test' ? o.author ?? "test d'effort" : 'toi'}, {o.date}
+                  {' — '}{o.source === 'lab_test' ? o.author ?? "test d'effort" : 'toi'}, {frDate(o.date, { long: true, year: true })}
                 </span>
               </div>
             ))}
@@ -134,19 +134,19 @@ export default function PhysiologyPage() {
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
         <Card>
-          <Metric label="Vitesse critique" value={m.criticalSpeedKmh.toFixed(2)} unit="km/h" note={`${m.criticalPace}/km · D' ${m.dPrimeM} m`} tone="metabolic" />
+          <Metric label="Vitesse critique" value={num(m.criticalSpeedKmh, 2)} unit="km/h" note={`${m.criticalPace}/km · D' ${num(m.dPrimeM)} m`} tone="metabolic" />
           <Badge tone={PROVENANCE_TONE[m.provenance.criticalSpeedMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.criticalSpeedMs ?? 'default']}</Badge>
         </Card>
         <Card>
-          <Metric label="VMA" value={m.vmaKmh.toFixed(1)} unit="km/h" note={`VO2max ${m.vo2maxRel} ml/kg/min`} />
+          <Metric label="VMA" value={num(m.vmaKmh, 1)} unit="km/h" note={`VO2max ${num(m.vo2maxRel, 1)} ml/kg/min`} />
           <Badge tone={PROVENANCE_TONE[m.provenance.vmaMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.vmaMs ?? 'default']}</Badge>
         </Card>
         <Card>
-          <Metric label="Seuil 2 (anaérobie)" value={m.vt2Kmh.toFixed(1)} unit="km/h" note={`${m.vt2.hr} bpm`} tone="watch" />
+          <Metric label="Seuil 2 (anaérobie)" value={num(m.vt2Kmh, 1)} unit="km/h" note={`${num(m.vt2.hr)} bpm`} tone="watch" />
           <Badge tone={PROVENANCE_TONE[m.provenance['vt2.hr'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt2.hr'] ?? 'default']}</Badge>
         </Card>
         <Card>
-          <Metric label="Seuil 1 (aérobie)" value={m.vt1Kmh.toFixed(1)} unit="km/h" note={`${m.vt1.hr} bpm`} />
+          <Metric label="Seuil 1 (aérobie)" value={num(m.vt1Kmh, 1)} unit="km/h" note={`${num(m.vt1.hr)} bpm`} />
           <Badge tone={PROVENANCE_TONE[m.provenance['vt1.hr'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt1.hr'] ?? 'default']}</Badge>
         </Card>
       </div>
@@ -160,8 +160,8 @@ export default function PhysiologyPage() {
               seuil se calent sur la vitesse critique, pas sur lui. */}
           {state.zones.some((z) => z.key === 'Z4' && z.speedMinKmh < m.criticalSpeedKmh) && (
             <p className="tiny muted" style={{ marginTop: 0 }}>
-              Le plancher de Z4 ({state.zones.find((z) => z.key === 'Z4')!.speedMinKmh.toFixed(1)} km/h)
-              passe sous ta vitesse critique ({m.criticalSpeedKmh.toFixed(1)} km/h) : c’est la grille de ton
+              Le plancher de Z4 ({num(state.zones.find((z) => z.key === 'Z4')!.speedMinKmh, 1)} km/h)
+              passe sous ta vitesse critique ({num(m.criticalSpeedKmh, 1)} km/h) : c’est la grille de ton
               compte rendu, qui la fixe au SV2. En dessous de la vitesse critique l’effort a un état stable —
               les séances de seuil se calent donc sur elle, pas sur ce plancher.
             </p>
@@ -182,7 +182,7 @@ export default function PhysiologyPage() {
                   <td className="right mono tiny">
                     {/* La première zone n'a pas de borne basse : on l'écrit comme telle
                         plutôt que d'afficher un zéro ou un tiret trompeur. */}
-                    {z.hrMin > 0 ? `${Math.round(z.hrMin)} – ${Math.round(z.hrMax)}` : `< ${Math.round(z.hrMax)}`}
+                    {z.hrMin > 0 ? `${num(z.hrMin)} – ${num(z.hrMax)}` : `< ${num(z.hrMax)}`}
                   </td>
                   <td className="right mono tiny">
                     {/* Et la dernière n'a pas de borne haute que quoi que ce soit de
@@ -206,17 +206,17 @@ export default function PhysiologyPage() {
         <Card title="Durabilité et descente" hint="Les deux qualités qui décident d'un trail, et que la VO2max ne dit pas.">
           <div className="grid grid-2" style={{ marginBottom: 14 }}>
             <div>
-              <Metric label="Perte de rendement" value={m.durabilityPctPerHour.toFixed(1)} unit="%/h" tone={m.durabilityPctPerHour < 3 ? 'good' : 'watch'} />
+              <Metric label="Perte de rendement" value={num(m.durabilityPctPerHour, 1)} unit="%/h" tone={m.durabilityPctPerHour < 3 ? 'good' : 'watch'} />
               <Badge tone={PROVENANCE_TONE[m.provenance.durabilityPctPerHour ?? 'default']}>{PROVENANCE_LABEL[m.provenance.durabilityPctPerHour ?? 'default']}</Badge>
             </div>
             <div>
-              <Metric label="Par 1 000 m D+" value={m.durabilityPctPer1000mVert.toFixed(1)} unit="%" />
+              <Metric label="Par 1 000 m D+" value={num(m.durabilityPctPer1000mVert, 1)} unit="%" />
               <Badge tone={PROVENANCE_TONE[m.provenance.durabilityPctPer1000mVert ?? 'default']}>{PROVENANCE_LABEL[m.provenance.durabilityPctPer1000mVert ?? 'default']}</Badge>
             </div>
           </div>
           <div className="grid grid-2">
-            <Metric label="Aisance en descente" value={(m.descentSkill ?? 1).toFixed(2)} note="1,00 = bon trailer de référence" tone={(m.descentSkill ?? 1) >= 1 ? 'good' : 'watch'} />
-            <Metric label="FC max / repos" value={`${m.hrMax} / ${m.hrRest}`} unit="bpm" note={`réserve ${m.hrMax - m.hrRest} bpm`} />
+            <Metric label="Aisance en descente" value={num(m.descentSkill ?? 1, 2)} note="1,00 = bon trailer de référence" tone={(m.descentSkill ?? 1) >= 1 ? 'good' : 'watch'} />
+            <Metric label="FC max / repos" value={`${num(m.hrMax)} / ${num(m.hrRest)}`} unit="bpm" note={`réserve ${num(m.hrMax - m.hrRest)} bpm`} />
           </div>
           <p className="tiny faint" style={{ marginTop: 14, marginBottom: 0 }}>
             La durabilité mesure la vitesse à laquelle ton rendement s'effondre au fil de l'effort. C'est le
@@ -229,7 +229,7 @@ export default function PhysiologyPage() {
       {curves && Object.keys(curves.vitesse_graduee_par_duree_kmh).length > 2 && (
         <Card
           title="Courbe vitesse-durée"
-          hint={`Vitesse critique retenue ${curves.vitesse_critique.retenue_kmh.toFixed(2)} km/h · D' ${curves.vitesse_critique.d_prime_m} m · ajustement ${curves.vitesse_critique.qualite_ajustement}`}
+          hint={`Vitesse critique retenue ${num(curves.vitesse_critique.retenue_kmh, 2)} km/h · D' ${num(curves.vitesse_critique.d_prime_m)} m · ajustement ${curves.vitesse_critique.qualite_ajustement}`}
           style={{ marginBottom: 14 }}
         >
           <DurationCurve
@@ -251,12 +251,12 @@ export default function PhysiologyPage() {
       )}
 
       {lab && (
-        <Card title="Test d'effort de référence" hint={`${lab.lab} · ${lab.date}`}>
+        <Card title="Test d'effort de référence" hint={`${lab.lab} · ${frDate(lab.date, { long: true, year: true })}`}>
           <div className="grid grid-4" style={{ marginBottom: 16 }}>
-            <Metric label="VO2max" value={lab.vo2maxRel} unit="ml/kg/min" note={`${lab.vo2maxAbs} L/min`} />
-            <Metric label="VMA" value={(lab.vmaMs * 3.6).toFixed(1)} unit="km/h" />
-            <Metric label="FC max" value={lab.hrMax} unit="bpm" note={`QR max ${lab.rerMax}`} />
-            <Metric label="Masse" value={lab.bodyMassKg} unit="kg" note={`${lab.bodyFatPct} % de masse grasse`} />
+            <Metric label="VO2max" value={num(lab.vo2maxRel, 1)} unit="ml/kg/min" note={`${num(lab.vo2maxAbs, 2)} L/min`} />
+            <Metric label="VMA" value={num(lab.vmaMs * 3.6, 1)} unit="km/h" />
+            <Metric label="FC max" value={num(lab.hrMax)} unit="bpm" note={`QR max ${num(lab.rerMax, 2)}`} />
+            <Metric label="Masse" value={num(lab.bodyMassKg, 1)} unit="kg" note={`${num(lab.bodyFatPct, 1)} % de masse grasse`} />
           </div>
 
           <div className="grid grid-2" style={{ marginBottom: 16 }}>
@@ -264,8 +264,8 @@ export default function PhysiologyPage() {
               <div className="metric-label" style={{ marginBottom: 6 }}>Seuils mesurés</div>
               <table>
                 <tbody>
-                  <tr><td>Seuil ventilatoire 1</td><td className="right mono">{(lab.vt1.speedMs * 3.6).toFixed(1)} km/h</td><td className="right mono">{lab.vt1.hr} bpm</td></tr>
-                  <tr><td>Seuil ventilatoire 2</td><td className="right mono">{(lab.vt2.speedMs * 3.6).toFixed(1)} km/h</td><td className="right mono">{lab.vt2.hr} bpm</td></tr>
+                  <tr><td>Seuil ventilatoire 1</td><td className="right mono">{num(lab.vt1.speedMs * 3.6, 1)} km/h</td><td className="right mono">{num(lab.vt1.hr)} bpm</td></tr>
+                  <tr><td>Seuil ventilatoire 2</td><td className="right mono">{num(lab.vt2.speedMs * 3.6, 1)} km/h</td><td className="right mono">{num(lab.vt2.hr)} bpm</td></tr>
                 </tbody>
               </table>
             </div>
@@ -273,10 +273,10 @@ export default function PhysiologyPage() {
               <div className="metric-label" style={{ marginBottom: 6 }}>Ventilation</div>
               <table>
                 <tbody>
-                  <tr><td>Capacité vitale</td><td className="right mono">{lab.vitalCapacityL} L</td></tr>
-                  <tr><td>Débit ventilatoire max</td><td className="right mono">{lab.veMaxLMin} L/min</td></tr>
-                  <tr><td>Fréquence respiratoire max</td><td className="right mono">{lab.respRateMax} cycles/min</td></tr>
-                  <tr><td>Coefficient d'utilisation pulmonaire</td><td className="right mono">{lab.pulmonaryUseCoefPct} %</td></tr>
+                  <tr><td>Capacité vitale</td><td className="right mono">{num(lab.vitalCapacityL, 1)} L</td></tr>
+                  <tr><td>Débit ventilatoire max</td><td className="right mono">{num(lab.veMaxLMin, 1)} L/min</td></tr>
+                  <tr><td>Fréquence respiratoire max</td><td className="right mono">{num(lab.respRateMax)} cycles/min</td></tr>
+                  <tr><td>Coefficient d'utilisation pulmonaire</td><td className="right mono">{num(lab.pulmonaryUseCoefPct)} %</td></tr>
                 </tbody>
               </table>
             </div>
@@ -315,7 +315,7 @@ export default function PhysiologyPage() {
                 <div className="row wrap" style={{ gap: 8 }}>
                   <strong className="small">{DIRECTIVE_LABELS[d.kind] ?? d.kind}</strong>
                   <Badge>{d.origin.source === 'lab_test' ? "test d'effort" : 'notes du dossier'}</Badge>
-                  <span className="tiny mono faint">{d.origin.date}</span>
+                  <span className="tiny faint">{frDate(d.origin.date, { long: true, year: true })}</span>
                 </div>
                 <div className="small muted" style={{ marginTop: 3 }}>« {d.origin.quote} »</div>
                 {d.derived && (

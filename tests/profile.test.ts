@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { legsOf, sessionProfile } from '../apps/web/lib/profile';
-import { prime, spelledDuration } from '../apps/web/lib/api';
+import { frDate, num, prime, spelledDuration } from '../apps/web/lib/api';
 import type { SessionRow } from '../apps/web/lib/api';
 
 /**
@@ -150,5 +150,26 @@ describe('les repères du temps', () => {
     expect(prime(10800)).toBe('3\u00a0h');
     expect(prime(5400)).toBe('1\u00a0h\u00a030');
     expect(spelledDuration(3360)).toBe('56 minutes');
+  });
+});
+
+describe('la typographie française des chiffres et des dates', () => {
+  it('sépare les milliers d’une espace fine insécable et décime d’une virgule', () => {
+    expect(num(16199)).toBe('16\u202f199');
+    expect(num(1200)).toBe('1\u202f200');
+    expect(num(8.65, 1)).toBe('8,7');
+    expect(num(13.984, 2)).toBe('13,98');
+    expect(num(null)).toBe('—');
+  });
+
+  it('écrit un vrai signe moins, et n’en invente pas un sur un zéro arrondi', () => {
+    expect(num(-9.7, 1)).toBe('\u22129,7');
+    expect(num(-0.04, 1)).toBe('0,0');
+  });
+
+  it('écrit le mois en toutes lettres quand la date est dans une phrase', () => {
+    expect(frDate('2026-10-18', { weekday: true, year: true, long: true }))
+      .toBe('dimanche 18\u00a0octobre 2026');
+    expect(frDate('2026-10-18')).toBe('18\u00a0oct.');
   });
 });

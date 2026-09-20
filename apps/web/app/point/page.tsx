@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  frDate, getStamped, markdown, todayIso,
+  frDate, getStamped, markdown, num, todayIso,
   type CheckInResult, type Readiness, type StateResponse,
 } from '@/lib/api';
 import {
@@ -132,7 +132,7 @@ export default function CheckInPage() {
       <div className="page-head" style={{ marginBottom: 14 }}>
         <div>
           <h1 className="page-title">Point du jour</h1>
-          <p className="page-sub">{frDate(today, { weekday: true })}</p>
+          <p className="page-sub">{frDate(today, { weekday: true, long: true })}</p>
         </div>
       </div>
 
@@ -247,7 +247,7 @@ function Queued({ today, onEdit }: { today: string; onEdit: () => void }) {
       <div className="page-head" style={{ marginBottom: 14 }}>
         <div>
           <h1 className="page-title">{gone ? 'C’est parti.' : 'En attente d’envoi.'}</h1>
-          <p className="page-sub">{frDate(today, { weekday: true })}</p>
+          <p className="page-sub">{frDate(today, { weekday: true, long: true })}</p>
         </div>
       </div>
 
@@ -315,7 +315,7 @@ function Result({
             </Badge>
             {delta !== 0 && (
               <div className="delta" data-dir={delta > 0 ? 'up' : 'down'} style={{ fontSize: 19, marginTop: 6 }}>
-                {delta > 0 ? '+' : ''}{delta} point{Math.abs(delta) > 1 ? 's' : ''}
+                {delta > 0 ? '+' : ''}{num(delta)} point{Math.abs(delta) > 1 ? 's' : ''}
               </div>
             )}
             <p className="small muted" style={{ margin: '8px 0 0' }}>{r.recommendation}</p>
@@ -326,8 +326,8 @@ function Result({
 
         <p className="tiny" style={{ marginTop: 14, marginBottom: 0, color: stillBlind.length > 0 ? 'var(--watch)' : 'var(--good)' }}>
           {weightBefore != null && weightBefore !== weightNow
-            ? `Ton ressenti pesait ${weightBefore} % de ta disponibilité ; il en pèse ${weightNow} %.`
-            : `Ton ressenti pèse ${weightNow} % de ta disponibilité.`}
+            ? `Ton ressenti pesait ${num(weightBefore)} % de ta disponibilité ; il en pèse ${num(weightNow)} %.`
+            : `Ton ressenti pèse ${num(weightNow)} % de ta disponibilité.`}
           {stillBlind.length > 0 &&
             ` Il manque encore ${stillBlind.map((k) => MISSING_LABEL[k]).join(' et ')} : ce que personne n’a relevé ne pèse rien.`}
         </p>
@@ -345,7 +345,7 @@ function Result({
       {result.adjustments > 0 && result.adjustmentSummary && (
         <Card
           style={{ marginTop: 14 }}
-          title={`${result.adjustments} séance${result.adjustments > 1 ? 's' : ''} réajustée${result.adjustments > 1 ? 's' : ''}`}
+          title={`${num(result.adjustments)} séance${result.adjustments > 1 ? 's' : ''} réajustée${result.adjustments > 1 ? 's' : ''}`}
         >
           <div className="msg-content small" dangerouslySetInnerHTML={{ __html: markdown(result.adjustmentSummary) }} />
         </Card>

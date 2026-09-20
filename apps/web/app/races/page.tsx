@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { clock, del, frDate, get, post, todayIso, type RaceRow } from '@/lib/api';
+import { clock, del, frDate, get, num, post, todayIso, type RaceRow } from '@/lib/api';
 import { Badge, Card, ErrorBox, Loading, Metric } from '@/components/ui';
 
 interface Prediction {
@@ -132,7 +132,7 @@ export default function RacesPage() {
         { race_id: raceId, reason: `Plan reconstruit depuis la page Objectifs pour « ${name} ».` },
       );
       setNotice(
-        `Plan reconstruit : ${result.semaines} semaines jusqu'à « ${name} » — ${result.mouvement}. ` +
+        `Plan reconstruit : ${num(result.semaines)} semaines jusqu'à « ${name} » — ${result.mouvement}. ` +
         `Temps prédit ${result.temps_predit}.`,
       );
       setPreview(null);
@@ -218,14 +218,14 @@ export default function RacesPage() {
                       <Badge tone={r.priority === 'A' ? 'good' : undefined}>Objectif {r.priority}</Badge>
                     </div>
                     <div className="small muted" style={{ marginTop: 3 }}>
-                      {frDate(r.date, { weekday: true, year: true })} · dans {days} jours ·
-                      {' '}{(r.course.distanceM / 1000).toFixed(1)} km · {r.course.elevationGainM} m D+ ·
-                      {' '}technicité {r.course.technicality}/5
-                      {r.target?.placing ? ` · vise le top ${r.target.placing}` : ''}
+                      {frDate(r.date, { weekday: true, year: true, long: true })} · dans {num(days)} jours ·
+                      {' '}{num(r.course.distanceM / 1000, 1)} km · {num(r.course.elevationGainM)} m D+ ·
+                      {' '}technicité {num(r.course.technicality)}/5
+                      {r.target?.placing ? ` · vise le top ${num(r.target.placing)}` : ''}
                       {r.target?.timeS ? ` · cible ${clock(r.target.timeS)}` : ''}
                     </div>
                   </div>
-                  <div className="row">
+                  <div className="row wrap">
                     <button className="btn" onClick={() => void predict(r.id)} disabled={predicting === r.id}>
                       {predicting === r.id ? <span className="spinner" /> : 'Prédire'}
                     </button>
@@ -251,14 +251,14 @@ export default function RacesPage() {
                   <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)' }}>
                     <div className="grid grid-4" style={{ marginBottom: 14 }}>
                       <Metric label="Temps prédit" value={prediction.data.temps_predit} note={`80 % : ${prediction.data.intervalle_80pct[0]} – ${prediction.data.intervalle_80pct[1]}`} />
-                      <Metric label="Équivalent plat" value={prediction.data.distance_equivalente_plat_km.toFixed(1)} unit="km" note={`${Math.round(prediction.data.fraction_vitesse_critique * 100)} % de la vitesse critique`} />
+                      <Metric label="Équivalent plat" value={num(prediction.data.distance_equivalente_plat_km, 1)} unit="km" note={`${num(prediction.data.fraction_vitesse_critique * 100)} % de la vitesse critique`} />
                       <Metric
                         label="Probabilité de l'objectif"
-                        value={prediction.data.probabilite_objectif_pct != null ? `${prediction.data.probabilite_objectif_pct} %` : '—'}
+                        value={prediction.data.probabilite_objectif_pct != null ? `${num(prediction.data.probabilite_objectif_pct)} %` : '—'}
                         note={prediction.data.objectif_temps ? `cible ${prediction.data.objectif_temps}` : 'aucun temps cible défini'}
                         tone={prediction.data.probabilite_objectif_pct != null && prediction.data.probabilite_objectif_pct > 60 ? 'good' : 'watch'}
                       />
-                      <Metric label="Glucides" value={prediction.data.ravitaillement.carbGPerHour} unit="g/h" note={`${prediction.data.ravitaillement.totalCarbG} g au total · ${prediction.data.ravitaillement.fluidMlPerHour} ml/h`} />
+                      <Metric label="Glucides" value={num(prediction.data.ravitaillement.carbGPerHour)} unit="g/h" note={`${num(prediction.data.ravitaillement.totalCarbG)} g au total · ${num(prediction.data.ravitaillement.fluidMlPerHour)} ml/h`} />
                     </div>
 
                     {prediction.data.facteurs_limitants.length > 0 && (
@@ -287,11 +287,11 @@ export default function RacesPage() {
                         {prediction.data.plan_allure.map((p, i) => (
                           <tr key={i}>
                             <td className="mono tiny">{p.troncon}</td>
-                            <td className="right mono tiny">+{p.denivele_pos_m} / −{p.denivele_neg_m}</td>
-                            <td className="right mono tiny">{p.pente_pct.toFixed(1)} %</td>
+                            <td className="right mono tiny">+{num(p.denivele_pos_m)} / −{num(p.denivele_neg_m)}</td>
+                            <td className="right mono tiny">{num(p.pente_pct, 1)} %</td>
                             <td className="right mono">{p.allure_cible}</td>
-                            <td className="right mono tiny">{p.vam_cible_mh ? `${p.vam_cible_mh} m/h` : '—'}</td>
-                            <td className="right mono tiny">{p.fc_cible[0]}-{p.fc_cible[1]}</td>
+                            <td className="right mono tiny">{p.vam_cible_mh ? `${num(p.vam_cible_mh)} m/h` : '—'}</td>
+                            <td className="right mono tiny">{num(p.fc_cible[0])}-{num(p.fc_cible[1])}</td>
                             <td className="right mono">{p.temps_cumule}</td>
                             <td className="tiny faint" style={{ maxWidth: 300 }}>{p.cue}</td>
                           </tr>
@@ -332,7 +332,7 @@ function PlanPreview({
         <div>
           <div className="metric-label">Avant de reconstruire</div>
           <div className="small muted" style={{ marginTop: 3 }}>
-            {preview.semaines} semaines seraient réécrites — {preview.mouvement}. C'est irréversible.
+            {num(preview.semaines)} semaines seraient réécrites — {preview.mouvement}. C'est irréversible.
           </div>
         </div>
         <div className="row">
@@ -346,7 +346,7 @@ function PlanPreview({
       {kept.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <div className="metric-label" style={{ marginBottom: 6 }}>
-            Conservées — {kept.length} séance(s) qui portent une décision
+            Conservées — {num(kept.length)} séance(s) qui portent une décision
           </div>
           <div className="stack" style={{ gap: 5 }}>
             {kept.map((k) => (
@@ -365,7 +365,7 @@ function PlanPreview({
       {swapped.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <div className="metric-label" style={{ marginBottom: 6 }}>
-            Remplacées — {swapped.length} séance(s) réécrites par le planificateur
+            Remplacées — {num(swapped.length)} séance(s) réécrites par le planificateur
           </div>
           <div className="stack" style={{ gap: 5 }}>
             {swapped.map((c) => (
@@ -383,7 +383,7 @@ function PlanPreview({
 
       {identical.length > 0 && (
         <div className="tiny faint" style={{ marginBottom: 12 }}>
-          {identical.length} autre(s) journée(s) réécrites à l'identique — même séance, même charge.
+          {num(identical.length)} autre(s) journée(s) réécrites à l'identique — même séance, même charge.
         </div>
       )}
 

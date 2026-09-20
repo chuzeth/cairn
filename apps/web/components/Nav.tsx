@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { frDate } from '@/lib/api';
 
 /**
  * Deux navigations pour un seul site.
@@ -24,6 +25,9 @@ const LINKS: NavLink[] = [
   { href: '/races', label: 'Objectifs', icon: 'flag' },
   { href: '/physiology', label: 'Physiologie', icon: 'pulse' },
 ];
+
+/** Le test d'effort qui sert d'a priori — écrit comme on le dit, pas en chiffres. */
+const LAB_TEST_DATE = frDate('2025-07-24', { long: true, year: true });
 
 /** Ce qu'on ouvre au réveil ; le reste se consulte, il ne se surveille pas. */
 const TABS = LINKS.filter((l) => l.short);
@@ -89,7 +93,7 @@ export function Nav() {
 
         <div className="sidebar-foot">
           <div>Pierre Chuzeville</div>
-          <div style={{ marginTop: 3 }}>Test d'effort du 24/07/2025</div>
+          <div style={{ marginTop: 3 }}>Test d'effort du {LAB_TEST_DATE}</div>
         </div>
       </nav>
 
@@ -103,7 +107,7 @@ export function Nav() {
                 {l.label}
               </Link>
             ))}
-            <div className="sheet-foot">Pierre Chuzeville · test d'effort du 24/07/2025</div>
+            <div className="sheet-foot">Pierre Chuzeville · test d'effort du {LAB_TEST_DATE}</div>
           </div>
         </div>
       )}

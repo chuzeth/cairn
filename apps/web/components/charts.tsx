@@ -1,5 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
+import { frDate, num } from '@/lib/api';
 
 /**
  * Graphiques.
@@ -24,7 +25,7 @@ interface Series {
 }
 
 export function TimeSeriesChart({
-  series, height = 220, zeroLine = false, formatValue = (v: number) => v.toFixed(0), yPadding = 0.1,
+  series, height = 220, zeroLine = false, formatValue = (v: number) => num(v), yPadding = 0.1,
 }: {
   series: Series[]; height?: number; zeroLine?: boolean;
   formatValue?: (v: number) => string; yPadding?: number;
@@ -154,7 +155,7 @@ export function TimeSeriesChart({
         </div>
         {hoverDate && (
           <span className="tiny mono muted">
-            {hoverDate} ·{' '}
+            {frDate(hoverDate, { long: true })} ·{' '}
             {series
               .map((s) => {
                 const p = s.points.find((q) => q.date === hoverDate);
@@ -198,7 +199,7 @@ export function WeeklyBars({
           const bwidth = bw * 0.64;
           return (
             <g key={w.weekStart}>
-              <title>{`${w.weekStart} — métabolique ${Math.round(w.load)}, mécanique ${Math.round(w.mechanical)}, ${w.vertM} m D+`}</title>
+              <title>{`${frDate(w.weekStart, { long: true })} — métabolique ${num(w.load)}, mécanique ${num(w.mechanical)}, ${num(w.vertM)} m D+`}</title>
               <rect x={x} y={PAD.top + inner - hMet - hMec} width={bwidth} height={hMec} fill="var(--mechanical)" opacity="0.75" rx="1.5" />
               <rect x={x} y={PAD.top + inner - hMet} width={bwidth} height={hMet} fill="var(--metabolic)" opacity="0.9" rx="1.5" />
               <text x={x + bwidth / 2} y={height - 6} textAnchor="middle" fontSize="9.5" fill="var(--text-faint)">
@@ -256,7 +257,7 @@ export function DurationCurve({
           return (
             <g key={f}>
               <line x1={PAD.left} x2={width - PAD.right} y1={Y(v)} y2={Y(v)} stroke="var(--border)" />
-              <text x={PAD.left - 7} y={Y(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--text-faint)">{v.toFixed(1)}</text>
+              <text x={PAD.left - 7} y={Y(v) + 3.5} textAnchor="end" fontSize="10" fill="var(--text-faint)">{num(v, 1)}</text>
             </g>
           );
         })}
@@ -264,7 +265,7 @@ export function DurationCurve({
         <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
         {data.map((p) => (
           <circle key={p.durationS} cx={X(p.durationS)} cy={Y(p.value)} r="2.6" fill={color}>
-            <title>{`${fmt(p.durationS)} — ${p.value.toFixed(2)} ${unit}`}</title>
+            <title>{`${fmt(p.durationS)} — ${num(p.value, 2)} ${unit}`}</title>
           </circle>
         ))}
         {marks.map((m) => (
@@ -312,14 +313,14 @@ export function Gauge({
         />
       )}
       <text x="60" y={pct > 0 ? 55 : 58} textAnchor="middle" fontSize="27" fontWeight="600" fill="var(--text)" style={{ fontVariantNumeric: 'tabular-nums' }}>
-        {Math.round(value)}
+        {num(value)}
       </text>
       {label && <text x="60" y={pct > 0 ? 71 : 76} textAnchor="middle" fontSize="10" fill="var(--text-faint)">{label}</text>}
       {/* La légende reste dans la clairière centrale : plus large, elle passerait
           sous l'anneau et deviendrait illisible. */}
       {pct > 0 && (
         <text x="60" y="84" textAnchor="middle" fontSize="9" fill="var(--watch)" opacity="0.92">
-          {pct} % supposé
+          {num(pct)} % supposé
         </text>
       )}
     </svg>
@@ -357,11 +358,11 @@ export function ElevationProfile({
       </defs>
       <path d={area} fill="url(#elev-grad)" />
       <path d={pts.join(' ')} fill="none" stroke="var(--accent)" strokeWidth="1.6" />
-      <text x={PAD.left - 7} y={Y(maxA) + 4} textAnchor="end" fontSize="10" fill="var(--text-faint)">{Math.round(maxA)}</text>
-      <text x={PAD.left - 7} y={Y(minA) + 4} textAnchor="end" fontSize="10" fill="var(--text-faint)">{Math.round(minA)}</text>
+      <text x={PAD.left - 7} y={Y(maxA) + 4} textAnchor="end" fontSize="10" fill="var(--text-faint)">{num(maxA)}</text>
+      <text x={PAD.left - 7} y={Y(minA) + 4} textAnchor="end" fontSize="10" fill="var(--text-faint)">{num(minA)}</text>
       {[0.25, 0.5, 0.75, 1].map((f) => (
         <text key={f} x={X(maxD * f)} y={height - 5} textAnchor="middle" fontSize="10" fill="var(--text-faint)">
-          {(maxD * f / 1000).toFixed(1)} km
+          {num(maxD * f / 1000, 1)} km
         </text>
       ))}
     </svg>
@@ -404,11 +405,11 @@ export function StreamChart({
               <path d={path.join(' ')} fill="none" stroke={s.color} strokeWidth="1.3" opacity="0.9" />
               <text x={si === 0 ? PAD.left - 7 : width - PAD.right + 7} y={PAD.top + 4}
                 textAnchor={si === 0 ? 'end' : 'start'} fontSize="10" fill={s.color}>
-                {Math.round(max)}
+                {num(max)}
               </text>
               <text x={si === 0 ? PAD.left - 7 : width - PAD.right + 7} y={height - PAD.bottom}
                 textAnchor={si === 0 ? 'end' : 'start'} fontSize="10" fill={s.color}>
-                {Math.round(min)}
+                {num(min)}
               </text>
             </g>
           );
@@ -451,14 +452,14 @@ export function GradeProfileChart({
           return (
             <g key={i}>
               <title>
-                {`${Math.round(b.from * 100)}…${Math.round(b.to * 100)} % — ${Math.round(b.seconds / 60)} min à ${(b.avgSpeedMs * 3.6).toFixed(1)} km/h${b.vamMh ? `, ${b.vamMh} m D+/h` : ''}`}
+                {`${num(b.from * 100)}…${num(b.to * 100)} % — ${num(b.seconds / 60)} min à ${num(b.avgSpeedMs * 3.6, 1)} km/h${b.vamMh ? `, ${num(b.vamMh)} m D+/h` : ''}`}
               </title>
               <rect x={x} y={PAD.top + inner - h} width={w} height={h} fill={color} opacity="0.8" rx="2" />
               <text x={x + w / 2} y={height - 12} textAnchor="middle" fontSize="9" fill="var(--text-faint)">
-                {Math.round(mid * 100)}%
+                {num(mid * 100)} %
               </text>
               <text x={x + w / 2} y={height - 2} textAnchor="middle" fontSize="8.5" fill="var(--text-faint)">
-                {(b.avgSpeedMs * 3.6).toFixed(1)}
+                {num(b.avgSpeedMs * 3.6, 1)}
               </text>
             </g>
           );
