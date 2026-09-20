@@ -110,7 +110,8 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     }]);
     const patch = db.updates.find((u) => u.id === 'rando')!.patch;
     expect(impossible(patch.blocks as SessionBlock[], PIERRE_MODEL)).toEqual([]);
-    expect(patch.plannedDurationS).toBe(6480);
+    // 10 799 s allégées de 40 % : 1 h 45 prescrites, pas 1 h 48 min 00 s.
+    expect(patch.plannedDurationS).toBe(6300);
   });
 
   it('facteur demandé par le coach', async () => {
@@ -121,7 +122,7 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     });
     const patch = db.updates.find((u) => u.id === 'rando')!.patch;
     expect(impossible(patch.blocks as SessionBlock[], PIERRE_MODEL)).toEqual([]);
-    expect(patch.plannedDurationS).toBe(6480);
+    expect(patch.plannedDurationS).toBe(6300);
   });
 });
 

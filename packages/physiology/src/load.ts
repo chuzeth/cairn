@@ -1,6 +1,7 @@
 import type {
   EccentricMovement, MechanicalLoadCoverage, PhysiologyModel, StrengthCircuit, TrainingLoad,
 } from '@cairn/core';
+import { ECCENTRIC_MOVEMENT_TEXT } from '@cairn/core';
 import { gradeAdjustedSpeed, metabolicPower } from './grade.js';
 import { clamp, G, movingAverage, powerMean } from './units.js';
 
@@ -174,10 +175,21 @@ export function mechanicalLoad(samples: readonly LoadSample[]): {
  * fois un tour, que des mollets excentriques ne pèsent pas comme des squats
  * bulgares, et que du gainage ne pèse rien.
  */
+/**
+ * Intitulé, consigne d'exécution et latéralité viennent du texte partagé : le
+ * téléphone les affiche sans dépendre du moteur, et une seule table les porte.
+ */
+const text = (m: EccentricMovement) => {
+  const { label, cue, unilateral } = ECCENTRIC_MOVEMENT_TEXT[m];
+  return { label, cue, unilateral };
+};
+
 export const ECCENTRIC_MOVEMENTS: Record<
   EccentricMovement,
   {
     label: string;
+    /** Le mouvement en une phrase exécutable — une séance l'explique, ou ne le demande pas. */
+    cue: string;
     /** Fraction de la masse corporelle effectivement freinée. */
     bodyFraction: number;
     /** Course du freinage, m. */
@@ -188,15 +200,15 @@ export const ECCENTRIC_MOVEMENTS: Record<
     unilateral: boolean;
   }
 > = {
-  split_squat:         { label: 'squats bulgares',              bodyFraction: 0.85, rangeM: 0.40, severity: 3.0, unilateral: true },
-  step_down:           { label: 'descentes lentes de marche',   bodyFraction: 0.90, rangeM: 0.30, severity: 3.0, unilateral: true },
-  single_leg_deadlift: { label: 'soulevés de terre unilatéraux', bodyFraction: 0.68, rangeM: 0.45, severity: 2.5, unilateral: true },
-  eccentric_calf:      { label: 'mollets excentriques',         bodyFraction: 0.95, rangeM: 0.12, severity: 3.0, unilateral: true },
-  nordic_curl:         { label: 'nordic hamstring',             bodyFraction: 0.60, rangeM: 0.55, severity: 5.0, unilateral: false },
-  drop_jump:           { label: 'sauts en contrebas',           bodyFraction: 1.00, rangeM: 0.35, severity: 2.0, unilateral: false },
+  split_squat:         { ...text('split_squat'),         bodyFraction: 0.85, rangeM: 0.40, severity: 3.0 },
+  step_down:           { ...text('step_down'),           bodyFraction: 0.90, rangeM: 0.30, severity: 3.0 },
+  single_leg_deadlift: { ...text('single_leg_deadlift'), bodyFraction: 0.68, rangeM: 0.45, severity: 2.5 },
+  eccentric_calf:      { ...text('eccentric_calf'),      bodyFraction: 0.95, rangeM: 0.12, severity: 3.0 },
+  nordic_curl:         { ...text('nordic_curl'),         bodyFraction: 0.60, rangeM: 0.55, severity: 5.0 },
+  drop_jump:           { ...text('drop_jump'),           bodyFraction: 1.00, rangeM: 0.35, severity: 2.0 },
   // Le gainage n'a pas de phase de freinage : il tient la position. Il a sa
   // place dans le circuit, aucune dans la charge excentrique.
-  isometric:           { label: 'gainage',                      bodyFraction: 0,    rangeM: 0,    severity: 0,   unilateral: false },
+  isometric:           { ...text('isometric'),           bodyFraction: 0,    rangeM: 0,    severity: 0    },
 };
 
 /** Travail négatif absorbé par répétition et par côté, J/kg. */

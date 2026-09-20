@@ -101,8 +101,8 @@ describe('Construction', () => {
   });
 
   it('laisse à la remontée d\'une descente le temps que la courbe accorde', () => {
-    // 90 m remontés en 3 min 30 : au-delà de ce que Pierre a jamais tenu sur cette durée.
-    const s = lib.downhillSession(PIERRE_MODEL, 6, 150);
+    // 90 m remontés en 4 min : au-delà de ce que Pierre a jamais tenu sur cette durée.
+    const s = lib.downhillSession(PIERRE_MODEL, 6, 3);
     expect(s.amendments?.[0]).toMatch(/récupération/);
     expect(lib.elevationLossOf(s.blocks)).toBe(s.elevationGainM);
     expect(s.elevationGainM).toBeLessThan(540);
@@ -182,7 +182,9 @@ describe('Séance déjà écrite', () => {
     const verdicts = lib.checkVertical(t.blocks, lib.verticalOf(PIERRE_MODEL), 'long_trail');
     expect(verdicts.length).toBe(2);
     expect(verdicts.every((v) => v.feasible)).toBe(true);
-    expect(t.plannedDurationS).toBe(lib.totalDuration(STORED_RANDO_0310.blocks));
+    // Le contenu enregistré totalise 10 799 s ; réparé, il se prescrit à 3 h —
+    // la seconde manquante était l'arrondi d'une division, pas une consigne.
+    expect(t.plannedDurationS).toBe(3 * 3600);
     // La descente est située sur le bloc qui suit la montée, et la boucle se referme.
     expect(t.blocks[2]!.elevationLossM).toBe(t.plannedElevationGainM);
     expect(t.plannedElevationGainM).toBeLessThan(1384);

@@ -140,12 +140,12 @@ export function buildDirectives(lab: LabTest, athleteNotes?: readonly string[]):
       kind: 'weekly_frequency',
       block: 'respiratory',
       timesPerWeek: 2,
-      durationS: 8 * MIN,
+      durationS: 10 * MIN,
       origin: fromNotes(verbatimNote(athleteNotes, 'travail respiratoire')),
       derived:
         "Le dossier constate le déficit — CUP à 48 % pour une référence supérieure à 55 % — et juge le " +
-        "travail rentable, sans en fixer la fréquence : les deux blocs par semaine sont une décision du " +
-        'planificateur, pas une prescription du praticien.',
+        'travail rentable, sans en fixer ni la fréquence ni la durée : les deux blocs de dix minutes par ' +
+        'semaine sont une décision du planificateur, pas une prescription du praticien.',
     });
   }
 

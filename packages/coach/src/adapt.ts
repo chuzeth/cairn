@@ -8,7 +8,7 @@ import { ACWR_SPIKE } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { mondayOf } from './periodization.js';
 import {
-  eccentricStrengthOf, elevationGainOf, restateVert, scaledRounds, transformSession,
+  eccentricStrengthOf, elevationGainOf, retitleFromContent, scaledRounds, transformSession,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
 
@@ -455,10 +455,7 @@ export async function applyAdjustments(
           { duration: adj.factor ?? 1, eccentric: adj.eccentric ?? 1, repeats: adj.repeats ?? 1 },
           model,
         );
-        const title =
-          content.plannedElevationGainM !== elevationGainOf(session.blocks)
-            ? restateVert(session.title, content.plannedElevationGainM)
-            : session.title;
+        const title = retitleFromContent({ ...session, blocks: content.blocks });
         await db.updateSession(adj.sessionId, {
           ...content,
           title: `${title} · allégée`,

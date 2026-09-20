@@ -1,4 +1,5 @@
 import { sessionDuration } from '@cairn/core/format';
+import type { EccentricMovement } from '@cairn/core';
 
 /**
  * Les appels partent de l'origine qui a servi la page — `/api/...`, jamais
@@ -502,7 +503,7 @@ export interface SessionRow {
       provenance?: { hr?: string; speed?: string; vam?: string };
     };
     /** Contenu excentrique du bloc : c'est lui qui porte la charge mécanique. */
-    circuit?: { rounds: number; exercises: { movement: string; reps: number }[] };
+    circuit?: { rounds: number; exercises: { movement: EccentricMovement; reps: number }[] };
   }[];
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: { metric: 'hr_drift'; maxValue?: number; origin: DirectiveOriginRow }[];

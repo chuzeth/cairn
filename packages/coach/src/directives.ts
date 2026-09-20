@@ -122,7 +122,12 @@ export function checkIntervalFormat(
   if (!found) return null;
   const [format, spec] = found;
 
-  const work = session.blocks.filter((b) => !isPrescribed(b) && (b.repeat ?? 1) > 1 && b.durationS);
+  // Un bloc de travail est un bloc qu'une récupération suit, qu'il soit répété
+  // ou non : les paliers d'une pyramide sont prescrits un par un, et la fenêtre
+  // de 3 à 12 min du dossier vaut pour eux comme pour des répétitions égales.
+  const work = session.blocks.filter(
+    (b) => !isPrescribed(b) && b.durationS && ((b.repeat ?? 1) > 1 || b.recovery),
+  );
   const workS = work.map((b) => b.durationS as number);
   const offences: string[] = [];
   const window = `${formatDuration(spec.minWorkS)}-${formatDuration(spec.maxWorkS)}`;
@@ -379,9 +384,13 @@ function effectOf(
       if (!check) return head;
       const window = `${formatDuration(check.spec.minWorkS)}-${formatDuration(check.spec.maxWorkS)}`;
       if (check.offences.length > 0) return `${head} ⚠ ${check.offences.join(' ')}`;
-      return check.workS.length > 0
-        ? `${head} Répétitions de ${formatDuration(check.workS[0] as number)}, dans la plage ${window} prescrite.`
-        : head;
+      if (check.workS.length === 0) return head;
+      const unique = [...new Set(check.workS)];
+      const told =
+        unique.length === 1
+          ? `Répétitions de ${formatDuration(unique[0] as number)}`
+          : `Paliers de ${check.workS.map((w) => formatDuration(w)).join(', ')}`;
+      return `${head} ${told}, dans la plage ${window} prescrite.`;
     }
     case 'success_criterion':
       return describe(directive);

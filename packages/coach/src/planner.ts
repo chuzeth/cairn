@@ -11,7 +11,8 @@ import {
 } from './periodization.js';
 import {
   applied, appliedAmbition, clampCadence, criteriaFor, durationDirectiveFor,
-  honourWeeklyFrequency, indexDirectives, isIntervalSession, nextIntervalFormat, type DirectiveSet,
+  formatDirectiveDuration, honourWeeklyFrequency, indexDirectives, isIntervalSession,
+  nextIntervalFormat, type DirectiveSet,
 } from './directives.js';
 import { carryDecisions, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
@@ -77,6 +78,11 @@ function isLongFormat(ambition?: AthleteAmbition): boolean {
  * restent permises à côté. La semaine porte donc au plus un fractionné ; le
  * second créneau, quand la phase en ouvre un, reçoit un stimulus continu.
  *
+ * Le créneau moyen est une pyramide : ses paliers restent dans la fenêtre de
+ * 3 à 12 min du dossier, et c'est le format que l'athlète exécute réellement.
+ * Des répétitions égales (`lib.threshold`) prescrivent le même travail ; elles
+ * ne sont pas moins bonnes, elles sont moins faites.
+ *
  * L'ordre compte : le premier choisi obtient le meilleur jour. En phase
  * spécifique, c'est l'allure de course qui passe devant — et la semaine peut
  * alors n'avoir aucun fractionné, ce que la consigne autorise, sans que
@@ -102,34 +108,34 @@ function selectQualitySessions(input: WeekBuildInput): SessionTemplate[] {
   // séance de qualité à pleine dose ferait dépasser la cible hebdomadaire et
   // annulerait l'intérêt de la semaine.
   if (spec.isDeload) {
-    return [medium ? lib.threshold(model, 3, 4) : lib.vo2max(model, '30-30', 1, 8)];
+    return [medium ? lib.pyramid(model, [3, 5, 3]) : lib.vo2max(model, '30-30', 1, 8)];
   }
 
   const out: SessionTemplate[] = [];
 
   switch (spec.phase) {
     case 'base':
-      out.push(medium ? lib.threshold(model, 4, 5) : lib.hillRepeats(model, 8, 90, 0.1));
+      out.push(medium ? lib.pyramid(model, [3, 5, 8, 5, 3]) : lib.hillRepeats(model, 8, 90, 0.1));
       if (slots >= 2) out.push(lib.tempo(model, 20));
       break;
 
     case 'build':
-      out.push(medium ? lib.threshold(model, 5, 5) : lib.vo2max(model, '30-30', 2, 10));
+      out.push(medium ? lib.pyramid(model, [3, 5, 8, 8, 5, 3]) : lib.vo2max(model, '30-30', 2, 10));
       if (slots >= 2) {
         // La tolérance excentrique est le facteur limitant du trail long : quand
         // c'est là que l'athlète veut performer, la descente passe devant le
         // tempo sur le créneau de résistance douce.
-        out.push(longAmbition || i % 2 === 1 ? lib.downhillSession(model, 6, 150) : lib.tempo(model, 25));
+        out.push(longAmbition || i % 2 === 1 ? lib.downhillSession(model, 6, 3) : lib.tempo(model, 25));
       }
       break;
 
     case 'specific':
       out.push(lib.racePace(model, 40, input.racePaceMs, 250));
-      if (slots >= 2) out.push(medium ? lib.threshold(model, 4, 8) : lib.vo2max(model, '1-1', 2, 8));
+      if (slots >= 2) out.push(medium ? lib.pyramid(model, [4, 8, 12, 8, 4]) : lib.vo2max(model, '1-1', 2, 8));
       break;
 
     case 'peak':
-      out.push(medium ? lib.threshold(model, 4, 6) : lib.vo2max(model, '30-30', 2, 8));
+      out.push(medium ? lib.pyramid(model, [3, 6, 8, 6, 3]) : lib.vo2max(model, '30-30', 2, 8));
       if (slots >= 2) out.push(lib.racePace(model, 30, input.racePaceMs, 200));
       break;
 
@@ -142,7 +148,7 @@ function selectQualitySessions(input: WeekBuildInput): SessionTemplate[] {
         spec.weeksToRace <= 0
           ? lib.vo2max(model, '30-30', 1, 6)
           : medium
-            ? lib.threshold(model, 3, 5)
+            ? lib.pyramid(model, [3, 5, 3])
             : lib.vo2max(model, '30-30', 1, 8),
       );
       break;
@@ -209,6 +215,7 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
  */
 export function buildWeek(input: WeekBuildInput): TrainingWeek {
   const { spec, model, constraints, athleteId } = input;
+  const set = indexDirectives(input.directives);
   const available = new Set(constraints.availableDays);
   const longDays = constraints.longRunDays.filter((d) => available.has(d));
 
@@ -267,11 +274,43 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
     const prev = (d + 6) % 7;
     const afterHard = usedQualityDays.includes(prev) || prev === longDay;
     if (afterHard) {
-      assigned.set(d, lib.recovery(model, spec.isDeload ? 30 : 40));
+      assigned.set(d, lib.recovery(model, spec.isDeload ? 30 : 45));
       reasons.set(d, `Décrassage : lendemain d'une séance exigeante, on facilite la récupération sans ajouter de charge.`);
     } else {
       assigned.set(d, lib.endurance(model, 60, Math.round(spec.targetElevationGainM * 0.12)));
       reasons.set(d, 'Endurance fondamentale : le volume qui construit la base aérobie.');
+    }
+  }
+
+  // ── 3 bis. Le footing prolongé du dossier ─────────────────────────────────
+  // « Renforcer la qualité foncière par des footings prolongés d'1 h 30 à
+  // 2 h 30 » : la directive ne vise que `long_run`, et la sortie longue de la
+  // semaine est une rando-course dès qu'on quitte la phase foncière — vingt-deux
+  // jours de plan sans une seule séance qui l'honore. On en place donc un, sur
+  // le jour d'endurance le plus éloigné des séances exigeantes. Ni en décharge
+  // ni en affûtage : ces semaines-là ont une autre fonction, et la trace de la
+  // directive le retient déjà.
+  const footing = durationDirectiveFor(set, 'long_run');
+  if (footing && !spec.isDeload && spec.phase !== 'taper' && longSession?.type === 'long_trail') {
+    const hard = [...usedQualityDays, ...(longDay != null ? [longDay] : [])];
+    const day = remaining
+      .filter((d) => !restDays.includes(d) && assigned.get(d)?.type === 'endurance')
+      .sort((a, b) => minDistance(b, hard) - minDistance(a, hard))[0];
+    if (day != null) {
+      assigned.set(
+        day,
+        lib.longFooting(
+          model,
+          Math.round(footing.minS / 60),
+          Math.round(spec.targetElevationGainM * 0.15),
+        ),
+      );
+      reasons.set(
+        day,
+        `Footing prolongé le ${dayName(day)} : le dossier demande ` +
+          `${formatDirectiveDuration(footing.minS)} à ${formatDirectiveDuration(footing.maxS)} d'un seul ` +
+          `tenant sur du roulant, et la durabilité est le facteur limitant mesuré de cet athlète.`,
+      );
     }
   }
 
@@ -286,21 +325,27 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
     // par le nombre de tours qu'on réintroduit l'excentrique après une coupure.
     assigned.set(strengthDay, {
       ...existing,
-      title: `${existing.title} + renforcement`,
+      title: lib.addFormatMention(existing.title, '+ renforcement'),
       blocks,
       durationS: existing.durationS + s.durationS,
       plannedLoad: existing.plannedLoad + s.plannedLoad,
       plannedMechanicalLoad: lib.mechanicalFor(blocks, existing.elevationLossM).total,
-      intent: `${existing.intent} Le renforcement suit immédiatement : chaîne postérieure et souplesse, le point faible identifié au test.`,
+      intent: `${existing.intent} Le renforcement suit immédiatement : chaîne postérieure et souplesse.`,
     });
   }
 
   // ── 4. Calibration sur la charge cible ────────────────────────────────────
-  const set = indexDirectives(input.directives);
   const sessions = calibrateToTarget([...assigned.entries()], spec, athleteId, reasons, set, model);
 
   // ── 5. Directives du dossier ──────────────────────────────────────────────
   honourDirectives(sessions, set, input);
+
+  // ── 6. Nombres humains, une fois le contenu complet ───────────────────────
+  // Les blocs annexes qu'une fréquence hebdomadaire vient d'adosser font partie
+  // de ce que l'athlète exécute : la séance retombe sur la maille après eux,
+  // pas avant. Et le titre se relit sur le contenu final — c'est ici que se
+  // ferme l'écart entre « Décrassage 40 min » et les 58 minutes enregistrées.
+  for (const s of sessions) humanize(s, model);
 
   const dist = targetDistribution(spec.phase);
   return {
@@ -375,22 +420,12 @@ function calibrateToTarget(
   return entries
     .sort(([a], [b]) => weekOrder(a) - weekOrder(b))
     .map(([day, s]) => {
-      const scalable = isLong(s) || isFiller(s);
       const factor = isLong(s)
         ? (longFactors.get(s) as number)
         : isFiller(s)
           ? cappedFactor(s, fillerScale)
           : globalScale;
       const date = addDays(spec.weekStart, weekOrder(day));
-      // Les blocs à durée prescrite ne suivent pas le facteur d'échelle :
-      // ramener dix minutes d'étirements à sept parce que la semaine est
-      // chargée, c'est ne plus honorer la consigne du tout ; ramener un circuit
-      // de trois tours à treize minutes, c'est en prescrire un contenu qu'on
-      // n'a pas le temps de faire.
-      const prescribedS = s.blocks
-        .filter(lib.isPrescribed)
-        .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
-      const runningS = Math.max(0, s.durationS - prescribedS);
       const said = (amendments: readonly string[] = []) =>
         [reasons.get(day), ...amendments].filter(Boolean).join(' ') || undefined;
       const common = {
@@ -403,17 +438,16 @@ function calibrateToTarget(
         status: 'planned' as const,
       };
 
-      if (!scalable) {
-        const elevationGainM = lib.elevationGainOf(s.blocks);
+      // Un jour de repos n'a rien à mettre à l'échelle.
+      if (s.durationS === 0) {
         return {
           ...common,
-          title: factor !== 1 && runningS > 0 ? retitle(s, factor, runningS, elevationGainM) : s.title,
+          title: s.title,
           blocks: s.blocks,
-          plannedLoad: Math.round(s.plannedLoad * factor),
-          plannedMechanicalLoad: lib.mechanicalFor(s.blocks, s.elevationLossM).total,
-          plannedDurationS: Math.round(runningS * factor),
-          plannedDistanceM: s.plannedDistanceM ? Math.round(s.plannedDistanceM * factor) : undefined,
-          plannedElevationGainM: elevationGainM,
+          plannedLoad: 0,
+          plannedMechanicalLoad: 0,
+          plannedDurationS: 0,
+          plannedElevationGainM: 0,
           rationale: said(s.amendments),
         };
       }
@@ -439,9 +473,16 @@ function calibrateToTarget(
         };
       }
 
-      // Le volume facile suit le facteur par le chemin commun à toute
-      // transformation : durée et dénivelé ensemble, et ce que l'athlète ne peut
-      // pas exécuter fait céder le dénivelé, avec la phrase qui le dit.
+      // Tout le reste passe par le chemin commun à toute transformation : durée
+      // et dénivelé ensemble, ce que l'athlète ne peut pas exécuter fait céder
+      // le dénivelé, et la durée retombe sur la maille humaine avant d'être
+      // prescrite. Les totaux qui en sortent sont **mesurés sur le contenu** —
+      // le facteur dit ce qu'on visait, les blocs disent ce qu'on a écrit. Un
+      // fractionné réduit perd des répétitions et non la durée des siennes :
+      // c'est elle que le dossier prescrit.
+      const change = isIntervalSession(s.type as SessionType) && factor < 1
+        ? { duration: factor, repeats: factor }
+        : factor;
       const t = lib.transformSession(
         {
           type: s.type,
@@ -451,17 +492,12 @@ function calibrateToTarget(
           plannedDurationS: s.durationS,
           plannedDistanceM: s.plannedDistanceM,
         },
-        factor,
+        change,
         model,
       );
       return {
         ...common,
-        title:
-          factor !== 1 && runningS > 0
-            ? retitle(s, factor, runningS, t.plannedElevationGainM)
-            : t.plannedElevationGainM !== s.elevationGainM
-              ? lib.restateVert(s.title, t.plannedElevationGainM)
-              : s.title,
+        title: lib.retitleFromContent({ title: s.title, type: s.type as SessionType, blocks: t.blocks }),
         blocks: t.blocks,
         plannedLoad: t.plannedLoad,
         plannedMechanicalLoad: t.plannedMechanicalLoad,
@@ -571,28 +607,6 @@ function raiseVertToMeasurable(s: PlannedSession, model: PhysiologyModel): void 
 }
 
 /**
- * Reconstruit le titre après calibration.
- *
- * Le dénivelé qu'il annonce est celui des blocs mis à l'échelle, pas un troisième
- * calcul : un titre qui annonce « 48 min · 499 m D+ » alors que le bloc a été
- * ramené à 48 min et 299 m est pire qu'un titre vague — il donne une consigne
- * fausse. Les mentions ajoutées en aval (« + renforcement ») sont préservées.
- */
-function retitle(s: SessionTemplate, factor: number, runningS: number, vert: number): string {
-  const minutes = Math.round((runningS * factor) / 60);
-  const durationLabel = minutes >= 90 ? `${(minutes / 60).toFixed(1)} h` : `${minutes} min`;
-
-  const suffixMatch = / \+ .+$/.exec(s.title);
-  const suffix = suffixMatch ? suffixMatch[0] : '';
-  const base =
-    (s.title.slice(0, s.title.length - suffix.length).split('·')[0] ?? s.title)
-      .replace(/\d+([.,]\d+)?\s*(min|h)\b/, '')
-      .trim();
-
-  return `${base} ${durationLabel}${vert > 50 ? ` · ${vert} m D+` : ''}${suffix}`;
-}
-
-/**
  * Plafond de durée par type de séance.
  *
  * Le calibrage sur la charge hebdomadaire est un ajustement comptable : sans
@@ -621,6 +635,36 @@ function weekOrder(dow: number): number {
 function circularDistance(a: number, b: number): number {
   const d = Math.abs(weekOrder(a) - weekOrder(b));
   return Math.min(d, 7 - d);
+}
+
+/** Distance au plus proche des jours donnés — 7 quand il n'y en a aucun. */
+function minDistance(day: number, others: readonly number[]): number {
+  return others.length === 0 ? 7 : Math.min(...others.map((o) => circularDistance(day, o)));
+}
+
+/**
+ * Ramène une séance écrite sur la maille humaine, titre compris.
+ *
+ * Dernière porte avant l'enregistrement : quoi qu'il soit arrivé aux blocs —
+ * calibration, dénivelé relevé, bloc annexe adossé —, ce qui sort se prescrit
+ * au quart d'heure et se lit dans le titre. La charge est ensuite **mesurée**
+ * sur ce contenu : c'est l'inversion, la durée n'est plus le quotient d'un
+ * budget.
+ */
+function humanize(s: PlannedSession, model: PhysiologyModel): void {
+  if (s.blocks.length === 0) return;
+  const blocks = lib.snapToHumanGrid(s.blocks);
+  // Le dénivelé négatif est celui que les blocs déclarent — c'est ce que la
+  // bibliothèque a écrit à la construction, et une semaine calibrée n'a pas à
+  // en inférer un autre.
+  const totals = lib.sessionTotals(model, blocks, lib.elevationLossOf(blocks));
+  s.blocks = blocks;
+  s.plannedDurationS = totals.durationS;
+  s.plannedLoad = totals.load;
+  s.plannedMechanicalLoad = totals.mechanicalLoad;
+  s.plannedElevationGainM = totals.elevationGainM;
+  s.plannedDistanceM = Math.round(totals.distanceM);
+  s.title = lib.retitleFromContent(s);
 }
 
 function pickRestDays(remaining: number[], qualityDays: number[], longDay: number | null, count: number): number[] {

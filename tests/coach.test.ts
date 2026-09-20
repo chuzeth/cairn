@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LAB_TEST_2025_07_24, PIERRE, buildDirectives, directivesFor,
+  ECCENTRIC_MOVEMENT_TEXT, LAB_TEST_2025_07_24, PIERRE, buildDirectives, directivesFor,
+  sessionDuration,
   type DeclaredAbsence, type PlannedSession, type RaceGoal, type TrainingWeek,
 } from '@cairn/core';
 import { DURABILITY_MEASURABLE, modelFromLabOnly, msToKmh, projectFrom } from '@cairn/physiology';
@@ -328,11 +329,11 @@ describe('Le plan est mesuré contre la cible qu\'il se donne', () => {
   });
 
   it('dit ce qui manque quand la place manque, au lieu de manquer la cible en silence', () => {
-    // Cinq semaines, charge de départ basse : la fraîcheur ne peut pas monter
+    // Quatre semaines, charge de départ basse : la fraîcheur ne peut pas monter
     // jusqu'à la cible sans défaire la forme que ces semaines construisent.
     const { plan, tsbCheck } = build({
       race: { ...RACE, date: '2026-10-18' },
-      currentCtl: 32, currentAtl: 12, startDate: '2026-09-14',
+      currentCtl: 32, currentAtl: 12, startDate: '2026-09-21',
     });
     expect(tsbCheck.onTarget).toBe(false);
     expect(tsbCheck.gap).toBeLessThan(0);
@@ -520,16 +521,16 @@ describe('Règles d\'ajustement automatique', () => {
     const state = baseState({
       readiness: { date: '2026-09-01', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
     });
-    // 4 089 s allégées de 55 % font 1 840 s, que l'écran écrit « 30 min ».
-    // Arrondie à part, la phrase en promettait 31 : deux nombres pour la même
-    // séance, et c'est la phrase qu'on croit.
+    // 4 089 s allégées de 55 % font 1 840 s, que la maille humaine prescrit à
+    // 30 min. Arrondie à part, la phrase en promettait 31 : deux nombres pour la
+    // même séance, et c'est la phrase qu'on croit.
     const tomorrow = session({
       date: '2026-09-02', type: 'threshold', plannedLoad: 80, plannedMechanicalLoad: 5,
       plannedDurationS: 4089, blocks: [{ label: 'Bloc continu', zone: 'Z3', durationS: 4089 }],
     });
     const [adj] = evaluateAdjustments(state, [tomorrow]);
     expect(adj!.rule).toBe('readiness_red');
-    expect(lib.transformSession(tomorrow, adj!.factor!, model).plannedDurationS).toBe(1840);
+    expect(lib.transformSession(tomorrow, adj!.factor!, model).plannedDurationS).toBe(1800);
     expect(adj!.reason).toContain('ramenée à 30 min');
     expect(adj!.reason).not.toContain('31 min');
   });
@@ -606,7 +607,9 @@ describe('Allègement d\'une séance', () => {
 
   it('raccourcit ce qui se court, et laisse entier ce que le dossier prescrit', () => {
     const out = lib.transformSession(withCircuit(), 0.45, model);
-    expect(out.blocks[0]!.durationS).toBe(1047);
+    // 2 326 s allégées de 55 % font 1 047 s, que le corps de séance prescrit à
+    // un quart d'heure : une durée est une consigne, pas le reste d'une division.
+    expect(out.blocks[0]!.durationS).toBe(900);
     // Les tours ne suivent pas le facteur ; la durée du circuit ne le peut donc
     // pas non plus, sans quoi la séance prescrit « 5 min » en face de trois
     // tours de trois exercices.
@@ -617,9 +620,9 @@ describe('Allègement d\'une séance', () => {
 
   it('relit la durée totale sur les blocs allégés, jamais à côté d\'eux', () => {
     const out = lib.transformSession(withCircuit(), 0.45, model);
-    expect(out.plannedDurationS).toBe(1047 + 775 + 600);
+    expect(out.plannedDurationS).toBe(900 + 775 + 600);
     // Mise à l'échelle à son tour, elle aurait annoncé 1 665 s pour un contenu
-    // qui en dure 2 422 : l'en-tête et les blocs ne disaient plus la même chose.
+    // qui en dure 2 275 : l'en-tête et les blocs ne disaient plus la même chose.
     expect(out.plannedDurationS).not.toBe(Math.round(3701 * 0.45));
   });
 
@@ -1431,5 +1434,154 @@ describe('Ambition longue distance', () => {
       .filter((w) => !w.isDeload && w.phase !== 'taper')
       .some((w) => (longOf(w)?.plannedElevationGainM ?? 0) < DURABILITY_MEASURABLE.minVertM);
     expect(flat).toBe(true);
+  });
+});
+
+describe('Une séance se prescrit en nombres humains', () => {
+  const directives = directivesFor(PIERRE);
+  const { weeks } = buildTrainingPlan({
+    athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+    currentCtl: 45, currentAtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+    directives, ambition: PIERRE.ambition,
+  });
+  const sessions = weeks.flatMap((w) => w.sessions).filter((s) => s.blocks.length > 0);
+
+  /** Ce qui se court, hors des blocs que le dossier prescrit à part. */
+  const running = (s: PlannedSession) =>
+    lib.totalDuration(s.blocks.filter((b) => !lib.isPrescribed(b)));
+
+  it('prescrit le corps de séance au quart d\'heure', () => {
+    for (const s of sessions) {
+      if (s.type === 'race') continue;
+      expect(running(s) % (15 * 60), `${s.date} ${s.title} — ${running(s)} s`).toBe(0);
+    }
+  });
+
+  it('prescrit les blocs à la minute ronde, jamais à la seconde', () => {
+    for (const s of sessions) {
+      if (s.type === 'race') continue;
+      for (const b of s.blocks) {
+        // Un format écrit en secondes — « 30"-30" » — est une consigne du
+        // dossier, pas le reste d'une division : lui seul y échappe.
+        if ((b.repeat ?? 1) > 1) continue;
+        expect((b.durationS ?? 0) % 60, `${s.date} « ${b.label} »`).toBe(0);
+        expect((b.recovery?.durationS ?? 0) % 60, `${s.date} récup de « ${b.label} »`).toBe(0);
+      }
+    }
+  });
+
+  it('dit dans le titre la durée que la séance entière porte', () => {
+    for (const s of sessions) {
+      if (s.type === 'race') continue;
+      expect(s.title, `${s.date} — ${s.plannedDurationS} s`).toContain(
+        `— ${sessionDuration(s.plannedDurationS)}`,
+      );
+      expect(s.plannedDurationS, s.date).toBe(lib.totalDuration(s.blocks));
+    }
+  });
+
+  it('chiffre une descente par ce qu\'elle descend, pas par ses remontées', () => {
+    const down = sessions.filter((s) => s.type === 'downhill');
+    expect(down.length).toBeGreaterThan(0);
+    for (const s of down) {
+      expect(s.title, s.date).toContain(`${lib.elevationLossOf(s.blocks)} m D−`);
+      expect(s.title, s.date).not.toContain('m D+');
+    }
+  });
+});
+
+describe('Le footing prolongé du dossier', () => {
+  const directives = directivesFor(PIERRE);
+  const { weeks } = buildTrainingPlan({
+    athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+    currentCtl: 45, currentAtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+    directives, ambition: PIERRE.ambition,
+  });
+  const foncier = directives.find((d) => d.id === 'foncier_duree');
+  const building = weeks.filter((w) => !w.isDeload && w.phase !== 'taper' && w.phase !== 'race');
+
+  it('place un footing dans la plage prescrite chaque semaine de construction', () => {
+    expect(foncier?.kind).toBe('session_duration');
+    if (foncier?.kind !== 'session_duration') return;
+    expect(building.length).toBeGreaterThan(4);
+    for (const w of building) {
+      const footings = w.sessions.filter((s) => s.type === 'long_run');
+      expect(footings.length, w.weekStart).toBeGreaterThan(0);
+      for (const f of footings) {
+        const run = lib.totalDuration(f.blocks.filter((b) => !lib.isPrescribed(b)));
+        expect(run, `${w.weekStart} ${f.title}`).toBeGreaterThanOrEqual(foncier.minS);
+        expect(run, `${w.weekStart} ${f.title}`).toBeLessThanOrEqual(foncier.maxS);
+      }
+    }
+  });
+
+  it('honore la directive sur les semaines que la rando-course occupait seule', () => {
+    // Le défaut corrigé : sur les vingt-deux jours du plan actif, deux séances
+    // seulement dépassaient 1 h 30, et c'étaient les deux rando-courses.
+    const withTrail = building.filter((w) => w.sessions.some((s) => s.type === 'long_trail'));
+    expect(withTrail.length).toBeGreaterThan(0);
+    for (const w of withTrail) {
+      expect(w.sessions.some((s) => s.type === 'long_run'), w.weekStart).toBe(true);
+    }
+  });
+});
+
+describe('La pyramide, fractionné moyen du dossier', () => {
+  const policy = directivesFor(PIERRE).find((d) => d.kind === 'interval_policy');
+
+  it('tient ses paliers dans la fenêtre de 3 à 12 min', () => {
+    const s = lib.pyramid(model, [3, 5, 8, 5, 3]);
+    const steps = s.blocks.filter((b) => b.zone === 'Z4').map((b) => b.durationS);
+    expect(steps).toEqual([180, 300, 480, 300, 180]);
+    expect(s.title).toContain('Pyramide 3-5-8-5-3 min');
+    if (policy?.kind !== 'interval_policy') throw new Error('politique absente');
+    const check = lib.checkIntervalFormat({ type: s.type, blocks: s.blocks }, policy);
+    expect(check?.offences).toEqual([]);
+    expect(check?.format).toBe('medium');
+  });
+
+  it('raccourcit l\'échelle par ses extrémités, jamais ses paliers', () => {
+    const court = lib.pyramid(model, [3, 5, 8, 5, 3]).blocks;
+    const allege = lib.transformSession(
+      { type: 'threshold', blocks: court, plannedLoad: 80, plannedMechanicalLoad: 5, plannedDurationS: lib.totalDuration(court) },
+      0.6,
+      model,
+    );
+    expect(allege.blocks.filter((b) => b.zone === 'Z4').map((b) => b.durationS)).toEqual(
+      [180, 300, 480, 300, 180],
+    );
+  });
+
+  it('ne met qu\'un fractionné par semaine, pyramide comprise', () => {
+    const { weeks } = buildTrainingPlan({
+      athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+      currentCtl: 45, currentAtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+      directives: directivesFor(PIERRE), ambition: PIERRE.ambition,
+    });
+    for (const w of weeks) {
+      const n = w.sessions.filter((s) => isIntervalSession(s.type)).length;
+      expect(n, w.weekStart).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('Un mouvement demandé est un mouvement expliqué', () => {
+  it('donne à chaque exercice du circuit sa phrase exécutable', () => {
+    const s = lib.strength(model, 3);
+    const circuit = s.blocks.find((b) => b.circuit)!.circuit!;
+    const text = lib.describeCircuit(circuit);
+    for (const e of circuit.exercises) {
+      const m = ECCENTRIC_MOVEMENT_TEXT[e.movement];
+      expect(m.cue.length, e.movement).toBeGreaterThan(20);
+      expect(text).toContain(m.cue);
+    }
+  });
+
+  it('explique les gammes, que l\'athlète n\'a jamais faites', () => {
+    for (const s of [lib.pyramid(model), lib.threshold(model), lib.vo2max(model)]) {
+      const gammes = s.blocks.find((b) => b.label.startsWith('Gammes'))!;
+      expect(gammes.notes, s.title).toMatch(/montées de genou/);
+      expect(gammes.notes, s.title).toMatch(/talons-fesses/);
+    }
   });
 });

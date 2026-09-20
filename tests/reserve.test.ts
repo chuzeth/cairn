@@ -158,13 +158,22 @@ describe('Le dossier borne le format du fractionné', () => {
     expect(lib.checkIntervalFormat(planned(lib.vo2max(model, '30-30', 2, 10)), policy)!.offences).toEqual([]);
   });
 
-  it('constate qu\'un raccourcissement sort de la plage prescrite', () => {
+  it('constate qu\'un contenu réécrit sort de la plage prescrite', () => {
     const s = planned(lib.threshold(model, 5, 5));
     expect(lib.checkIntervalFormat(s, policy)!.offences).toEqual([]);
-    const court = lib.transformSession(s, 0.45, model);
-    expect(lib.checkIntervalFormat({ ...s, blocks: court.blocks }, policy)!.offences[0]).toMatch(
+    // Un allègement ne peut plus produire ce cas : la durée d'une répétition est
+    // le format, et seul leur nombre cède. Reste ce que le coach peut écrire.
+    const court = s.blocks.map((b) => ((b.repeat ?? 1) > 1 ? { ...b, durationS: 135 } : b));
+    expect(lib.checkIntervalFormat({ ...s, blocks: court }, policy)!.offences[0]).toMatch(
       /hors de la plage 3'00"-12'00" prescrite/,
     );
+  });
+
+  it('ne raccourcit jamais une répétition pour alléger une séance', () => {
+    const s = planned(lib.threshold(model, 5, 5));
+    const court = lib.transformSession(s, 0.45, model);
+    expect(court.blocks.find((b) => (b.repeat ?? 1) > 1)!.durationS).toBe(300);
+    expect(lib.checkIntervalFormat({ ...s, blocks: court.blocks }, policy)!.offences).toEqual([]);
   });
 
   it('allège un fractionné en retirant des répétitions, pas des minutes', () => {
