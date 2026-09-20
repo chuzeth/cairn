@@ -604,7 +604,10 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
   // séances partent avec eux (cascade). Les conserver produirait des doublons
   // dans toutes les vues, qui interrogent par athlète et par date : on verrait
   // trois fois la même journée après trois reconstructions. L'historique des
-  // décisions est porté par `revisionLog`, qui est reporté d'un plan au suivant.
+  // décisions est porté par `revisionLog`, reporté d'un plan au suivant, et par
+  // les séances elles-mêmes : celles qui portent une décision sont reprises
+  // dans le plan neuf (`carryDecisions`) avant d'arriver ici. Ce qui n'y est
+  // pas au moment de l'appel est perdu — cette fonction ne rattrape rien.
   await db
     .delete(t.trainingPlans)
     .where(and(eq(t.trainingPlans.athleteId, plan.athleteId), ne(t.trainingPlans.id, plan.id)));
@@ -655,6 +658,7 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
       completedActivityId: s.completedActivityId ?? null,
       absenceId: s.absenceId ?? null,
       rationale: s.rationale ?? null,
+      decision: s.decision ?? null,
       successCriteria: s.successCriteria ?? null,
       directives: s.directives ?? null,
     })),
@@ -741,6 +745,7 @@ function rowToSession(row: typeof t.plannedSessions.$inferSelect): PlannedSessio
     completedActivityId: row.completedActivityId ?? undefined,
     absenceId: row.absenceId ?? undefined,
     rationale: row.rationale ?? undefined,
+    decision: (row.decision as PlannedSession['decision']) ?? undefined,
     successCriteria: (row.successCriteria as PlannedSession['successCriteria']) ?? undefined,
     directives: (row.directives as PlannedSession['directives']) ?? undefined,
   };

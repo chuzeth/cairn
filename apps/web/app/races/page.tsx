@@ -21,6 +21,26 @@ interface Prediction {
   facteurs_limitants: { facteur: string; gain_potentiel: string; explication: string }[];
 }
 
+/**
+ * Ce qu'une reconstruction ferait, tel que l'API le renvoie en aperçu.
+ *
+ * Reconstruire est irréversible : ce qui n'est pas repris est réécrit. L'aperçu
+ * existe pour que ce mouvement se lise avant le clic, et non dans le journal
+ * du plan après coup.
+ */
+interface RebuildPreview {
+  semaines: number;
+  mouvement: string;
+  seances_conservees: {
+    date: string; titre: string; statut: string; charge: number;
+    denivele_m: number | null; raison: string; ce_qu_elle_porte: string;
+  }[];
+  seances_remplacees: { date: string; avant: string | null; apres: string | null; ce_qui_change: string[] }[];
+  seances_reecrites_a_l_identique: string[];
+  seances_ajoutees: { date: string; apres: string | null }[];
+  seances_retirees: { date: string; avant: string | null }[];
+}
+
 const EMPTY_FORM = {
   name: '', date: '', priority: 'A' as 'A' | 'B' | 'C',
   distance_km: '', elevation_gain_m: '', elevation_loss_m: '',
@@ -36,6 +56,7 @@ export default function RacesPage() {
   const [prediction, setPrediction] = useState<{ raceId: string; data: Prediction } | null>(null);
   const [predicting, setPredicting] = useState<string | null>(null);
   const [building, setBuilding] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ raceId: string; name: string; data: RebuildPreview } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -85,15 +106,36 @@ export default function RacesPage() {
     }
   };
 
-  const buildPlan = async (raceId: string, name: string) => {
+  // Le bouton ne reconstruit pas : il demande ce que la reconstruction ferait.
+  const askPlan = async (raceId: string, name: string) => {
+    setBuilding(raceId);
+    setNotice(null);
+    setPreview(null);
+    try {
+      const data = await post<RebuildPreview>('/api/plan/rebuild', { race_id: raceId, preview: true });
+      setPreview({ raceId, name, data });
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBuilding(null);
+    }
+  };
+
+  const confirmPlan = async () => {
+    if (!preview) return;
+    const { raceId, name } = preview;
     setBuilding(raceId);
     setNotice(null);
     try {
-      const result = await post<{ semaines: number; temps_predit: string }>('/api/plan/rebuild', {
-        race_id: raceId,
-        reason: `Plan construit depuis l'interface pour « ${name} ».`,
-      });
-      setNotice(`Plan reconstruit : ${result.semaines} semaines jusqu'à « ${name} ». Temps prédit ${result.temps_predit}.`);
+      const result = await post<{ semaines: number; temps_predit: string; mouvement: string }>(
+        '/api/plan/rebuild',
+        { race_id: raceId, reason: `Plan reconstruit depuis la page Objectifs pour « ${name} ».` },
+      );
+      setNotice(
+        `Plan reconstruit : ${result.semaines} semaines jusqu'à « ${name} » — ${result.mouvement}. ` +
+        `Temps prédit ${result.temps_predit}.`,
+      );
+      setPreview(null);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
     } finally {
@@ -187,7 +229,7 @@ export default function RacesPage() {
                     <button className="btn" onClick={() => void predict(r.id)} disabled={predicting === r.id}>
                       {predicting === r.id ? <span className="spinner" /> : 'Prédire'}
                     </button>
-                    <button className="btn" data-variant="primary" onClick={() => void buildPlan(r.id, r.name)} disabled={building === r.id}>
+                    <button className="btn" data-variant="primary" onClick={() => void askPlan(r.id, r.name)} disabled={building === r.id}>
                       {building === r.id ? <span className="spinner" /> : 'Construire le plan'}
                     </button>
                     <button className="btn" data-variant="danger" onClick={async () => { await del(`/api/races/${r.id}`); await load(); }}>
@@ -195,6 +237,15 @@ export default function RacesPage() {
                     </button>
                   </div>
                 </div>
+
+                {preview?.raceId === r.id && (
+                  <PlanPreview
+                    preview={preview.data}
+                    busy={building === r.id}
+                    onConfirm={() => void confirmPlan()}
+                    onCancel={() => setPreview(null)}
+                  />
+                )}
 
                 {active && prediction && (
                   <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)' }}>
@@ -255,5 +306,103 @@ export default function RacesPage() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Ce que la reconstruction conserverait et ce qu'elle remplacerait, avant le
+ * clic qui l'exécute.
+ *
+ * Les séances conservées passent en premier : ce sont des décisions, et ce
+ * qu'elles portent — réalisée, retirée par une absence, allégée par les règles
+ * — se lit à côté d'elles. Le reste est ce que l'on perd, et ce que l'on perd
+ * ne se découvre pas dans le journal après coup.
+ */
+function PlanPreview({
+  preview, busy, onConfirm, onCancel,
+}: { preview: RebuildPreview; busy: boolean; onConfirm: () => void; onCancel: () => void }) {
+  const { seances_conservees: kept, seances_remplacees: swapped } = preview;
+  const { seances_ajoutees: added, seances_retirees: dropped } = preview;
+  const identical = preview.seances_reecrites_a_l_identique;
+  const day = (d: string) => frDate(d);
+
+  return (
+    <div style={{ paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+      <div className="row-between wrap" style={{ marginBottom: 10 }}>
+        <div>
+          <div className="metric-label">Avant de reconstruire</div>
+          <div className="small muted" style={{ marginTop: 3 }}>
+            {preview.semaines} semaines seraient réécrites — {preview.mouvement}. C'est irréversible.
+          </div>
+        </div>
+        <div className="row">
+          <button className="btn" onClick={onCancel} disabled={busy}>Annuler</button>
+          <button className="btn" data-variant="danger" onClick={onConfirm} disabled={busy}>
+            {busy ? <span className="spinner" /> : 'Reconstruire'}
+          </button>
+        </div>
+      </div>
+
+      {kept.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div className="metric-label" style={{ marginBottom: 6 }}>
+            Conservées — {kept.length} séance(s) qui portent une décision
+          </div>
+          <div className="stack" style={{ gap: 5 }}>
+            {kept.map((k) => (
+              <div key={k.date} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+                <span className="mono tiny faint" style={{ width: 72, flex: 'none' }}>{day(k.date)}</span>
+                <div>
+                  <div className="small" style={{ fontWeight: 550 }}>{k.titre}</div>
+                  <div className="tiny faint">{k.ce_qu_elle_porte}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {swapped.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div className="metric-label" style={{ marginBottom: 6 }}>
+            Remplacées — {swapped.length} séance(s) réécrites par le planificateur
+          </div>
+          <div className="stack" style={{ gap: 5 }}>
+            {swapped.map((c) => (
+              <div key={c.date} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+                <span className="mono tiny faint" style={{ width: 72, flex: 'none' }}>{day(c.date)}</span>
+                <div>
+                  <div className="small">{c.apres}</div>
+                  <div className="tiny faint">{c.ce_qui_change.join(' · ')}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {identical.length > 0 && (
+        <div className="tiny faint" style={{ marginBottom: 12 }}>
+          {identical.length} autre(s) journée(s) réécrites à l'identique — même séance, même charge.
+        </div>
+      )}
+
+      {(added.length > 0 || dropped.length > 0) && (
+        <div className="stack" style={{ gap: 5 }}>
+          {added.map((c) => (
+            <div key={`+${c.date}`} className="row" style={{ gap: 10 }}>
+              <span className="mono tiny faint" style={{ width: 72, flex: 'none' }}>{day(c.date)}</span>
+              <span className="small">ajoutée — {c.apres}</span>
+            </div>
+          ))}
+          {dropped.map((c) => (
+            <div key={`-${c.date}`} className="row" style={{ gap: 10 }}>
+              <span className="mono tiny faint" style={{ width: 72, flex: 'none' }}>{day(c.date)}</span>
+              <span className="small faint">retirée — {c.avant}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

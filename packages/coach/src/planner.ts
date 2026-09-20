@@ -13,6 +13,7 @@ import {
   applied, appliedAmbition, clampCadence, criteriaFor, durationDirectiveFor,
   honourWeeklyFrequency, indexDirectives, isIntervalSession, nextIntervalFormat, type DirectiveSet,
 } from './directives.js';
+import { carryDecisions, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
 
@@ -676,6 +677,19 @@ export interface BuildPlanInput {
    * se lisent les ratios du plan ; sans elle, ils partent de rien.
    */
   loadHistory?: readonly DailyLoad[];
+  /**
+   * Le plan en place, dont les décisions doivent survivre à la reconstruction.
+   *
+   * Absent, le planificateur écrit sur une page blanche — c'est le cas d'un
+   * premier plan. Présent, les séances qui portent une décision sont reprises
+   * telles quelles, et le plan neuf s'écrit autour d'elles.
+   */
+  previous?: readonly TrainingWeek[];
+  /**
+   * Le jour où la reconstruction a lieu : ce qui est avant est du passé, et le
+   * passé ne se réécrit pas. Par défaut, le premier jour du plan.
+   */
+  today?: string;
 }
 
 /**
@@ -892,6 +906,8 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   weeks: TrainingWeek[];
   tsbCheck: RaceDayTsbCheck;
   ratioCheck: LoadRatioCheck;
+  /** Ce que la reconstruction reprend, remplace, ajoute et retire. */
+  carryOver: PlanCarryOver;
 } {
   const startDate = input.startDate ?? new Date().toISOString().slice(0, 10);
 
@@ -923,32 +939,11 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   };
 
   const solved = solveTaperScale(attempt, tsb.metabolic);
-  const weeks = solved.weeks;
-  const gap = Math.round((solved.projectedTsb - tsb.metabolic) * 10) / 10;
-  const taperCount = weeks.filter((w) => w.phase === 'taper').length;
-  const tsbCheck: RaceDayTsbCheck = {
-    date: eve,
-    target: tsb.metabolic,
-    projected: solved.projectedTsb,
-    gap,
-    onTarget: Math.abs(gap) <= TSB_TOLERANCE,
-    taperScale: Math.round(solved.taperScale * 100) / 100,
-    shortfall:
-      Math.abs(gap) <= TSB_TOLERANCE
-        ? null
-        : tsbShortfall(
-            gap,
-            tsb.metabolic,
-            solved.taperScale,
-            weeks.length,
-            taperCount,
-            effectiveCtl,
-            input.constraints.maxWeeklyHours,
-          ),
-  };
+  const fresh = solved.weeks;
+  const taperCount = fresh.filter((w) => w.phase === 'taper').length;
 
   // La course elle-même remplace la séance du jour.
-  const raceWeek = weeks.find((w) => w.sessions.some((s) => s.date === raceDate));
+  const raceWeek = fresh.find((w) => w.sessions.some((s) => s.date === raceDate));
   if (raceWeek) {
     raceWeek.sessions = raceWeek.sessions.filter((s) => s.date !== raceDate);
     raceWeek.sessions.push({
@@ -979,6 +974,45 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     raceWeek.sessions.sort((a, b) => a.date.localeCompare(b.date));
   }
 
+  // ── Ce qu'une reconstruction n'a pas le droit de réécrire ──────────────────
+  // Le planificateur vient d'écrire le plan qu'il aurait écrit sur une page
+  // blanche. Les décisions du plan en place reprennent maintenant leur place :
+  // jours passés, séances réalisées ou remplacées, séances retirées par une
+  // absence déclarée, séances ajustées à la main.
+  const carryOver = carryDecisions(input.previous ?? [], fresh, input.today ?? planStart);
+  const weeks = carryOver.weeks;
+
+  // ── Ce que le plan écrit produit, mesuré sur le plan écrit ─────────────────
+  // La profondeur d'affûtage s'est résolue sur ce que le planificateur peut
+  // encore écrire — il ne rattrapera pas une cible en réécrivant une séance
+  // décidée. La mesure, elle, porte sur le plan tel qu'il sera enregistré :
+  // annoncer le TSB d'un plan qu'on n'enregistre pas propagerait une erreur
+  // silencieuse jusqu'au jour de la course.
+  const written = weeks.flatMap((w) => w.sessions).filter((s) => s.date >= planStart);
+  const points = projectFrom(seed, written.map((s) => ({ date: s.date, load: s.plannedLoad })), planStart, eve);
+  const projected = points[points.length - 1]?.tsb ?? Math.round((seed.ctl - seed.atl) * 10) / 10;
+  const gap = Math.round((projected - tsb.metabolic) * 10) / 10;
+  const tsbCheck: RaceDayTsbCheck = {
+    date: eve,
+    target: tsb.metabolic,
+    projected,
+    gap,
+    onTarget: Math.abs(gap) <= TSB_TOLERANCE,
+    taperScale: Math.round(solved.taperScale * 100) / 100,
+    shortfall:
+      Math.abs(gap) <= TSB_TOLERANCE
+        ? null
+        : tsbShortfall(
+            gap,
+            tsb.metabolic,
+            solved.taperScale,
+            fresh.length,
+            taperCount,
+            effectiveCtl,
+            input.constraints.maxWeeklyHours,
+          ),
+  };
+
   // ── Ratios de charge, sur ce que les séances produites pèsent ──────────────
   const history = (input.loadHistory ?? []).filter((l) => l.date < planStart);
   const firstKnown = history.reduce<string | null>((a, l) => (a == null || l.date < a ? l.date : a), null);
@@ -989,9 +1023,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     exceedances: ratioExceedances(
       projectLoadRatios(
         history,
-        weeks.flatMap((w) =>
-          w.sessions.map((s) => ({ date: s.date, metabolic: s.plannedLoad, mechanical: s.plannedMechanicalLoad })),
-        ),
+        written.map((s) => ({ date: s.date, metabolic: s.plannedLoad, mechanical: s.plannedMechanicalLoad })),
         planStart,
         eve,
       ),
@@ -1019,7 +1051,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
           at: now,
           trigger: 'initial',
           summary:
-            `Plan construit sur ${weeks.length} semaines jusqu'à « ${input.race.name} » (${input.race.date.slice(0, 10)}). ` +
+            `Plan construit sur ${fresh.length} semaines jusqu'à « ${input.race.name} » (${input.race.date.slice(0, 10)}). ` +
             `Départ de CTL ${Math.round(effectiveCtl)}. Cible de TSB à la veille de course (${eve}) : ` +
             `${signed(tsb.metabolic)} ; les charges du plan y amènent ${signed(tsbCheck.projected)} ` +
             `(écart ${signed(gap)}, affûtage à ${Math.round(solved.taperScale * 100)} % de sa profondeur nominale).` +
@@ -1047,6 +1079,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     weeks,
     tsbCheck,
     ratioCheck,
+    carryOver,
   };
 }
 

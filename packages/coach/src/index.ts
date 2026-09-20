@@ -3,6 +3,7 @@ export * from './sessionContent.js';
 export * from './directives.js';
 export * from './sessionLibrary.js';
 export * from './periodization.js';
+export * from './preserve.js';
 export * from './planner.js';
 export * from './adapt.js';
 export * from './state.js';

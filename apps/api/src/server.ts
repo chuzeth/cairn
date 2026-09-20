@@ -10,7 +10,7 @@ import {
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
 } from '@cairn/strava';
-import type { ActivityStreams, DeclaredAbsence } from '@cairn/core';
+import type { ActivityStreams, DeclaredAbsence, DecisionOrigin } from '@cairn/core';
 import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
 import { env, missingConfig } from './env.js';
 import { activityPollerStatus } from './poller.js';
@@ -27,6 +27,25 @@ const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
  * et le dira. Une réponse hors bornes physiologiques est écartée plutôt que
  * ramenée de force : une FC de repos à 300 n'est pas une FC de repos.
  */
+/** Origines du navigateur de l'application — les mêmes qu'autorise CORS. */
+const WEB_ORIGINS = [env.webOrigin, 'http://localhost:3000', 'http://127.0.0.1:3000'];
+
+/**
+ * D'où vient un appel qui touche le plan.
+ *
+ * Le navigateur envoie `Origin` sur toute requête vers l'API : elle est d'une
+ * autre origine que la page. `curl`, un script, une session de développement
+ * n'en envoient pas. Ce n'est pas une authentification — rien n'empêche de
+ * forger l'en-tête, et l'API n'est pas exposée à des tiers ; c'est la
+ * distinction que le journal doit porter. « Depuis l'interface » ne dit pas si
+ * Pierre a cliqué sur un bouton ou si un développeur a appelé l'API, et les
+ * deux ne se relisent pas de la même façon six mois plus tard.
+ */
+const originOf = (req: { headers: Record<string, unknown> }): DecisionOrigin =>
+  typeof req.headers.origin === 'string' && WEB_ORIGINS.includes(req.headers.origin)
+    ? 'athlete'
+    : 'developer';
+
 const numeric = (v: unknown, min: number, max: number): number | undefined => {
   if (v == null || v === '') return undefined;
   const n = Number(v);
@@ -44,7 +63,7 @@ export async function buildServer() {
   });
 
   await app.register(cors, {
-    origin: [env.webOrigin, 'http://localhost:3000', 'http://127.0.0.1:3000'],
+    origin: WEB_ORIGINS,
     credentials: true,
   });
 
@@ -413,14 +432,19 @@ export async function buildServer() {
     }
   });
 
-  app.post<{ Body: { race_id: string; reason?: string; start_date?: string } }>(
+  // `preview` ne touche à rien : il renvoie ce que la reconstruction
+  // conserverait et ce qu'elle remplacerait. L'application s'en sert pour
+  // montrer le mouvement avant de le déclencher — l'action est irréversible.
+  app.post<{ Body: { race_id: string; reason?: string; start_date?: string; preview?: boolean } }>(
     '/api/plan/rebuild',
     async (req, reply) => {
       try {
-        const result = await executeTool(A, 'rebuild_plan', {
-          ...req.body,
-          reason: req.body.reason ?? 'Reconstruction demandée depuis l\'application.',
-        });
+        const result = await executeTool(
+          A,
+          'rebuild_plan',
+          { ...req.body, reason: req.body.reason ?? 'Reconstruction demandée.' },
+          originOf(req),
+        );
         return result.content;
       } catch (e) {
         return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });

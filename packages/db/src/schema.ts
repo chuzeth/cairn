@@ -233,6 +233,12 @@ export const plannedSessions = sqliteTable(
     /** Absence déclarée qui a retiré la séance — renseigné avec le statut `withdrawn`. */
     absenceId: text('absence_id'),
     rationale: text('rationale'),
+    /**
+     * SessionDecision — ce qui a été décidé sur la séance hors du
+     * planificateur, avec sa provenance. C'est ce qui rend une séance encore à
+     * venir opposable à une reconstruction : son statut, lui, dit « planned ».
+     */
+    decision: text('decision', { mode: 'json' }),
     /** Critères de réussite, tels que le dossier les formule. */
     successCriteria: text('success_criteria', { mode: 'json' }),
     /** Directives du dossier qui ont façonné la séance, avec leur extrait. */

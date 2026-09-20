@@ -1,5 +1,6 @@
 import type {
-  AbsenceKind, CourseProfile, CourseUnknown, PhysiologyModel, PlannedSession, RaceGoal, SessionBlock,
+  AbsenceKind, CourseProfile, CourseUnknown, DecisionOrigin, PhysiologyModel, PlannedSession,
+  RaceGoal, SessionBlock,
 } from '@cairn/core';
 import {
   courseFromLapFormat, courseHasUnknown, describeLapFormat, directivesFor, isLapCourse, lapsForHours,
@@ -15,6 +16,7 @@ import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { describeDirectives } from './directives.js';
 import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
+import { describeOrigin, type PlanCarryOver } from './preserve.js';
 import { PRESCRIPTION_MARGIN } from './plausibility.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
@@ -310,12 +312,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'rebuild_plan',
     description:
-      "Reconstruit intégralement le plan d'entraînement jusqu'à une course cible, à partir de l'état de forme actuel. À utiliser lors d'un changement d'objectif, de date, d'ambition, ou après une interruption importante. Renvoie un résumé semaine par semaine, et les jours où le plan porte un ratio charge aiguë/chronique — métabolique ou mécanique — au-delà de son seuil.",
+      "Reconstruit intégralement le plan d'entraînement jusqu'à une course cible, à partir de l'état de forme actuel. À utiliser lors d'un changement d'objectif, de date, d'ambition, ou après une interruption importante. Renvoie un résumé semaine par semaine, et les jours où le plan porte un ratio charge aiguë/chronique — métabolique ou mécanique — au-delà de son seuil. " +
+      "Ce qui porte une décision est repris et non réécrit : jour passé, séance réalisée, remplacée, retirée par une absence déclarée, ou modifiée à la main. Le reste est remplacé — et c'est irréversible. " +
+      "Procédure : appelle d'abord avec `preview` pour obtenir ce qui serait conservé et ce qui serait remplacé, soumets-le à Pierre, et n'enregistre qu'après sa confirmation.",
     input_schema: obj(
       {
         race_id: str("Identifiant de la course cible."),
         start_date: str('Date de départ du plan, YYYY-MM-DD. Par défaut : le lundi de cette semaine.'),
         reason: str('Motif de la reconstruction, consigné dans le journal de révision du plan.'),
+        preview: bool(
+          "Si vrai, ne rien enregistrer : renvoyer seulement ce que la reconstruction conserverait et ce qu'elle remplacerait, pour le lui soumettre avant confirmation.",
+        ),
       },
       ['race_id', 'reason'],
     ),
@@ -431,10 +438,21 @@ export interface ToolResult {
   summary: string;
 }
 
+/**
+ * Exécute un outil du coach.
+ *
+ * `origin` dit qui tient l'outil, et suit la décision jusqu'au journal du plan
+ * et jusqu'à la séance. Par défaut « le coach » : c'est ce que sont ces outils
+ * quand rien ne dit le contraire — une conversation. L'application et l'API,
+ * elles, savent distinguer un bouton pressé par l'athlète d'un appel direct,
+ * et le disent ici plutôt que de laisser le journal écrire « depuis
+ * l'interface » pour les deux.
+ */
 export async function executeTool(
   athleteId: string,
   name: string,
   rawInput: unknown,
+  origin: DecisionOrigin = 'coach',
 ): Promise<ToolResult> {
   const input = (rawInput ?? {}) as Record<string, unknown>;
 
@@ -1051,7 +1069,11 @@ export async function executeTool(
       const planStart = mondayOf(startDate ?? iso(new Date()));
       const start = await fitnessAtPlanStart(state, planStart);
 
-      const { plan, weeks, tsbCheck, ratioCheck } = buildTrainingPlan({
+      // Le plan en place entre dans la construction : ses décisions sont
+      // reprises, elles ne sont pas réécrites.
+      const previous = await db.getActivePlan(athleteId);
+
+      const { plan, weeks, tsbCheck, ratioCheck, carryOver } = buildTrainingPlan({
         athleteId,
         model: state.model,
         constraints: state.profile.constraints,
@@ -1067,15 +1089,68 @@ export async function executeTool(
         // La charge chronique des deux filières, pour que les ratios du plan
         // se lisent avant qu'il ne soit couru.
         loadHistory: await knownLoadsBefore(state, planStart),
+        previous: previous?.weeks,
+        today: state.today.date,
       });
 
+      // Les semaines que le planificateur a écrites, sans celles d'avant le
+      // départ que les décisions passées ramènent avec elles.
+      const runway = weeks.filter((w) => w.weekStart >= planStart).length;
+      const movement = describeCarry(carryOver);
+
+      // ── L'aperçu : ce que la reconstruction ferait, avant qu'elle ne le fasse
+      // L'action est irréversible ; elle ne s'exécute qu'une fois montrée.
+      if (arg<boolean>(input, 'preview')) {
+        return {
+          summary: `Aperçu — reconstruction de ${runway} semaines jusqu'à « ${race.name} » : ${movement}`,
+          content: {
+            enregistre: false,
+            course: race.name,
+            date_course: race.date,
+            semaines: runway,
+            ...carryContent(carryOver),
+            a_faire:
+              'Soumets à Pierre ce qui serait conservé et ce qui serait remplacé. ' +
+              "S'il confirme, rappelle cet outil sans preview. Sinon, ajuste séance par séance " +
+              '(`modify_session`), qui ne détruit rien.',
+          },
+        };
+      }
+
       // L'historique des décisions survit à la reconstruction : on reporte le
-      // journal du plan précédent dans le nouveau.
-      const previous = await db.getActivePlan(athleteId);
+      // journal du plan précédent dans le nouveau, et on y écrit ce que
+      // celle-ci a repris et remplacé — avec la main qui l'a déclenchée.
       plan.revisionLog = [
         ...(previous?.plan.revisionLog ?? []),
         ...plan.revisionLog,
-        { at: new Date().toISOString(), trigger: 'chat_request' as const, summary: reason, changes: [] },
+        {
+          at: new Date().toISOString(),
+          trigger: 'chat_request' as const,
+          origin,
+          summary: `${reason} Reconstruction demandée ${describeOrigin(origin)} — ${movement}.`,
+          changes: [
+            ...carryOver.replaced
+              .filter((c) => !c.identical)
+              .map((c) => ({
+                date: c.date,
+                before: c.before ?? '',
+                after: c.after ?? '',
+                reason: `Séance sans décision, réécrite par le planificateur : ${c.differences.join(', ')}.`,
+              })),
+            ...carryOver.added.map((c) => ({
+              date: c.date,
+              before: '',
+              after: c.after ?? '',
+              reason: 'Jour que le plan précédent ne couvrait pas.',
+            })),
+            ...carryOver.removed.map((c) => ({
+              date: c.date,
+              before: c.before ?? '',
+              after: '',
+              reason: 'Jour que le plan reconstruit ne prescrit plus.',
+            })),
+          ],
+        },
       ].slice(-40);
 
       await db.savePlan(plan, weeks);
@@ -1085,7 +1160,7 @@ export async function executeTool(
 
       return {
         summary:
-          `Plan reconstruit : ${weeks.length} semaines jusqu'à « ${race.name} » — ` +
+          `Plan reconstruit : ${runway} semaines jusqu'à « ${race.name} » — ${movement} — ` +
           `TSB projeté à la veille ${signedTsb(tsbCheck.projected)} pour une cible de ` +
           `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}` +
           (ratioCheck.exceedances.length
@@ -1095,7 +1170,8 @@ export async function executeTool(
           plan_id: plan.id,
           course: race.name,
           date_course: race.date,
-          semaines: weeks.length,
+          semaines: runway,
+          ...carryContent(carryOver),
           // La cible et sa vérification vont ensemble : une cible seule ne dit
           // pas si le plan l'atteint.
           tsb_cible_veille: tsbCheck.target,
@@ -1221,12 +1297,22 @@ export async function executeTool(
         ? ` ⚠ Ratio de charge projeté au-delà de son seuil : ${describeRatioExceedances(ratios.after)}.`
         : '';
 
+      // La décision, portée par la séance elle-même. Sans elle, une séance
+      // encore à venir reste « planned » et ne se distingue plus de ce que le
+      // planificateur vient d'écrire : la reconstruction suivante l'écrase.
+      patch.decision = {
+        at: new Date().toISOString(),
+        by: origin,
+        summary: String(patch.rationale ?? rationale),
+      };
+
       await db.updateSession(sessionId, patch as never);
       const plan = await db.getActivePlan(athleteId);
       if (plan) {
         await db.appendPlanRevision(plan.plan.id, {
           at: new Date().toISOString(),
           trigger: 'chat_request',
+          origin,
           summary: rationale + ratioWarning,
           changes: [{ date: newDate ?? '', before: sessionId, after: JSON.stringify(patch), reason: rationale }],
         });
@@ -1346,7 +1432,7 @@ export async function executeTool(
       });
 
       const withdrawals = withdrawalsFor(absence, covered);
-      await applyAdjustments(athleteId, withdrawals, 'declared_absence');
+      await applyAdjustments(athleteId, withdrawals, 'declared_absence', 'athlete');
 
       if (checkInDate) {
         await db.markCheckInNoteHandled(
@@ -1455,6 +1541,52 @@ export async function executeTool(
     default:
       throw new Error(`Outil inconnu : ${name}`);
   }
+}
+
+/** Ce que la reconstruction ferait, en une ligne. */
+function describeCarry(carry: PlanCarryOver): string {
+  const rewritten = carry.replaced.filter((c) => !c.identical);
+  const identical = carry.replaced.length - rewritten.length;
+  const parts = [
+    `${carry.preserved.length} séance(s) conservée(s)`,
+    `${rewritten.length} remplacée(s)`,
+  ];
+  if (carry.added.length) parts.push(`${carry.added.length} ajoutée(s)`);
+  if (carry.removed.length) parts.push(`${carry.removed.length} retirée(s)`);
+  // Une journée réécrite à l'identique est comptée à part : elle change
+  // d'identifiant, pas de contenu, et la noyer dans les remplacements rendrait
+  // l'aperçu illisible là où il doit servir à décider.
+  if (identical) parts.push(`${identical} réécrite(s) à l'identique`);
+  return parts.join(', ');
+}
+
+/**
+ * Ce que la reconstruction reprend et ce qu'elle remplace, jour par jour.
+ *
+ * Le même objet dans l'aperçu et dans le résultat : ce que l'athlète a vu
+ * avant de confirmer est exactement ce qu'il relit après.
+ */
+function carryContent(carry: PlanCarryOver) {
+  return {
+    mouvement: describeCarry(carry),
+    seances_conservees: carry.preserved.map((d) => ({
+      date: d.session.date,
+      titre: d.session.title,
+      statut: d.session.status,
+      charge: d.session.plannedLoad,
+      denivele_m: d.session.plannedElevationGainM ?? null,
+      raison: d.reason,
+      ce_qu_elle_porte: d.statement,
+    })),
+    seances_remplacees: carry.replaced
+      .filter((c) => !c.identical)
+      .map((c) => ({ date: c.date, avant: c.before, apres: c.after, ce_qui_change: c.differences })),
+    // Même jour, même titre, même charge, même durée, même dénivelé : elles
+    // sont bien réécrites, mais rien n'y change pour l'athlète.
+    seances_reecrites_a_l_identique: carry.replaced.filter((c) => c.identical).map((c) => c.date),
+    seances_ajoutees: carry.added.map((c) => ({ date: c.date, apres: c.after })),
+    seances_retirees: carry.removed.map((c) => ({ date: c.date, avant: c.before })),
+  };
 }
 
 /** Dépassements de ratio de charge, tels que le coach les lit. */

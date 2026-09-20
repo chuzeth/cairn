@@ -1,4 +1,6 @@
-import type { DeclaredAbsence, PhysiologyModel, PlannedSession } from '@cairn/core';
+import type {
+  DeclaredAbsence, DecisionOrigin, PhysiologyModel, PlannedSession, SessionDecision,
+} from '@cairn/core';
 import * as db from '@cairn/db';
 import { sessionDuration } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
@@ -299,6 +301,7 @@ export async function applyAdjustments(
   athleteId: string,
   adjustments: Adjustment[],
   trigger: 'new_activity' | 'readiness' | 'missed_session' | 'declared_absence' = 'new_activity',
+  origin: DecisionOrigin = 'rules',
 ): Promise<number> {
   if (adjustments.length === 0) return 0;
 
@@ -313,13 +316,25 @@ export async function applyAdjustments(
   // chercher que s'il y en a un.
   let model: PhysiologyModel | undefined;
 
+  // Un ajustement est une décision de charge : elle reste sur la séance, et
+  // une reconstruction la reprendra au lieu de l'écraser.
+  const decided = (summary: string): SessionDecision => ({
+    at: new Date().toISOString(),
+    by: origin,
+    summary,
+  });
+
   for (const adj of adjustments) {
     const session = byId.get(adj.sessionId);
     if (!session) continue;
 
     switch (adj.action) {
       case 'mark_missed':
-        await db.updateSession(adj.sessionId, { status: 'missed', rationale: adj.reason });
+        await db.updateSession(adj.sessionId, {
+          status: 'missed',
+          rationale: adj.reason,
+          decision: decided(adj.reason),
+        });
         break;
 
       case 'withdraw':
@@ -327,6 +342,7 @@ export async function applyAdjustments(
           status: 'withdrawn',
           absenceId: adj.absenceId ?? null,
           rationale: adj.reason,
+          decision: decided(adj.reason),
         });
         break;
 
@@ -350,18 +366,24 @@ export async function applyAdjustments(
           ...content,
           title: `${title} · allégée`,
           rationale: [adj.reason, ...amendments].join(' '),
+          decision: decided([adj.reason, ...amendments].join(' ')),
         } as never);
         break;
       }
 
       case 'move':
         if (adj.newDate) {
-          await db.updateSession(adj.sessionId, { date: adj.newDate, status: 'moved', rationale: adj.reason });
+          await db.updateSession(adj.sessionId, {
+            date: adj.newDate,
+            status: 'moved',
+            rationale: adj.reason,
+            decision: decided(adj.reason),
+          });
         }
         break;
 
       case 'swap':
-        await db.updateSession(adj.sessionId, { rationale: adj.reason });
+        await db.updateSession(adj.sessionId, { rationale: adj.reason, decision: decided(adj.reason) });
         break;
     }
   }
@@ -371,6 +393,7 @@ export async function applyAdjustments(
     await db.appendPlanRevision(plan.plan.id, {
       at: new Date().toISOString(),
       trigger,
+      origin,
       summary: `${adjustments.length} ajustement(s) automatique(s) : ${[...new Set(adjustments.map((a) => a.rule))].join(', ')}.`,
       changes: adjustments.map((a) => ({
         date: a.date,

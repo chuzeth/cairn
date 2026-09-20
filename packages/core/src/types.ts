@@ -940,6 +940,37 @@ export interface SessionBlock {
 }
 
 /**
+ * D'où vient une décision qui touche le plan.
+ *
+ * `athlete` : il a agi lui-même, depuis l'application. `coach` : la décision
+ * s'est prise en conversation, par un outil. `rules` : les règles de charge
+ * l'ont appliquée sans qu'on la demande. `developer` : un appel direct à
+ * l'API, hors de toute interface — une session de développement.
+ *
+ * « Depuis l'interface » confond les trois derniers avec le premier. Un plan
+ * reconstruit depuis le téléphone de l'athlète et un plan reconstruit depuis
+ * un terminal ne se relisent pas de la même façon : le journal doit pouvoir
+ * les distinguer.
+ */
+export type DecisionOrigin = 'athlete' | 'coach' | 'rules' | 'developer';
+
+/**
+ * Ce qui a été décidé sur une séance après que le planificateur l'a écrite.
+ *
+ * Un statut dit ce que la séance est devenue — réalisée, manquée, retirée. Il
+ * ne dit rien d'une séance encore à venir dont on a changé le contenu : une
+ * rando-course ramenée sous le seuil mécanique reste « planned », et rien ne
+ * la distinguait d'une séance que le planificateur vient d'écrire. C'est cette
+ * trace-là qui manquait, et sans laquelle une reconstruction l'écrasait.
+ */
+export interface SessionDecision {
+  at: string;
+  by: DecisionOrigin;
+  /** Le motif, tel qu'il a été écrit. */
+  summary: string;
+}
+
+/**
  * Devenir d'une séance prescrite.
  *
  * `withdrawn` est le seul statut qui ne dit rien de l'athlète : la séance a été
@@ -981,6 +1012,13 @@ export interface PlannedSession {
   absenceId?: string;
   /** Justification produite par le coach lors de la (re)planification. */
   rationale?: string;
+  /**
+   * La dernière décision prise sur cette séance hors du planificateur.
+   *
+   * Elle vaut opposition à une reconstruction : ce qu'un athlète ou un coach a
+   * décidé se reprend, il ne se réécrit pas.
+   */
+  decision?: SessionDecision;
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: SessionSuccessCriterion[];
   /** Directives du dossier qui ont façonné cette séance, avec leur origine. */
@@ -1034,6 +1072,8 @@ export interface PlanRevision {
   trigger:
     | 'initial' | 'new_activity' | 'chat_request' | 'missed_session'
     | 'readiness' | 'goal_change' | 'declared_absence';
+  /** Qui tenait l'outil. Absent des révisions écrites avant qu'on le demande. */
+  origin?: DecisionOrigin;
   summary: string;
   /** Diff lisible : ce qui a bougé et pourquoi. */
   changes: { date: string; before: string; after: string; reason: string }[];

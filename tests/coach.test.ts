@@ -6,8 +6,8 @@ import {
 import { DURABILITY_MEASURABLE, modelFromLabOnly, msToKmh, projectFrom } from '@cairn/physiology';
 import {
   INTERVAL_FORMAT, TAPER_SCALE_BOUNDS, absenceCovering, allocatePhases, assumedCtl,
-  buildPeriodization, buildTrainingPlan, buildWeek, carryFitness, evaluateAdjustments,
-  isIntervalSession, mondayOf, taperWeeks, weeksBetween, withdrawalsFor,
+  buildPeriodization, buildTrainingPlan, buildWeek, carryDecisions, carryFitness, decisionOn,
+  evaluateAdjustments, isIntervalSession, mondayOf, taperWeeks, weeksBetween, withdrawalsFor,
 } from '@cairn/coach';
 // La bibliothèque de séances est ré-exportée par l'index du paquet.
 import * as lib from '@cairn/coach';
@@ -1251,6 +1251,128 @@ describe('Ratios de charge du plan écrit', () => {
     }
     // Le journal du plan le dit, avec la date et la valeur.
     expect(plan.revisionLog[0]!.summary).toContain(`mécanique ${mechanical[0]!.value.toFixed(2)} le ${mechanical[0]!.date}`);
+  });
+});
+
+describe('Ce qu\'une reconstruction n\'a pas le droit de réécrire', () => {
+  const base = (over: Partial<PlannedSession> & { id: string; date: string }): PlannedSession => ({
+    athleteId: 'pierre', type: 'endurance', title: 'Endurance fondamentale', intent: '',
+    blocks: [{ label: 'Course', zone: 'Z2', durationS: 3600 }],
+    plannedLoad: 50, plannedMechanicalLoad: 20, plannedDurationS: 3600,
+    priority: 'support', status: 'planned', ...over,
+  });
+
+  const week = (weekStart: string, sessions: PlannedSession[]): TrainingWeek => ({
+    weekStart, index: 0, phase: 'base', targetLoad: 250, targetDurationS: 5 * 3600,
+    targetElevationGainM: 500, intensityDistribution: { low: 0.8, moderate: 0.1, high: 0.1 },
+    isDeload: false, focus: '', sessions,
+  });
+
+  const TODAY = '2026-09-18';
+
+  it('une séance à venir, jamais touchée, ne porte aucune décision', () => {
+    expect(decisionOn(base({ id: 'a', date: '2026-09-25' }), TODAY)).toBeNull();
+  });
+
+  it('un jour passé en porte une, même sans rien d\'autre', () => {
+    expect(decisionOn(base({ id: 'a', date: '2026-09-17' }), TODAY)?.reason).toBe('past');
+  });
+
+  it('le statut nomme la décision, et prime sur le reste', () => {
+    const cases: [PlannedSession['status'], string][] = [
+      ['completed', 'réalisée'],
+      ['replaced', 'autre chose a été fait ce jour-là'],
+      ['withdrawn', 'retirée par une absence déclarée'],
+      ['missed', 'non réalisée'],
+    ];
+    for (const [status, statement] of cases) {
+      const d = decisionOn(base({ id: 'a', date: '2026-09-25', status }), TODAY);
+      expect(d?.reason).toBe(status);
+      expect(d?.statement).toBe(statement);
+    }
+  });
+
+  it('une séance à venir modifiée à la main porte sa décision et sa provenance', () => {
+    const d = decisionOn(
+      base({
+        id: 'a', date: '2026-09-27',
+        decision: { at: '2026-09-17T18:20:00.000Z', by: 'coach', summary: 'Ramenée à 760 m.' },
+      }),
+      TODAY,
+    );
+    expect(d?.reason).toBe('edited');
+    expect(d?.statement).toBe('modifiée le 2026-09-17 par le coach — Ramenée à 760 m.');
+  });
+
+  it('la décision remplace la séance écrite pour ce jour-là, et rien d\'autre', () => {
+    const decided = base({ id: 'vieille', date: '2026-09-22', title: 'Test maximal', status: 'completed' });
+    const previous = [week('2026-09-21', [decided, base({ id: 'sans', date: '2026-09-23' })])];
+    const fresh = [
+      week('2026-09-21', [
+        base({ id: 'neuve-1', date: '2026-09-22', title: 'Seuil 5 × 5 min' }),
+        base({ id: 'neuve-2', date: '2026-09-23', title: 'Décrassage' }),
+      ]),
+    ];
+    const carry = carryDecisions(previous, fresh, TODAY);
+
+    expect(carry.weeks[0]!.sessions.map((s) => s.id)).toEqual(['vieille', 'neuve-2']);
+    expect(carry.preserved.map((d) => d.session.id)).toEqual(['vieille']);
+    expect(carry.replaced).toEqual([{
+      date: '2026-09-23',
+      before: 'Endurance fondamentale',
+      after: 'Décrassage',
+      differences: ['« Endurance fondamentale » → « Décrassage »'],
+      identical: false,
+    }]);
+  });
+
+  it('une journée réécrite à l\'identique se distingue de celle qui change', () => {
+    const previous = [week('2026-09-21', [
+      base({ id: 'v1', date: '2026-09-23' }),
+      base({ id: 'v2', date: '2026-09-24', title: 'PMA', plannedLoad: 90 }),
+    ])];
+    const fresh = [week('2026-09-21', [
+      base({ id: 'n1', date: '2026-09-23' }),
+      base({ id: 'n2', date: '2026-09-24', title: 'PMA', plannedLoad: 74 }),
+    ])];
+    const carry = carryDecisions(previous, fresh, TODAY);
+
+    expect(carry.replaced.find((c) => c.date === '2026-09-23')?.identical).toBe(true);
+    const changed = carry.replaced.find((c) => c.date === '2026-09-24')!;
+    expect(changed.identical).toBe(false);
+    // Deux séances du même nom qui ne pèsent pas la même chose : sans le
+    // détail, l'aperçu afficherait « PMA → PMA » et ne dirait rien.
+    expect(changed.differences).toEqual(['charge 90 → 74']);
+  });
+
+  it('un écart que l\'affichage arrondit n\'est pas une différence', () => {
+    const previous = [week('2026-09-21', [base({ id: 'v', date: '2026-09-23', plannedDurationS: 3600 })])];
+    const fresh = [week('2026-09-21', [base({ id: 'n', date: '2026-09-23', plannedDurationS: 3602 })])];
+    const carry = carryDecisions(previous, fresh, TODAY);
+
+    // « durée 60 min → 60 min » occuperait la place d'une information.
+    expect(carry.replaced[0]!.differences).toEqual([]);
+    expect(carry.replaced[0]!.identical).toBe(true);
+  });
+
+  it('une décision plus ancienne que le plan neuf ramène sa semaine avec elle', () => {
+    const previous = [week('2026-09-07', [base({ id: 'vieille', date: '2026-09-09', status: 'completed' })])];
+    const fresh = [week('2026-09-21', [base({ id: 'neuve', date: '2026-09-22' })])];
+    const carry = carryDecisions(previous, fresh, TODAY);
+
+    expect(carry.weeks.map((w) => w.weekStart)).toEqual(['2026-09-07', '2026-09-21']);
+    expect(carry.weeks.map((w) => w.index)).toEqual([0, 1]);
+    expect(carry.weeks[0]!.sessions.map((s) => s.id)).toEqual(['vieille']);
+  });
+
+  it('un jour que le plan neuf ne prescrit plus se voit, il ne disparaît pas en silence', () => {
+    const previous = [week('2026-09-21', [base({ id: 'sans', date: '2026-09-24', title: 'PMA' })])];
+    const carry = carryDecisions(previous, [week('2026-09-21', [])], TODAY);
+
+    expect(carry.removed).toEqual([
+      { date: '2026-09-24', before: 'PMA', after: null, differences: [], identical: false },
+    ]);
+    expect(carry.preserved).toHaveLength(0);
   });
 });
 
