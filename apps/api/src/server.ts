@@ -11,7 +11,9 @@ import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
 } from '@cairn/strava';
 import type { ActivityStreams, DeclaredAbsence, DecisionOrigin } from '@cairn/core';
-import { formatDuration, formatPace, msToKmh } from '@cairn/physiology';
+import {
+  formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
+} from '@cairn/physiology';
 import { env, missingConfig } from './env.js';
 import { activityPollerStatus } from './poller.js';
 import { backfill, ingestActivity, processPendingWebhooks, stravaClientFor } from './sync.js';
@@ -284,12 +286,17 @@ export async function buildServer() {
           vt1Kmh: round2(msToKmh(s.model.vt1.speedMs)),
           vt2Kmh: round2(msToKmh(s.model.vt2.speedMs)),
         },
+        // Une zone ouverte vers le haut rend `null`, pas un nombre : Z5 n'a pas
+        // de plafond que quoi que ce soit de mesuré fonde, et l'écran doit
+        // pouvoir écrire « au-delà de » plutôt qu'un chiffre inventé.
         zones: s.zones.map((z) => ({
           ...z,
           speedMinKmh: round2(msToKmh(z.speedMinMs)),
-          speedMaxKmh: round2(msToKmh(z.speedMaxMs)),
-          paceMin: formatPace(z.speedMaxMs),
+          speedMaxKmh: z.speedMaxMs == null ? null : round2(msToKmh(z.speedMaxMs)),
+          paceMin: z.speedMaxMs == null ? null : formatPace(z.speedMaxMs),
           paceMax: formatPace(z.speedMinMs),
+          speedProvenance: speedProvenanceOf(z),
+          hrProvenance: hrProvenanceOf(z),
         })),
         today: s.today,
         readiness: s.readiness,

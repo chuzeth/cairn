@@ -3,4 +3,5 @@ export * from './athlete.js';
 export * from './quote.js';
 export * from './prescription.js';
 export * from './format.js';
+export * from './provenance.js';
 export * from './race.js';

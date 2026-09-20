@@ -8,7 +8,9 @@ import {
 } from '@/lib/api';
 import { QUESTIONS } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
-import { CRITERION_LABELS, circuitText, originLabel, sessionHeadline, slopeOf } from '@/lib/sessions';
+import {
+  CRITERION_LABELS, circuitText, originLabel, provenanceText, sessionHeadline, slopeOf,
+} from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import { ABSENCE_KIND_LABEL, MISSING_LABEL, ReadinessBasis, Stale, unweighed, Waiting } from '@/components/ui';
 
@@ -342,7 +344,20 @@ function targets(b: SessionRow['blocks'][number]): string {
   }
   if (b.vamTargetMh) parts.push(`${metres(b.vamTargetMh)} D+/h`);
   if (b.cadenceTargetSpm) parts.push(`${b.cadenceTargetSpm} ppm`);
+  // La récupération est un segment de la séance : sans allure, « récup 90 s
+  // active » se court au juger.
+  if (b.recovery?.paceRange) {
+    parts.push(
+      `récup ${b.recovery.paceRange[1] === '—'
+        ? `plus lent que ${b.recovery.paceRange[0]}`
+        : `${b.recovery.paceRange[0]}–${b.recovery.paceRange[1]}`}/km`,
+    );
+  }
   if (b.circuit) parts.push(circuitText(b.circuit));
+  // D'où viennent ces cibles. Elle tient dans le pli des consignes, où on la lit
+  // au moment de décider si on tient le chiffre ou ses sensations.
+  const from = provenanceText(b.provenance);
+  if (parts.length > 0 && from) parts.push(`d'après ${from}`);
   return parts.join(' · ');
 }
 

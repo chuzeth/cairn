@@ -1,10 +1,10 @@
 import type {
   AppliedDirective, AthleteAmbition, BlockKind, CadenceDirective, DescribedDirective,
-  IntervalPolicyDirective, PlannedSession, SessionBlock, SessionDurationDirective,
+  IntervalFormat, IntervalPolicyDirective, PlannedSession, SessionBlock, SessionDurationDirective,
   SessionSuccessCriterion, SessionType, SuccessCriterionDirective, TrainingDirective,
   WeeklyFrequencyDirective,
 } from '@cairn/core';
-import { DURABILITY_MEASURABLE } from '@cairn/physiology';
+import { DURABILITY_MEASURABLE, formatDuration } from '@cairn/physiology';
 import { elevationGainOf, isPrescribed, totalDuration } from './sessionLibrary.js';
 
 /**
@@ -59,7 +59,7 @@ export function indexDirectives(list: readonly TrainingDirective[] = []): Direct
  * les deux ferait soit deux fractionnés dans la semaine, soit une semaine vide
  * d'intensité.
  */
-export const INTERVAL_FORMAT: Partial<Record<SessionType, 'short' | 'medium'>> = {
+export const INTERVAL_FORMAT: Partial<Record<SessionType, IntervalFormat>> = {
   vo2max: 'short',
   hill_repeats: 'short',
   threshold: 'medium',
@@ -79,9 +79,71 @@ export function isIntervalSession(type: SessionType): boolean {
 export function nextIntervalFormat(
   policy: IntervalPolicyDirective | undefined,
   countSoFar: number,
-): 'short' | 'medium' {
+): IntervalFormat {
   const cycle = policy?.alternate?.length ? policy.alternate : (['short', 'medium'] as const);
-  return cycle[countSoFar % cycle.length] as 'short' | 'medium';
+  return cycle[countSoFar % cycle.length] as IntervalFormat;
+}
+
+/**
+ * Ce que les répétitions d'un fractionné durent, et si c'est ce que le dossier
+ * prescrit.
+ *
+ * Le compte rendu ne dit pas seulement combien de fractionnés par semaine : il
+ * dit de quoi ils sont faits — 3 à 12 min pour le moyen, 30 s à 1 min pour le
+ * court. Ces bornes n'existaient nulle part dans le code, et la seule chose qui
+ * les respectait était le choix de paramètres du planificateur. Rien ne les
+ * vérifiait après coup, et un allègement les quittait sans un mot.
+ *
+ * Le contrôle se lit sur le contenu actuel, comme les autres effets de
+ * directive : une séance réécrite se juge sur ce qu'elle est devenue.
+ */
+export interface IntervalFormatCheck {
+  format: IntervalFormat;
+  spec: NonNullable<IntervalPolicyDirective['formats'][IntervalFormat]>;
+  /** Durées de répétition trouvées sur les blocs répétés, s. */
+  workS: number[];
+  /** Ce qui sort de la fenêtre prescrite, en clair. Vide quand tout y est. */
+  offences: string[];
+}
+
+export function checkIntervalFormat(
+  session: Pick<PlannedSession, 'type' | 'blocks'>,
+  policy: IntervalPolicyDirective | undefined,
+): IntervalFormatCheck | null {
+  // La fenêtre est celle du format *qui décrit cette séance*, pas celle du
+  // créneau qu'elle occupe dans l'alternance : les côtes comptent comme le
+  // fractionné court de la semaine, et le document ne leur donne aucune durée
+  // de répétition. Leur opposer celle de la PMA serait inventer une consigne.
+  const entries = Object.entries(policy?.formats ?? {}) as [
+    IntervalFormat,
+    NonNullable<IntervalPolicyDirective['formats'][IntervalFormat]>,
+  ][];
+  const found = entries.find(([, spec]) => spec.appliesTo.includes(session.type));
+  if (!found) return null;
+  const [format, spec] = found;
+
+  const work = session.blocks.filter((b) => !isPrescribed(b) && (b.repeat ?? 1) > 1 && b.durationS);
+  const workS = work.map((b) => b.durationS as number);
+  const offences: string[] = [];
+  const window = `${formatDuration(spec.minWorkS)}-${formatDuration(spec.maxWorkS)}`;
+
+  for (const b of work) {
+    const d = b.durationS as number;
+    if (d >= spec.minWorkS && d <= spec.maxWorkS) continue;
+    offences.push(
+      `« ${b.label} » : répétitions de ${formatDuration(d)}, hors de la plage ${window} prescrite.`,
+    );
+  }
+  if (spec.hr) {
+    for (const b of work) {
+      const hr = b.hrRange;
+      if (!hr || (hr[0] >= spec.hr[0] && hr[1] <= spec.hr[1])) continue;
+      offences.push(
+        `« ${b.label} » : cible ${hr[0]}-${hr[1]} bpm, hors de la fenêtre ${spec.hr[0]}-${spec.hr[1]} bpm prescrite.`,
+      );
+    }
+  }
+  return { format, spec, workS, offences };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,10 +369,19 @@ function effectOf(
             `par semaine prescrits, absente de cette séance.`;
     case 'interval_policy': {
       const format = INTERVAL_FORMAT[s.type];
-      return format
-        ? `Le fractionné de la semaine, format ${format === 'short' ? 'court' : 'moyen'} — ` +
-            `le dossier n'en autorise qu'un, en alternant court et moyen.`
-        : describe(directive);
+      if (!format) return describe(directive);
+      const head =
+        `Le fractionné de la semaine, format ${format === 'short' ? 'court' : 'moyen'} — ` +
+        `le dossier n'en autorise qu'un, en alternant court et moyen.`;
+      // Ce que le format admet se relit sur les blocs : une séance allégée ou
+      // réécrite peut l'avoir quitté depuis que le planificateur l'a écrite.
+      const check = checkIntervalFormat(s, directive);
+      if (!check) return head;
+      const window = `${formatDuration(check.spec.minWorkS)}-${formatDuration(check.spec.maxWorkS)}`;
+      if (check.offences.length > 0) return `${head} ⚠ ${check.offences.join(' ')}`;
+      return check.workS.length > 0
+        ? `${head} Répétitions de ${formatDuration(check.workS[0] as number)}, dans la plage ${window} prescrite.`
+        : head;
     }
     case 'success_criterion':
       return describe(directive);

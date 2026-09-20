@@ -2,8 +2,11 @@ import type {
   BlockKind, EccentricMovement, PhysiologyModel, SessionBlock, StrengthCircuit, StrengthExercise,
   ZoneDefinition, ZoneKey,
 } from '@cairn/core';
-import { ECCENTRIC_MOVEMENTS, ZONE_KEYS, buildZones, formatPace } from '@cairn/physiology';
+import {
+  ECCENTRIC_MOVEMENTS, ZONE_KEYS, buildZones, formatPace, hrProvenanceOf, speedProvenanceOf,
+} from '@cairn/physiology';
 import { checkVertical, declaresDescent, describeVerdict, verticalOf } from './plausibility.js';
+import { checkReserve, describeReserve, describeShortfall } from './reserve.js';
 import { resolveClimb, sessionTotals } from './sessionLibrary.js';
 
 /**
@@ -55,16 +58,25 @@ const MAX_REPS = 200;
  * liste, et le marqueur de souplesse effacé par un remplacement de blocs, avec
  * lui la fréquence hebdomadaire que le praticien avait prescrite.
  *
- * `paceRange` est seul exclu : il est dérivé de `speedRangeMs` et ne se saisit
- * pas.
+ * `paceRange` et `provenance` sont seuls exclus : le premier est dérivé de
+ * `speedRangeMs`, le second dit d'où vient chaque cible et se déduit donc de la
+ * façon dont elle a été obtenue. Les laisser écrire, ce serait laisser annoncer
+ * « terrain » sur un nombre que personne n'a mesuré.
  */
-const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, 'paceRange'>, true> = {
+type DerivedBlockField = 'paceRange' | 'provenance';
+
+const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockField>, true> = {
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
   cadenceTargetSpm: true, recovery: true, circuit: true, notes: true,
 };
 
-const WRITABLE_RECOVERY_FIELDS: Record<keyof NonNullable<SessionBlock['recovery']>, true> = {
+type Recovery = NonNullable<SessionBlock['recovery']>;
+
+const WRITABLE_RECOVERY_FIELDS: Record<
+  Exclude<keyof Recovery, DerivedBlockField | 'hrRange' | 'speedRangeMs'>,
+  true
+> = {
   durationS: true, zone: true, active: true, elevationGainM: true, elevationLossM: true,
 };
 const WRITABLE_CIRCUIT_FIELDS: Record<keyof StrengthCircuit, true> = { rounds: true, exercises: true };
@@ -133,6 +145,18 @@ export function parseSessionBlocks(raw: unknown, model: PhysiologyModel): Sessio
         : '';
     throw new Error(`${at} : ${describeVerdict(refused)}${located}`);
   }
+
+  // Et la réserve anaérobie doit financer ce que la séance demande de tenir.
+  // Une série de répétitions au-dessus de la vitesse critique la vide à un
+  // rythme connu ; passé un certain nombre, il n'y a plus de séance. Le chemin
+  // d'écriture refuse ce qu'il ne peut pas prescrire — il ne retire pas en
+  // silence des répétitions que le coach a choisies.
+  const reserve = checkReserve(blocks, model);
+  if (!reserve.prescribable && reserve.lowAt) {
+    throw new Error(
+      `blocks[${reserve.lowAt.block}] : ${describeShortfall(reserve)} ${describeReserve(reserve)}`,
+    );
+  }
   return blocks;
 }
 
@@ -151,6 +175,11 @@ function parseBlock(
     if (BLOCK_FIELDS.has(key)) continue;
     if (key === 'paceRange') {
       throw new Error(`${at}.paceRange : l'allure en min/km est déduite de speedRangeMs, elle ne se saisit pas.`);
+    }
+    if (key === 'provenance') {
+      throw new Error(
+        `${at}.provenance : la provenance d'une cible se déduit de ce qui l'a produite, elle ne se déclare pas.`,
+      );
     }
     throw new Error(`${at}.${key} : champ inconnu.`);
   }
@@ -240,12 +269,34 @@ function parseBlock(
     const hrRange = raw.hrRange === undefined
       ? ([Math.round(z.hrMin), Math.round(z.hrMax)] as [number, number])
       : range(raw.hrRange, `${at}.hrRange`, 0, model.hrMax, true);
+    // Une zone sans plafond mesuré n'en prête pas un : Z5 s'ouvre au-delà de la
+    // VMA, et un bloc qui s'y court doit écrire la fourchette qu'il vise.
+    if (raw.speedRangeMs === undefined && z.speedMaxMs == null) {
+      throw new Error(
+        `${at}.speedRangeMs : la zone ${zone} n'a pas de borne haute de vitesse mesurée — ` +
+          `écris la fourchette visée plutôt que d'en hériter une.`,
+      );
+    }
     const speedRangeMs = raw.speedRangeMs === undefined
-      ? ([z.speedMinMs, z.speedMaxMs] as [number, number])
+      ? ([z.speedMinMs, z.speedMaxMs as number] as [number, number])
       : range(raw.speedRangeMs, `${at}.speedRangeMs`, 0, model.vmaMs * 1.5, false);
     block.hrRange = hrRange;
     block.speedRangeMs = speedRangeMs;
     block.paceRange = [formatPace(speedRangeMs[1]), formatPace(speedRangeMs[0])];
+    // Une cible qui est la bande de sa zone en porte la provenance, qu'elle ait
+    // été omise ou réécrite à l'identique — c'est la même origine. Une cible que
+    // le coach resserre ou déplace ne repose, elle, sur rien de mesuré : elle se
+    // déclare comme telle plutôt que d'emprunter la crédibilité de la bande
+    // qu'elle remplace.
+    const asBand = (r: [number, number], lo: number, hi: number) =>
+      Math.abs(r[0] - lo) < 1e-9 && Math.abs(r[1] - hi) < 1e-9;
+    block.provenance = {
+      hr: asBand(hrRange, Math.round(z.hrMin), Math.round(z.hrMax)) ? hrProvenanceOf(z) : 'default',
+      speed: asBand(speedRangeMs, z.speedMinMs, z.speedMaxMs as number)
+        ? speedProvenanceOf(z)
+        : 'default',
+      ...(vamTargetMh !== undefined ? { vam: 'default' as const } : {}),
+    };
   }
 
   if (raw.repeat !== undefined) {
@@ -258,7 +309,7 @@ function parseBlock(
     block.cadenceTargetSpm = Math.round(number(raw.cadenceTargetSpm, `${at}.cadenceTargetSpm`, 120, 240));
   }
   if (raw.recovery !== undefined) {
-    block.recovery = parseRecovery(raw.recovery, `${at}.recovery`);
+    block.recovery = parseRecovery(raw.recovery, `${at}.recovery`, zones);
   }
   if (raw.circuit !== undefined) {
     block.circuit = parseCircuit(raw.circuit, `${at}.circuit`);
@@ -269,7 +320,7 @@ function parseBlock(
   return block;
 }
 
-function parseRecovery(raw: unknown, at: string): NonNullable<SessionBlock['recovery']> {
+function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[]): Recovery {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error(`${at} : objet attendu.`);
   }
@@ -277,11 +328,22 @@ function parseRecovery(raw: unknown, at: string): NonNullable<SessionBlock['reco
   for (const key of Object.keys(r)) {
     if (!RECOVERY_FIELDS.has(key)) throw new Error(`${at}.${key} : champ inconnu.`);
   }
-  const recovery: NonNullable<SessionBlock['recovery']> = {
+  const zone = zoneKey(r.zone, `${at}.zone`);
+  const z = zones.find((x) => x.key === zone)!;
+  const recovery: Recovery = {
     durationS: Math.round(number(r.durationS, `${at}.durationS`, 1, MAX_BLOCK_DURATION_S)),
-    zone: zoneKey(r.zone, `${at}.zone`),
+    zone,
     active: r.active === undefined ? true : boolean(r.active, `${at}.active`),
   };
+  // Une récupération est un segment de la séance : elle porte ce qu'il y a à y
+  // tenir, comme les blocs. Sans cela, « récup 90 s active » s'exécute au juger,
+  // et le bilan de réserve anaérobie doit deviner la vitesse au lieu de la lire.
+  if (z.speedMaxMs != null) {
+    recovery.hrRange = [Math.round(z.hrMin), Math.round(z.hrMax)];
+    recovery.speedRangeMs = [z.speedMinMs, z.speedMaxMs];
+    recovery.paceRange = [formatPace(z.speedMaxMs), formatPace(z.speedMinMs)];
+    recovery.provenance = { hr: hrProvenanceOf(z), speed: speedProvenanceOf(z) };
+  }
   // La remontée d'une descente, la descente d'une côte : une récupération qui
   // franchit du dénivelé le déclare, et son temps se contrôle comme un autre.
   if (r.elevationGainM !== undefined) {

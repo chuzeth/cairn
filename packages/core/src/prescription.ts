@@ -81,6 +81,25 @@ export function buildDirectives(lab: LabTest, athleteNotes?: readonly string[]):
       kind: 'interval_policy',
       maxPerWeek: 1,
       alternate: ['short', 'medium'],
+      // Les deux formats sont écrits dans la même phrase que la limite, avec
+      // leurs durées de répétition et, pour le moyen, sa fenêtre de FC. Ce sont
+      // des bornes, pas des exemples : une répétition de deux minutes n'est pas
+      // un fractionné moyen abrégé, c'est un autre stimulus.
+      formats: {
+        medium: {
+          appliesTo: ['threshold'],
+          minWorkS: 3 * MIN,
+          maxWorkS: 12 * MIN,
+          hr: [171, 175],
+          origin: fromLab(verbatim(text, 'résistance dure en fractionné moyen', '171-175 bpm')),
+        },
+        short: {
+          appliesTo: ['vo2max'],
+          minWorkS: 30,
+          maxWorkS: 60,
+          origin: fromLab(verbatim(text, 'PMA en fractionné court', '30\"-30\"')),
+        },
+      },
       origin: fromLab(
         verbatim(text, 'en se limitant à un fractionné par semaine', 'en alternant court et moyen'),
       ),

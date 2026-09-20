@@ -1,9 +1,12 @@
 import type {
-  DeclaredAbsence, DecisionOrigin, PhysiologyModel, PlannedSession, SessionDecision,
+  DeclaredAbsence, DecisionOrigin, IntervalPolicyDirective, PhysiologyModel, PlannedSession,
+  SessionDecision,
 } from '@cairn/core';
 import * as db from '@cairn/db';
-import { sessionDuration } from '@cairn/core';
+import { directivesFor, sessionDuration } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
+import { indexDirectives, isIntervalSession } from './directives.js';
+import { mondayOf } from './periodization.js';
 import {
   eccentricStrengthOf, elevationGainOf, restateVert, scaledRounds, transformSession,
 } from './sessionLibrary.js';
@@ -34,6 +37,15 @@ export interface Adjustment {
   factor?: number;
   /** Facteur appliqué aux tours des circuits excentriques, sur `scale`. Absent : ils restent entiers. */
   eccentric?: number;
+  /**
+   * Facteur appliqué au nombre de répétitions, sur `scale`. Absent : c'est la
+   * durée des répétitions qui suit le facteur.
+   *
+   * Il vaut pour les fractionnés, et pour eux seuls : leur format est prescrit
+   * au dossier — 3 à 12 min pour le moyen, 30 s à 1 min pour le court — et un
+   * allègement qui raccourcit les répétitions le quitte sans le dire.
+   */
+  repeats?: number;
   newDate?: string;
   /** Absence déclarée à l'origine du retrait, sur `withdraw`. */
   absenceId?: string;
@@ -52,6 +64,31 @@ const ECCENTRIC_TYPES = new Set(['downhill', 'long_trail', 'long_run', 'race_pac
 /** Une séance qui sollicite à nouveau l'excentrique : en descendant, ou par un circuit de renforcement. */
 const carriesEccentric = (s: PlannedSession) =>
   ECCENTRIC_TYPES.has(s.type) || s.plannedMechanicalLoad >= 35 || eccentricStrengthOf(s.blocks) > 0;
+
+/**
+ * Ce qu'un allègement retire à un fractionné : des répétitions, jamais des
+ * minutes de répétition.
+ *
+ * Le compte rendu prescrit le format, pas seulement le nombre. Allégée de 55 %,
+ * une séance de 5 × 5 min au seuil voyait ses répétitions ramenées à 2 min 15 s
+ * — hors de la plage 3-12 min, et sans que ni la séance ni le journal ne le
+ * mentionnent. Ce qui cède, c'est le volume.
+ */
+function repetitionScaling(s: PlannedSession, factor: number): Pick<Adjustment, 'repeats'> {
+  return isIntervalSession(s.type) ? { repeats: factor } : {};
+}
+
+/** Ce qu'un allègement retire aux répétitions d'une séance, en clair. */
+function repsCut(s: PlannedSession, factor: number): string {
+  if (!isIntervalSession(s.type)) return '';
+  const cuts = s.blocks
+    .map((b) => b.repeat)
+    .filter((r): r is number => r != null && r > 1 && scaledRounds(r, factor) < r)
+    .map((r) => `de ${r} à ${scaledRounds(r, factor)}`);
+  return cuts.length
+    ? `, répétitions ramenées ${cuts.join(' puis ')} — le format prescrit au dossier ne se raccourcit pas`
+    : '';
+}
 
 /** Ce qu'un allègement excentrique retire aux circuits d'une séance, en clair. */
 function roundsCut(s: PlannedSession, factor: number): string {
@@ -186,10 +223,11 @@ export function evaluateAdjustments(
         date: s.date,
         action: 'scale',
         factor: 0.6,
+        ...repetitionScaling(s, 0.6),
         rule: 'mechanical_fatigue',
         reason:
           `TSB mécanique à ${state.today.mechanicalTsb.toFixed(0)} : les dégâts musculaires de la descente ne sont pas résorbés. ` +
-          `Volume de cette séance réduit de 40 % pour éviter d'empiler la contrainte excentrique.`,
+          `Volume de cette séance réduit de 40 % pour éviter d'empiler la contrainte excentrique${repsCut(s, 0.6)}.`,
       });
     }
   }
@@ -209,11 +247,12 @@ export function evaluateAdjustments(
         action: 'scale',
         factor,
         eccentric: factor,
+        ...repetitionScaling(s, factor),
         rule: 'mechanical_acwr_spike',
         reason:
           `Ratio charge aiguë/chronique excentrique à ${state.today.mechanicalAcwr.toFixed(2)} : au-delà de ` +
           `${ACWR_SPIKE.mechanical}, les tissus encaissent plus de freinage que les semaines passées ne les y ont préparés. ` +
-          `Séance allégée de 25 %${roundsCut(s, factor)}.`,
+          `Séance allégée de 25 %${roundsCut(s, factor)}${repsCut(s, factor)}.`,
       });
     }
   }
@@ -226,10 +265,11 @@ export function evaluateAdjustments(
         date: s.date,
         action: 'scale',
         factor: 0.75,
+        ...repetitionScaling(s, 0.75),
         rule: 'acwr_spike',
         reason:
           `Ratio charge aiguë/chronique à ${state.today.acwr.toFixed(2)} : au-delà de 1,5, le risque de blessure augmente nettement. ` +
-          `Les séances secondaires des cinq prochains jours sont allégées de 25 %.`,
+          `Les séances secondaires des cinq prochains jours sont allégées de 25 %${repsCut(s, 0.75)}.`,
       });
     }
   }
@@ -239,18 +279,21 @@ export function evaluateAdjustments(
     const next = future.find((s) => daysUntil(s.date) <= 1);
     if (next && next.plannedLoad > 40) {
       const factor = 0.45;
+      const change = { duration: factor, ...repetitionScaling(next, factor) };
       push({
         sessionId: next.id,
         date: next.date,
         action: 'scale',
         factor,
+        ...repetitionScaling(next, factor),
         rule: 'readiness_red',
         reason:
           `Disponibilité à ${state.readiness.score}/100. ${state.readiness.recommendation} ` +
           // La durée annoncée est celle que l'allègement produira, écrite comme
           // l'écran l'écrira. Calculée à part, elle promettait 31 min là où la
           // séance enregistrée en affichait 30, et c'est la phrase qu'on croit.
-          `Séance ramenée à ${sessionDuration(transformSession(next, factor, state.model).plannedDurationS)} en récupération.`,
+          `Séance ramenée à ${sessionDuration(transformSession(next, change, state.model).plannedDurationS)} ` +
+          `en récupération${repsCut(next, factor)}.`,
       });
     }
   }
@@ -263,16 +306,21 @@ export function evaluateAdjustments(
         date: s.date,
         action: 'scale',
         factor: 0.7,
+        ...repetitionScaling(s, 0.7),
         rule: 'ramp_too_fast',
         reason:
           `La charge chronique progresse de ${state.today.rampRate.toFixed(1)} points par semaine, au-dessus du seuil prudentiel de 8. ` +
-          `Les séances facultatives sont allégées le temps que l'adaptation suive.`,
+          `Les séances facultatives sont allégées le temps que l'adaptation suive${repsCut(s, 0.7)}.`,
       });
     }
   }
 
   // ── Règle 6 : espacement des séances de qualité ───────────────────────────
-  // Deux séances exigeantes à moins de 48 h : la seconde est repoussée.
+  // Deux séances exigeantes à moins de 48 h : la seconde est repoussée. Le jour
+  // retenu respecte en plus la politique du dossier — un seul fractionné par
+  // semaine —, sans quoi décaler d'un dimanche au lundi suivant en logeait deux
+  // dans la même semaine, et rien ne l'aurait dit.
+  const policy = intervalPolicy(state);
   const keySessions = future.filter((s) => s.priority === 'key').sort((a, b) => a.date.localeCompare(b.date));
   for (let i = 1; i < keySessions.length; i++) {
     const prev = keySessions[i - 1]!;
@@ -281,19 +329,68 @@ export function evaluateAdjustments(
       (new Date(`${cur.date}T00:00:00Z`).getTime() - new Date(`${prev.date}T00:00:00Z`).getTime()) / dayMs,
     );
     if (gap < 2) {
+      const moved = freeDateFor(cur, prev.date, future, policy);
       push({
         sessionId: cur.id,
         date: cur.date,
         action: 'move',
-        newDate: iso(new Date(new Date(`${prev.date}T00:00:00Z`).getTime() + 2 * dayMs)),
+        newDate: moved.date,
         rule: 'quality_spacing',
         reason:
-          `Deux séances clefs séparées de ${gap} jour(s). Un stimulus intense demande 48 h pour être assimilé : la seconde est décalée.`,
+          `Deux séances clefs séparées de ${gap} jour(s). Un stimulus intense demande 48 h pour être assimilé : ` +
+          `la seconde est décalée.${moved.note}`,
       });
     }
   }
 
   return out;
+}
+
+/** La politique de fractionné du dossier, quand l'athlète en a une. */
+function intervalPolicy(state: AthleteState): IntervalPolicyDirective | undefined {
+  return state.profile ? indexDirectives(directivesFor(state.profile)).intervals : undefined;
+}
+
+/**
+ * Le jour où décaler une séance clef : 48 h après la précédente, et pas dans une
+ * semaine qui porte déjà le fractionné qu'elle a le droit de porter.
+ *
+ * Quand aucun jour de la semaine suivante ne convient, le décalage a lieu quand
+ * même — l'espacement protège du risque de blessure, l'alternance ne fait
+ * qu'organiser la charge — et la phrase dit ce que la semaine porte alors.
+ */
+function freeDateFor(
+  session: PlannedSession,
+  after: string,
+  future: readonly PlannedSession[],
+  policy: IntervalPolicyDirective | undefined,
+): { date: string; note: string } {
+  const earliest = iso(new Date(midnight(after) + 2 * dayMs));
+  const perWeek = policy?.maxPerWeek ?? Infinity;
+  if (!isIntervalSession(session.type) || !Number.isFinite(perWeek)) return { date: earliest, note: '' };
+
+  const others = future.filter((s) => s.id !== session.id && isIntervalSession(s.type));
+  const carried = (week: string) => others.filter((s) => mondayOf(s.date) === week).length;
+
+  for (let d = 0; d <= 6; d++) {
+    const date = iso(new Date(midnight(earliest) + d * dayMs));
+    if (carried(mondayOf(date)) < perWeek) {
+      return {
+        date,
+        note:
+          d === 0
+            ? ''
+            : ` Reporté de ${d} jour(s) de plus : le dossier n'autorise qu'un fractionné par semaine, ` +
+              `et la semaine du ${mondayOf(earliest)} porte déjà le sien.`,
+      };
+    }
+  }
+  return {
+    date: earliest,
+    note:
+      ` ⚠ La semaine du ${mondayOf(earliest)} portera deux fractionnés, ce que le dossier n'autorise pas : ` +
+      `aucun jour des sept suivants n'en était libre.`,
+  };
 }
 
 /** Applique les ajustements et journalise la révision du plan. */
@@ -355,7 +452,7 @@ export async function applyAdjustments(
         model ??= await currentModel(athleteId);
         const { amendments, ...content } = transformSession(
           session,
-          { duration: adj.factor ?? 1, eccentric: adj.eccentric ?? 1 },
+          { duration: adj.factor ?? 1, eccentric: adj.eccentric ?? 1, repeats: adj.repeats ?? 1 },
           model,
         );
         const title =
@@ -400,7 +497,8 @@ export async function applyAdjustments(
         before: byId.get(a.sessionId)?.title ?? a.sessionId,
         after:
           a.action === 'scale'
-            ? `charge × ${a.factor}${a.eccentric != null ? `, tours excentriques × ${a.eccentric}` : ''}`
+            ? `charge × ${a.factor}${a.eccentric != null ? `, tours excentriques × ${a.eccentric}` : ''}` +
+              `${a.repeats != null ? `, répétitions × ${a.repeats}` : ''}`
             : a.action === 'move'
               ? `déplacée au ${a.newDate}`
               : a.action === 'withdraw'

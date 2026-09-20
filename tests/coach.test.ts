@@ -92,14 +92,18 @@ describe('Bibliothèque de séances', () => {
     const work = s.blocks.find((b) => b.zone === 'Z4');
     expect(work).toBeDefined();
     const [lo, hi] = work!.speedRangeMs!;
-    // Le seuil 2 est à 16,8 km/h : les répétitions doivent être juste au-dessus.
-    expect(msToKmh(lo)).toBeGreaterThan(16.8);
-    expect(msToKmh(hi)).toBeLessThan(17.6);
+    // Le domaine sévère commence à la vitesse critique, pas au SV2 : le moteur
+    // tire le second du premier en le divisant par 1,02, et une répétition calée
+    // sous l'asymptote n'entame pas la réserve — ce n'est pas du seuil.
+    expect(lo).toBeGreaterThan(model.criticalSpeedMs);
+    expect(msToKmh(hi)).toBeLessThan(msToKmh(model.criticalSpeedMs) * 1.05);
+    // La bande de FC, elle, reste celle du compte rendu.
     expect(work!.hrRange![0]).toBe(171);
+    expect(work!.hrRange![1]).toBe(175);
   });
 
   it('suit le modèle quand la vitesse critique évolue', () => {
-    const fitter = { ...model, vt2: { ...model.vt2, speedMs: model.vt2.speedMs * 1.05 } };
+    const fitter = { ...model, criticalSpeedMs: model.criticalSpeedMs * 1.05 };
     const before = lib.threshold(model, 5, 5).blocks.find((b) => b.zone === 'Z4')!.speedRangeMs![0];
     const after = lib.threshold(fitter, 5, 5).blocks.find((b) => b.zone === 'Z4')!.speedRangeMs![0];
     expect(after).toBeGreaterThan(before * 1.04);
@@ -107,10 +111,14 @@ describe('Bibliothèque de séances', () => {
 
   it('cible la PMA au-dessus de la VMA sur le fractionné court', () => {
     const s = lib.vo2max(model, '30-30', 2, 10);
-    const work = s.blocks.find((b) => b.zone === 'Z5')!;
-    expect(work.durationS).toBe(30);
-    expect(work.repeat).toBe(20);
-    expect(msToKmh(work.speedRangeMs![0])).toBeGreaterThan(msToKmh(model.vmaMs) * 1.03);
+    // Deux séries, deux blocs, et la pause de quatre minutes entre eux : elle
+    // était une phrase dans les notes, donc invisible à la charge comme au
+    // bilan de réserve anaérobie.
+    const series = s.blocks.filter((b) => b.zone === 'Z5');
+    expect(series).toHaveLength(2);
+    expect(series.every((b) => b.durationS === 30)).toBe(true);
+    expect(s.blocks.some((b) => b.label.startsWith('Pause entre séries'))).toBe(true);
+    expect(msToKmh(series[0]!.speedRangeMs![0])).toBeGreaterThan(msToKmh(model.vmaMs) * 1.03);
   });
 
   it('donne une vitesse ascensionnelle cible en côte', () => {
@@ -455,6 +463,11 @@ describe('Règles d\'ajustement automatique', () => {
       today: { date: '2026-09-01', ctl: 50, atl: 55, tsb: -5, mechanicalTsb: 0, acwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
       readiness: { date: '2026-09-01', score: 75, verdict: 'green', components: {}, recommendation: '' },
       absences: [],
+      // Un état sans modèle n'existe pas en production : les règles de charge
+      // annoncent la durée qu'un allègement produira, et c'est le modèle qui la
+      // calcule.
+      model,
+      profile: PIERRE,
       ...over,
     }) as never;
 
@@ -822,7 +835,9 @@ describe('Remplacement du contenu d\'une séance', () => {
     // le `kind` de son bloc de souplesse. Un aller-retour ne doit rien perdre —
     // seul `paceRange` s'en va, parce qu'il se déduit et se refait.
     const avant = lib.strength(model, 2).blocks;
-    const ecrit = avant.map(({ paceRange, ...reste }) => reste as Record<string, unknown>);
+    const ecrit = avant.map(
+      ({ paceRange, provenance, ...reste }) => reste as Record<string, unknown>,
+    );
     const apres = lib.parseSessionBlocks(ecrit, model);
     expect(apres).toEqual(avant);
     expect(apres.filter((b) => b.kind === 'mobility')).toHaveLength(1);

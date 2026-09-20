@@ -95,6 +95,35 @@ export function circuitText(c: NonNullable<SessionRow['blocks'][number]['circuit
   return `${c.rounds} tour${c.rounds > 1 ? 's' : ''} : ${items.join(' · ')}.`;
 }
 
+/**
+ * D'où vient une cible, dit court.
+ *
+ * Une FC, une allure, une vitesse ascensionnelle sont des paramètres
+ * physiologiques dès lors qu'on demande à l'athlète de les tenir : elles
+ * s'affichent avec leur provenance, comme la vitesse critique sur l'écran de
+ * physiologie. Sans elle, « 171-175 bpm » et « 13,6-14,0 km/h » se lisent du
+ * même œil alors que l'un est une mesure de laboratoire et l'autre la sortie
+ * d'une régression.
+ */
+export const PROVENANCE_SHORT: Record<string, string> = {
+  lab: 'labo', field: 'terrain', blended: 'labo + terrain', default: 'par défaut',
+};
+
+/** La provenance des cibles d'un bloc, en un mot quand elles s'accordent. */
+export function provenanceText(p: SessionRow['blocks'][number]['provenance']): string {
+  if (!p) return '';
+  const parts = [
+    ['FC', p.hr],
+    ['allure', p.speed],
+    ['D+/h', p.vam],
+  ].filter(([, v]) => v) as [string, string][];
+  if (parts.length === 0) return '';
+  const unique = [...new Set(parts.map(([, v]) => v))];
+  return unique.length === 1
+    ? (PROVENANCE_SHORT[unique[0] as string] as string)
+    : parts.map(([k, v]) => `${k} ${PROVENANCE_SHORT[v] ?? v}`).join(' · ');
+}
+
 /** Nomme le document d'où l'extrait est tiré, et sa date. */
 export function originLabel(o: DirectiveOriginRow): string {
   const what =

@@ -1,8 +1,6 @@
 import type { ParameterProvenance, PhysiologyModel, SessionBlock, SessionType } from '@cairn/core';
-import { sessionDuration } from '@cairn/core';
-import {
-  verticalCapacity, weakestProvenance, type VerticalBound, type VerticalCapacity,
-} from '@cairn/physiology';
+import { PROVENANCE_FR, sessionDuration, weakestProvenance } from '@cairn/core';
+import { verticalCapacity, type VerticalBound, type VerticalCapacity } from '@cairn/physiology';
 
 /**
  * Plausibilité verticale d'une séance.
@@ -73,13 +71,6 @@ export const PRESCRIPTION_MARGIN = 0.1;
 
 /** Une seconde d'arrondi ne rend pas une séance impossible. */
 const TOLERANCE_S = 1;
-
-export const PROVENANCE_FR: Record<ParameterProvenance, string> = {
-  lab: 'laboratoire',
-  field: 'terrain',
-  blended: 'mixte',
-  default: 'valeur par défaut',
-};
 
 const isRunning = (b: SessionBlock) => !b.kind && !b.circuit;
 const hasVertical = (b: SessionBlock) =>

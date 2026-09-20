@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   LAB_TEST_2025_07_24, PIERRE, courseFromLapFormat, describeLapFormat, isLapCourse, lapsForHours,
+  weakestProvenance,
   type DailyCheckIn, type LapFormat, type PlannedSession, type PmcSeries,
 } from '@cairn/core';
 import {
@@ -17,7 +18,8 @@ import {
   matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
   eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
   type ReadinessDay, ACWR_SPIKE, analyzeDurability, buildPmcSeries, durabilityFactor,
-  projectLoadRatios, type DurabilitySample, predictLapRace,
+  projectLoadRatios, type DurabilitySample, predictLapRace, describeZone, zoneForGradedSpeed,
+  wPrimeAfter,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -86,10 +88,31 @@ describe('Zones — fidélité au compte rendu du laboratoire', () => {
   });
 
   it('reproduit les bornes de vitesse prescrites', () => {
-    expect(msToKmh(z('Z1').speedMaxMs)).toBeCloseTo(10.8, 1);
-    expect(msToKmh(z('Z2').speedMaxMs)).toBeCloseTo(13.2, 1);
-    expect(msToKmh(z('Z3').speedMaxMs)).toBeCloseTo(16.8, 1);
-    expect(msToKmh(z('Z4').speedMaxMs)).toBeCloseTo(20.0, 1);
+    expect(msToKmh(z('Z1').speedMaxMs as number)).toBeCloseTo(10.8, 1);
+    expect(msToKmh(z('Z2').speedMaxMs as number)).toBeCloseTo(13.2, 1);
+    expect(msToKmh(z('Z3').speedMaxMs as number)).toBeCloseTo(16.8, 1);
+    expect(msToKmh(z('Z4').speedMaxMs as number)).toBeCloseTo(20.0, 1);
+  });
+
+  it('laisse Z5 ouverte plutôt que de lui inventer un plafond', () => {
+    // Le plafond valait 1,3 × VMA — 26 km/h ici, 23,44 sur le modèle de terrain.
+    // Aucune mesure ne le fonde, et il bornait pourtant le classement des séances.
+    expect(z('Z5').speedMaxMs).toBeNull();
+    expect(z('Z5').provenance.speedMax).toBeUndefined();
+    expect(describeZone(z('Z5'))).toContain('au-delà de 20.0 km/h');
+    expect(zoneForGradedSpeed(kmhToMs(30), zones)).toBe('Z5');
+  });
+
+  it('porte la provenance de chaque borne, et dégrade celle du plancher de Z4', () => {
+    expect(z('Z2').provenance.speedMax).toBe(model.provenance['vt1.speedMs']);
+    expect(z('Z5').provenance.hrMax).toBe(model.provenance.hrMax);
+    // Le SV2 vaut la vitesse critique divisée par 1,02 : le plancher de la
+    // résistance dure est sous l'asymptote, donc ne mesure pas le début du
+    // domaine sévère. Il ne vaut pas mieux que le plus faible des deux.
+    expect(model.vt2.speedMs).toBeLessThan(model.criticalSpeedMs);
+    expect(z('Z4').provenance.speedMin).toBe(
+      weakestProvenance(model.provenance['vt2.speedMs']!, model.provenance.criticalSpeedMs),
+    );
   });
 
   it('restitue les seuils du test sans les déformer', () => {

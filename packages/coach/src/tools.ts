@@ -9,8 +9,9 @@ import {
 import * as db from '@cairn/db';
 import {
   ACWR_SPIKE, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration,
-  formatPace, goalProbability, interpretAcwr, interpretDurability, msToKmh, predictLapRace,
-  predictRace, quantile, summarizeForCoach, targetRaceDayTsb, verticalCapacity,
+  formatPace, goalProbability, hrProvenanceOf, interpretAcwr, interpretDurability, msToKmh,
+  predictLapRace, predictRace, quantile, speedProvenanceOf, summarizeForCoach, targetRaceDayTsb,
+  verticalCapacity,
   type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
@@ -19,6 +20,7 @@ import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
 import { describeOrigin, type PlanCarryOver } from './preserve.js';
 import { PRESCRIPTION_MARGIN } from './plausibility.js';
+import { checkReserve, describeRecoveries, describeReserve } from './reserve.js';
 import {
   CLIMB_BREAK_M, CLIMB_MIN_GAIN_M, CLIMB_MIN_GRADE, HOME_GROUND_RADIUS_M, SAME_START_M,
   detectClimbs, groupRecurring, homeGrounds,
@@ -617,8 +619,17 @@ export async function executeTool(
             nom: z.label,
             objectif: z.purpose,
             fc: [Math.round(z.hrMin), Math.round(z.hrMax)],
-            vitesse_kmh: [round2(msToKmh(z.speedMinMs)), round2(msToKmh(z.speedMaxMs))],
-            allure_min_km: [formatPace(z.speedMaxMs), formatPace(z.speedMinMs)],
+            // Borne haute nulle : la zone est ouverte. Z5 valait 1,3 × VMA,
+            // c'est-à-dire un plafond que rien n'a mesuré.
+            vitesse_kmh: [
+              round2(msToKmh(z.speedMinMs)),
+              z.speedMaxMs == null ? null : round2(msToKmh(z.speedMaxMs)),
+            ],
+            allure_min_km: [
+              z.speedMaxMs == null ? null : formatPace(z.speedMaxMs),
+              formatPace(z.speedMinMs),
+            ],
+            provenance: { fc: hrProvenanceOf(z), vitesse: speedProvenanceOf(z) },
             resume: describeZone(z),
           })),
         },
@@ -811,6 +822,10 @@ export async function executeTool(
     }
 
     case 'get_plan': {
+      // Le modèle seul, pas l'état complet : ce qu'on en tire — ce que la séance
+      // demande à la réserve anaérobie — ne dépend ni de la forme du jour ni de
+      // la disponibilité.
+      const model = await currentModel(athleteId);
       const from = arg<string>(input, 'from') ?? iso(new Date());
       const weeks = arg<number>(input, 'weeks') ?? 3;
       const detailed = arg<boolean>(input, 'detailed') ?? false;
@@ -889,6 +904,11 @@ export async function executeTool(
                   date_document: d.origin.date,
                 }))
               : null,
+            // Ce que la séance demande à la réserve anaérobie, et ce que chaque
+            // récupération en rend. Une récupération se juge sur ce qu'elle
+            // recharge, pas sur sa durée : 90 s rendent tout après une
+            // répétition au seuil et le cinquième après une répétition en PMA.
+            ...reserveReport(s, model),
             ...(detailed ? { detail: renderSession(s) } : {}),
           })),
         },
@@ -1790,6 +1810,31 @@ function mechanicalBlindSpot(s: PlannedSession): Record<string, unknown> {
       `${ecc} des ${s.plannedMechanicalLoad} points viennent du renforcement excentrique, qui n'est dans aucun ` +
       `flux d'activité. Le réalisé mesuré affichera 0 sur cette part quoi qu'il arrive : c'est une cécité de la ` +
       `mesure, pas une séance non faite. Le reste est du dénivelé négatif couru, que le réalisé confirmera.`,
+  };
+}
+
+/**
+ * Ce que la séance demande à la réserve anaérobie.
+ *
+ * Renvoie un objet vide quand elle ne la sollicite pas : un footing n'a rien à
+ * déclarer. Quand elle la sollicite, le coach lit ce que chaque répétition
+ * coûte et ce que sa récupération rend — les deux nombres dont se déduit le
+ * nombre de répétitions tenables, et que ni la durée ni la charge ne donnent.
+ */
+function reserveReport(s: PlannedSession, model: PhysiologyModel): Record<string, unknown> {
+  const check = checkReserve(s.blocks, model);
+  if (!check.lowAt) return {};
+  return {
+    reserve_anaerobie: {
+      d_prime_m: check.dPrimeM,
+      plus_bas_m: check.lowM,
+      marge_exigee_m: Math.round(check.reserveM),
+      executable: check.feasible,
+      prescriptible: check.prescribable,
+      provenance: check.provenance,
+      resume: describeReserve(check),
+      recuperations: describeRecoveries(check),
+    },
   };
 }
 

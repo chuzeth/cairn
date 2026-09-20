@@ -153,6 +153,19 @@ export default function PhysiologyPage() {
 
       <div className="grid grid-2" style={{ marginBottom: 14 }}>
         <Card title="Zones d'entraînement" hint="Calibrées sur tes seuils actuels — elles évoluent avec toi.">
+          {/* Le moteur tire le SV2 de la vitesse critique en la divisant par 1,02 :
+              le bas de Z4 est donc toujours sous l'asymptote, c'est-à-dire à une
+              intensité qui a un état stable. La grille reste celle du compte
+              rendu ; ce que le plancher ne dit pas est dit ici, et les séances de
+              seuil se calent sur la vitesse critique, pas sur lui. */}
+          {state.zones.some((z) => z.key === 'Z4' && z.speedMinKmh < m.criticalSpeedKmh) && (
+            <p className="tiny muted" style={{ marginTop: 0 }}>
+              Le plancher de Z4 ({state.zones.find((z) => z.key === 'Z4')!.speedMinKmh.toFixed(1)} km/h)
+              passe sous ta vitesse critique ({m.criticalSpeedKmh.toFixed(1)} km/h) : c’est la grille de ton
+              compte rendu, qui la fixe au SV2. En dessous de la vitesse critique l’effort a un état stable —
+              les séances de seuil se calent donc sur elle, pas sur ce plancher.
+            </p>
+          )}
           <table>
             <thead><tr><th>Zone</th><th>Objectif</th><th className="right">FC</th><th className="right">Allure</th></tr></thead>
             <tbody>
@@ -172,7 +185,17 @@ export default function PhysiologyPage() {
                     {z.hrMin > 0 ? `${Math.round(z.hrMin)} – ${Math.round(z.hrMax)}` : `< ${Math.round(z.hrMax)}`}
                   </td>
                   <td className="right mono tiny">
-                    {z.speedMinKmh > 0 ? `${z.paceMin} – ${z.paceMax}` : `> ${z.paceMin}`}
+                    {/* Et la dernière n'a pas de borne haute que quoi que ce soit de
+                        mesuré fonde : elle valait 1,3 × VMA, soit 23,4 km/h pour une
+                        VMA estimée à 18,0. Une zone ouverte se dit ouverte. */}
+                    {z.paceMin == null
+                      ? `< ${z.paceMax}`
+                      : z.speedMinKmh > 0
+                        ? `${z.paceMin} – ${z.paceMax}`
+                        : `> ${z.paceMin}`}
+                    <div className="tiny faint" style={{ marginTop: 2 }}>
+                      {PROVENANCE_LABEL[z.speedProvenance] ?? z.speedProvenance}
+                    </div>
                   </td>
                 </tr>
               ))}

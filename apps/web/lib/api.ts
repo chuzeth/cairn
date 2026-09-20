@@ -290,8 +290,11 @@ export interface StateResponse {
   };
   zones: {
     key: string; label: string; purpose: string;
-    hrMin: number; hrMax: number; speedMinKmh: number; speedMaxKmh: number;
-    paceMin: string; paceMax: string;
+    hrMin: number; hrMax: number; speedMinKmh: number;
+    /** `null` quand rien de mesuré ne ferme le haut de la zone : elle est ouverte. */
+    speedMaxKmh: number | null; paceMin: string | null; paceMax: string;
+    /** D'où viennent les bornes. Une borne affichée sans provenance est un bug. */
+    speedProvenance: string; hrProvenance: string;
   }[];
   today: {
     date: string; ctl: number; atl: number; tsb: number; mechanicalTsb: number;
@@ -450,8 +453,19 @@ export interface SessionRow {
     elevationGainM?: number; elevationLossM?: number;
     hrRange?: [number, number]; paceRange?: [string, string]; vamTargetMh?: number;
     cadenceTargetSpm?: number; notes?: string;
-    /** La récupération porte son propre dénivelé : la redescente d'une côte, la remontée d'une descente. */
-    recovery?: { durationS: number; zone: string; active: boolean; elevationGainM?: number; elevationLossM?: number };
+    /** D'où vient chaque cible du bloc. */
+    provenance?: { hr?: string; speed?: string; vam?: string };
+    /**
+     * La récupération porte son propre dénivelé — la redescente d'une côte, la
+     * remontée d'une descente — et ses propres cibles : « récup 90 s active »
+     * ne s'exécute pas.
+     */
+    recovery?: {
+      durationS: number; zone: string; active: boolean;
+      elevationGainM?: number; elevationLossM?: number;
+      hrRange?: [number, number]; paceRange?: [string, string];
+      provenance?: { hr?: string; speed?: string; vam?: string };
+    };
     /** Contenu excentrique du bloc : c'est lui qui porte la charge mécanique. */
     circuit?: { rounds: number; exercises: { movement: string; reps: number }[] };
   }[];

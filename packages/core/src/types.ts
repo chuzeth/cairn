@@ -143,12 +143,44 @@ export interface CadenceDirective extends DirectiveBase {
   maxSpm: number;
 }
 
-/** Politique de fractionné : combien par semaine, et dans quel ordre. */
+export type IntervalFormat = 'short' | 'medium';
+
+/**
+ * Ce qu'un format de fractionné admet, tel que le document l'écrit.
+ *
+ * « Fractionné moyen 3-12 min à 171-175 bpm » n'est pas une indication : c'est
+ * une borne. Tant qu'elle n'existait nulle part dans le code, la bibliothèque
+ * pouvait proposer des répétitions de n'importe quelle longueur et un
+ * allègement les raccourcir à 2 min 15 s sans que rien ne s'en aperçoive.
+ */
+export interface IntervalFormatSpec {
+  /**
+   * Types de séance que ce format borne.
+   *
+   * Tous les fractionnés ne sont pas décrits par le document. Le compte rendu
+   * donne les durées du fractionné court *en PMA* — 1'-1' ou 30"-30" — et range
+   * le fractionné court *en montée* parmi les objectifs de Z4 sans lui fixer de
+   * durée. Les côtes occupent le créneau court de l'alternance ; leur appliquer
+   * la fenêtre de la PMA leur opposerait une borne que personne n'a écrite.
+   */
+  appliesTo: SessionType[];
+  /** Durée d'une répétition, s. */
+  minWorkS: number;
+  maxWorkS: number;
+  /** Fenêtre de FC prescrite, bpm — quand le document la donne. */
+  hr?: [number, number];
+  /** Extrait littéral qui porte ce format. */
+  origin: DirectiveOrigin;
+}
+
+/** Politique de fractionné : combien par semaine, dans quel ordre, et sous quelle forme. */
 export interface IntervalPolicyDirective extends DirectiveBase {
   kind: 'interval_policy';
   maxPerWeek: number;
   /** Formats alternés, dans l'ordre où ils se succèdent. */
-  alternate: ('short' | 'medium')[];
+  alternate: IntervalFormat[];
+  /** Bornes de chaque format. Un format absent n'est borné par rien. */
+  formats: Partial<Record<IntervalFormat, IntervalFormatSpec>>;
 }
 
 export type TrainingDirective =
@@ -416,6 +448,21 @@ export interface Activity {
 
 export type ZoneKey = 'Z1' | 'Z2' | 'Z3' | 'Z4' | 'Z5';
 
+/**
+ * Provenance des bornes d'une zone.
+ *
+ * Une borne absente n'est pas une borne sans provenance : c'est une borne qui
+ * n'existe pas. Z1 n'a pas de plancher, Z5 n'a pas de plafond de vitesse que
+ * quoi que ce soit de mesuré fonde — et une zone ouverte se dit ouverte plutôt
+ * que de se fermer sur un nombre que personne n'a vu.
+ */
+export interface ZoneBoundProvenance {
+  hrMin?: ParameterProvenance;
+  hrMax: ParameterProvenance;
+  speedMin?: ParameterProvenance;
+  speedMax?: ParameterProvenance;
+}
+
 export interface ZoneDefinition {
   key: ZoneKey;
   label: string;
@@ -425,7 +472,13 @@ export interface ZoneDefinition {
   hrMax: number;
   /** Vitesse à plat équivalente, m/s. */
   speedMinMs: number;
-  speedMaxMs: number;
+  /**
+   * Borne haute de vitesse, m/s. `null` quand rien de mesuré ne la borne : la
+   * zone est ouverte vers le haut, et se lit « au-delà de ».
+   */
+  speedMaxMs: number | null;
+  /** D'où vient chaque borne. Une borne affichée sans provenance est un bug. */
+  provenance: ZoneBoundProvenance;
 }
 
 export interface ZoneDistribution {
@@ -885,6 +938,25 @@ export interface StrengthCircuit {
   exercises: StrengthExercise[];
 }
 
+/**
+ * D'où vient chaque cible d'un segment prescrit.
+ *
+ * Une fréquence cardiaque, une allure, une vitesse ascensionnelle sont des
+ * paramètres physiologiques dès lors qu'on demande à l'athlète de les tenir :
+ * elles portent leur provenance comme les autres. Sans elle, « 171-175 bpm »
+ * et « 16,9-17,4 km/h » se lisent du même œil, alors que la première est la
+ * mesure d'un laboratoire et la seconde l'extrapolation d'une régression sur
+ * quinze séances.
+ *
+ * Une entrée absente signifie que le segment ne porte pas cette cible, jamais
+ * qu'elle est sans origine.
+ */
+export interface TargetProvenance {
+  hr?: ParameterProvenance;
+  speed?: ParameterProvenance;
+  vam?: ParameterProvenance;
+}
+
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */
 export interface SessionBlock {
   label: string;
@@ -917,6 +989,8 @@ export interface SessionBlock {
   /** Vitesse ascensionnelle cible, m/h, pour les blocs en côte. */
   vamTargetMh?: number;
   cadenceTargetSpm?: number;
+  /** D'où viennent les cibles du bloc. */
+  provenance?: TargetProvenance;
   /**
    * Récupération suivant chaque répétition. Elle porte son propre dénivelé
    * quand elle en a un : la remontée d'une descente, la descente d'une côte.
@@ -927,6 +1001,18 @@ export interface SessionBlock {
     active: boolean;
     elevationGainM?: number;
     elevationLossM?: number;
+    /**
+     * Ce qu'il y a à tenir pendant la récupération.
+     *
+     * « Récup 90 s active » n'est pas exécutable : l'athlète ne sait pas à quoi
+     * trottiner, et le moteur devinait — 2,4 m/s en dur, quelle que soit la
+     * zone écrite juste à côté. Une récupération se juge sur ce qu'elle
+     * recharge, donc sur la vitesse à laquelle elle se court.
+     */
+    hrRange?: [number, number];
+    speedRangeMs?: [number, number];
+    paceRange?: [string, string];
+    provenance?: TargetProvenance;
   };
   /**
    * Contenu excentrique du bloc, quand il y en a.

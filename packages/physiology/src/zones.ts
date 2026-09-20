@@ -1,4 +1,7 @@
-import type { PhysiologyModel, ZoneDefinition, ZoneDistribution, ZoneKey } from '@cairn/core';
+import type {
+  ParameterProvenance, PhysiologyModel, ZoneBoundProvenance, ZoneDefinition, ZoneDistribution, ZoneKey,
+} from '@cairn/core';
+import { PROVENANCE_FR, weakestProvenance } from '@cairn/core';
 import { clamp, msToKmh } from './units.js';
 
 export const ZONE_KEYS: ZoneKey[] = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
@@ -34,36 +37,103 @@ const ZONE_META: Record<ZoneKey, { label: string; purpose: string }> = {
 /**
  * Construit les cinq zones à partir des seuils mesurés.
  *
- * Les coefficients sont calibrés pour reproduire exactement la prescription du
- * Centre de Médecine du Sport (Z1/Z2 à 0,91 × FC_SV1 et 0,82 × v_SV1 ;
- * Z4 à 1,023 × FC_SV2) : l'athlète retrouve dans l'app les chiffres de son
- * compte rendu, et le moteur les fait évoluer avec lui.
+ * Les coefficients sont calibrés pour reproduire la prescription du Centre de
+ * Médecine du Sport (Z1/Z2 à 0,91 × FC_SV1 et 0,82 × v_SV1 ; Z4 à
+ * 1,023 × FC_SV2) : l'athlète retrouve dans l'app les chiffres de son compte
+ * rendu, et le moteur les fait évoluer avec lui.
+ *
+ * Chaque borne porte la provenance du paramètre dont elle est tirée. Deux
+ * conséquences, qui ne sont pas cosmétiques.
+ *
+ * Z5 n'a plus de plafond de vitesse. Il valait 1,3 × VMA, c'est-à-dire
+ * 23,44 km/h pour une VMA estimée à 18,03 : un nombre que ni le laboratoire ni
+ * le terrain n'ont jamais produit, et qui bornait pourtant le classement des
+ * séances. Une zone dont rien de mesuré ne ferme le haut se lit « au-delà de la
+ * VMA » ; la lecture est moins précise, elle est vraie.
+ *
+ * Le plancher de la résistance dure, lui, reste le SV2 : c'est la grille du
+ * compte rendu, et la déplacer priverait l'athlète des chiffres qu'il y
+ * retrouve. Mais le moteur tire le SV2 de la vitesse critique en la divisant
+ * par 1,02 : ce plancher est donc, par construction, sous l'asymptote au-dessus
+ * de laquelle un effort cesse d'avoir un état stable. Il ne mesure pas le début
+ * du domaine sévère, et sa provenance est celle des deux paramètres, la plus
+ * faible — tant qu'elle disait « mixte » sans rien de plus, la séance de seuil
+ * s'y calait et prescrivait 13,55-14,03 km/h autour d'une vitesse critique à
+ * 13,98 (cf. `threshold` dans `sessionLibrary.ts`).
  */
 export function buildZones(model: PhysiologyModel): ZoneDefinition[] {
-  const { vt1, vt2, hrMax, vmaMs } = model;
+  const { vt1, vt2, hrMax, vmaMs, criticalSpeedMs } = model;
+  const p = (key: string): ParameterProvenance => model.provenance?.[key] ?? 'default';
   const z1HiHr = Math.round(0.91 * vt1.hr);
   const z1HiV = 0.82 * vt1.speedMs;
   const z4HiHr = Math.round(1.023 * vt2.hr);
-  // Bornes hautes de Z4 en vitesse : on prend la VMA comme frontière de Z5.
-  const z4HiV = vmaMs;
+  // Frontière Z3/Z4 : le SV2, comme au compte rendu. Quand il passe sous la
+  // vitesse critique — ce que la construction du modèle produit toujours —, la
+  // borne ne situe plus le début du domaine sévère, et elle ne vaut pas mieux
+  // que le plus faible des deux paramètres qui se contredisent.
+  const vt2Speed = vt2.speedMs;
+  const vt2SpeedProvenance =
+    vt2Speed < criticalSpeedMs
+      ? weakestProvenance(p('vt2.speedMs'), p('criticalSpeedMs'))
+      : p('vt2.speedMs');
 
-  const bands: Array<[ZoneKey, number, number, number, number]> = [
-    ['Z1', 0, z1HiHr, 0, z1HiV],
-    ['Z2', z1HiHr, vt1.hr, z1HiV, vt1.speedMs],
-    ['Z3', vt1.hr, vt2.hr, vt1.speedMs, vt2.speedMs],
-    ['Z4', vt2.hr, z4HiHr, vt2.speedMs, z4HiV],
-    ['Z5', z4HiHr, hrMax, z4HiV, vmaMs * 1.3],
+  const bands: Array<{
+    key: ZoneKey;
+    hrMin: number;
+    hrMax: number;
+    speedMinMs: number;
+    speedMaxMs: number | null;
+    provenance: ZoneBoundProvenance;
+  }> = [
+    {
+      key: 'Z1', hrMin: 0, hrMax: z1HiHr, speedMinMs: 0, speedMaxMs: z1HiV,
+      provenance: { hrMax: p('vt1.hr'), speedMax: p('vt1.speedMs') },
+    },
+    {
+      key: 'Z2', hrMin: z1HiHr, hrMax: vt1.hr, speedMinMs: z1HiV, speedMaxMs: vt1.speedMs,
+      provenance: {
+        hrMin: p('vt1.hr'), hrMax: p('vt1.hr'),
+        speedMin: p('vt1.speedMs'), speedMax: p('vt1.speedMs'),
+      },
+    },
+    {
+      key: 'Z3', hrMin: vt1.hr, hrMax: vt2.hr, speedMinMs: vt1.speedMs, speedMaxMs: vt2Speed,
+      provenance: {
+        hrMin: p('vt1.hr'), hrMax: p('vt2.hr'),
+        speedMin: p('vt1.speedMs'), speedMax: vt2SpeedProvenance,
+      },
+    },
+    {
+      key: 'Z4', hrMin: vt2.hr, hrMax: z4HiHr, speedMinMs: vt2Speed, speedMaxMs: vmaMs,
+      provenance: {
+        hrMin: p('vt2.hr'), hrMax: p('vt2.hr'),
+        speedMin: vt2SpeedProvenance, speedMax: p('vmaMs'),
+      },
+    },
+    {
+      key: 'Z5', hrMin: z4HiHr, hrMax, speedMinMs: vmaMs, speedMaxMs: null,
+      provenance: { hrMin: p('vt2.hr'), hrMax: p('hrMax'), speedMin: p('vmaMs') },
+    },
   ];
 
-  return bands.map(([key, hrMin, hrMaxB, sMin, sMax]) => ({
-    key,
-    label: ZONE_META[key].label,
-    purpose: ZONE_META[key].purpose,
-    hrMin,
-    hrMax: hrMaxB,
-    speedMinMs: sMin,
-    speedMaxMs: sMax,
+  return bands.map((b) => ({
+    ...b,
+    label: ZONE_META[b.key].label,
+    purpose: ZONE_META[b.key].purpose,
   }));
+}
+
+/** Provenance des deux bornes de vitesse d'une zone : la plus faible des deux. */
+export function speedProvenanceOf(z: ZoneDefinition): ParameterProvenance {
+  const { speedMin, speedMax } = z.provenance;
+  return speedMin || speedMax
+    ? weakestProvenance((speedMin ?? speedMax) as ParameterProvenance, speedMax)
+    : 'default';
+}
+
+/** Provenance des deux bornes de FC d'une zone : la plus faible des deux. */
+export function hrProvenanceOf(z: ZoneDefinition): ParameterProvenance {
+  return weakestProvenance(z.provenance.hrMax, z.provenance.hrMin);
 }
 
 /** Zone correspondant à une fréquence cardiaque. */
@@ -74,7 +144,9 @@ export function zoneForHr(hr: number, zones: ZoneDefinition[]): ZoneKey {
 
 /** Zone correspondant à une vitesse corrigée de la pente. */
 export function zoneForGradedSpeed(speedMs: number, zones: ZoneDefinition[]): ZoneKey {
-  for (const z of zones) if (speedMs < z.speedMaxMs) return z.key;
+  // Une zone sans plafond ne recale rien : elle attrape tout ce qui tombe au-delà
+  // de la dernière borne fermée, ce que fait déjà le repli.
+  for (const z of zones) if (z.speedMaxMs != null && speedMs < z.speedMaxMs) return z.key;
   return 'Z5';
 }
 
@@ -138,12 +210,23 @@ export function polarizationIndex(low: number, moderate: number, high: number): 
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
-/** Représentation lisible d'une zone, telle qu'affichée à l'athlète. */
+/**
+ * Représentation lisible d'une zone, telle qu'affichée à l'athlète.
+ *
+ * La provenance des bornes de vitesse y figure : c'est le seul endroit où le
+ * chat et le serveur MCP lisent une zone, et une borne dont on ne sait pas si
+ * elle est mesurée se croit mesurée.
+ */
 export function describeZone(z: ZoneDefinition): string {
   const kmh = (ms: number) => `${msToKmh(ms).toFixed(1)} km/h`;
   const hr = z.hrMin <= 0 ? `< ${Math.round(z.hrMax)} bpm` : `${Math.round(z.hrMin)}-${Math.round(z.hrMax)} bpm`;
-  const speed = z.speedMinMs <= 0 ? `< ${kmh(z.speedMaxMs)}` : `${kmh(z.speedMinMs)} - ${kmh(z.speedMaxMs)}`;
-  return `${z.key} · ${z.label} — ${hr} · ${speed}`;
+  const speed =
+    z.speedMaxMs == null
+      ? `au-delà de ${kmh(z.speedMinMs)}`
+      : z.speedMinMs <= 0
+        ? `< ${kmh(z.speedMaxMs)}`
+        : `${kmh(z.speedMinMs)} - ${kmh(z.speedMaxMs)}`;
+  return `${z.key} · ${z.label} — ${hr} · ${speed} (${PROVENANCE_FR[speedProvenanceOf(z)]})`;
 }
 
 /**

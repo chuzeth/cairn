@@ -119,9 +119,46 @@ export function timeToExhaustion(cs: number, dPrime: number, speedMs: number): n
 }
 
 /**
- * Bilan de D' au fil de l'effort (« W'bal »), forme différentielle de
- * Froncioni-Skiba : la réserve se vide proportionnellement au dépassement de CS
- * et se recharge d'autant plus vite qu'on est loin en dessous.
+ * Plancher du bilan : au-delà, la réserve n'est plus une réserve.
+ *
+ * Elle descend un peu sous zéro parce que le modèle est un ajustement, pas une
+ * comptabilité exacte — mais l'épuisement, lui, est à zéro.
+ */
+const W_PRIME_FLOOR = -0.2;
+
+/**
+ * Bilan de D' après un segment couru à vitesse constante — forme intégrée de
+ * Froncioni-Skiba.
+ *
+ * Au-dessus de CS, la réserve se vide au rythme exact du dépassement. En
+ * dessous, elle se recharge vers D' de façon asymptotique, d'autant plus vite
+ * qu'on est loin sous CS : dB/dt = (CS − v)·(D' − B)/D', dont la solution est
+ * une exponentielle. L'intégrer fermée plutôt que pas à pas, c'est pouvoir
+ * juger une séance sur ses segments — vingt blocs au lieu de dix mille
+ * secondes — sans que la réponse dépende du pas choisi.
+ *
+ * C'est le même modèle que la série seconde par seconde : `wPrimeBalance`
+ * passe par ici. Deux implémentations du même bilan, ce serait deux verdicts
+ * possibles sur la même séance.
+ */
+export function wPrimeAfter(
+  balanceM: number,
+  speedMs: number,
+  cs: number,
+  dPrime: number,
+  durationS: number,
+): number {
+  if (!(dPrime > 0) || !(durationS > 0)) return balanceM;
+  if (!Number.isFinite(speedMs) || !(cs > 0)) return balanceM;
+  const next =
+    speedMs > cs
+      ? balanceM - (speedMs - cs) * durationS
+      : dPrime - (dPrime - balanceM) * Math.exp((-(cs - speedMs) * durationS) / dPrime);
+  return clamp(next, dPrime * W_PRIME_FLOOR, dPrime);
+}
+
+/**
+ * Bilan de D' au fil de l'effort (« W'bal »), échantillon par échantillon.
  *
  * Sert à savoir si un fractionné a réellement touché la réserve anaérobie ou
  * si les récupérations étaient trop généreuses.
@@ -136,18 +173,7 @@ export function wPrimeBalance(
   if (cs <= 0 || dPrime <= 0) return out.fill(dPrime);
   let bal = dPrime;
   for (let i = 0; i < speeds.length; i++) {
-    const v = speeds[i] as number;
-    if (!Number.isFinite(v)) {
-      out[i] = bal;
-      continue;
-    }
-    if (v > cs) {
-      bal -= (v - cs) * dt;
-    } else {
-      // Recharge asymptotique vers D', d'autant plus rapide que l'écart à CS est grand.
-      bal += (cs - v) * ((dPrime - bal) / dPrime) * dt;
-    }
-    bal = clamp(bal, -dPrime * 0.2, dPrime);
+    bal = wPrimeAfter(bal, speeds[i] as number, cs, dPrime, dt);
     out[i] = bal;
   }
   return out;

@@ -5,7 +5,9 @@ import {
   blockDuration, duration, frDate, get, todayIso,
   type PlanResponse, type SessionRow,
 } from '@/lib/api';
-import { circuitText, CRITERION_LABELS, originLabel, TYPE_COLORS, TYPE_LABELS } from '@/lib/sessions';
+import {
+  circuitText, CRITERION_LABELS, originLabel, provenanceText, TYPE_COLORS, TYPE_LABELS,
+} from '@/lib/sessions';
 import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
 
 /** Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. */
@@ -236,9 +238,19 @@ export default function PlanPage() {
                           )}
                           {b.vamTargetMh && <span className="tiny mono faint">{b.vamTargetMh} m D+/h</span>}
                           {b.cadenceTargetSpm && <span className="tiny mono faint">{b.cadenceTargetSpm} ppm</span>}
+                          {/* Une cible qu'on demande de tenir est un paramètre
+                              physiologique : elle porte sa provenance, comme la
+                              vitesse critique sur l'écran de physiologie. */}
+                          {provenanceText(b.provenance) && (
+                            <span className="tiny faint">({provenanceText(b.provenance)})</span>
+                          )}
                           {b.recovery && (
                             <span className="tiny faint">
                               récup {blockDuration(b.recovery.durationS)} {b.recovery.active ? 'active' : 'passive'}
+                              {b.recovery.paceRange &&
+                                ` · ${b.recovery.paceRange[1] === '—'
+                                  ? `> ${b.recovery.paceRange[0]}`
+                                  : `${b.recovery.paceRange[0]}-${b.recovery.paceRange[1]}`}/km`}
                             </span>
                           )}
                         </div>

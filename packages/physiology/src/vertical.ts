@@ -1,4 +1,5 @@
 import type { GradeBucket, ParameterProvenance, PhysiologyModel } from '@cairn/core';
+import { weakestProvenance } from '@cairn/core';
 import { durabilityFactor } from './durability.js';
 import { descentSpeedCeiling } from './environment.js';
 import { FLAT_RUNNING_COST, locomotionCost, speedForMetabolicPower, vam } from './grade.js';
@@ -250,22 +251,6 @@ export interface EffortSoFar {
   /** Dénivelés déjà franchis, m. */
   gainM: number;
   lossM: number;
-}
-
-const PROVENANCE_STRENGTH: Record<ParameterProvenance, number> = { default: 0, blended: 1, lab: 2, field: 2 };
-
-/**
- * Provenance d'un nombre calculé depuis d'autres : celle du plus faible. Une
- * borne mesurée corrigée par une valeur de population n'est plus une mesure.
- */
-export function weakestProvenance(
-  first: ParameterProvenance,
-  ...others: (ParameterProvenance | null | undefined)[]
-): ParameterProvenance {
-  return others.reduce<ParameterProvenance>(
-    (weakest, p) => (p != null && PROVENANCE_STRENGTH[p] < PROVENANCE_STRENGTH[weakest] ? p : weakest),
-    first,
-  );
 }
 
 /**
