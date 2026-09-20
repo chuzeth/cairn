@@ -53,9 +53,15 @@ export default function CoachPage() {
     })();
   }, []);
 
+  // Au téléphone, le fil n'a pas de défilement propre — c'est la page qui
+  // descend. Suivre l'élément sans regarder lequel des deux défile laisserait
+  // la réponse en train de s'écrire hors de l'écran.
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      const el = scrollRef.current;
+      if (!el) return;
+      if (el.scrollHeight > el.clientHeight + 1) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      else window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
     });
   }, []);
 

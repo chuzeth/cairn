@@ -50,6 +50,13 @@
 
   --radius: 10px;
   --radius-sm: 6px;
+
+  /* La barre d'onglets, bordure comprise, et la réserve que toute zone
+     défilante lui garde en bas : sa hauteur plus la zone sûre du téléphone.
+     Un contenu qui passe sous une barre est un contenu qu'on ne peut pas
+     atteindre — la réserve est donc exacte, et la même partout. */
+  --tabbar: 56px;
+  --bars: calc(var(--tabbar) + env(safe-area-inset-bottom));
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.3);
 
   /* Archivo, chargée par next/font : rien ne part vers Google à l'ouverture. */
@@ -142,6 +149,7 @@ button { font-family: inherit; font-size: inherit; }
   display: none;
   grid-auto-flow: column; grid-auto-columns: 1fr;
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  height: var(--bars);
   /* Opaque, pas translucide : la page défile dessous, et un flou qui ne se
      calcule pas rendrait la barre illisible au lieu de la rendre discrète. */
   background: var(--bg);
@@ -165,7 +173,7 @@ button { font-family: inherit; font-size: inherit; }
   position: absolute; left: 0; right: 0; bottom: 0;
   background: var(--bg-elev); border-top: 1px solid var(--border-strong);
   border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
-  padding: 6px 12px calc(74px + env(safe-area-inset-bottom));
+  padding: 6px 12px calc(var(--bars) + 10px);
   animation: sheet-in 160ms ease-out;
 }
 @keyframes sheet-in { from { transform: translateY(18px); opacity: 0.4; } to { transform: none; opacity: 1; } }
@@ -186,7 +194,7 @@ button { font-family: inherit; font-size: inherit; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
-  .main { padding: calc(env(safe-area-inset-top) + 26px) 20px calc(96px + env(safe-area-inset-bottom)); }
+  .main { padding: calc(env(safe-area-inset-top) + 26px) 20px var(--bars); }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .tabbar { display: grid; }
   .sheet-veil { display: block; }
@@ -323,6 +331,21 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 }
 .suggestion:hover { border-color: var(--accent); color: var(--text); }
 
+/* Au téléphone, le fil n'a pas de hauteur à lui : la page descend, et la
+   réserve du bas garde la saisie au-dessus de la barre d'onglets. Un fil
+   étiré à la hauteur de l'écran ouvrirait sur quatre cents pixels de vide
+   entre l'introduction et les suggestions. */
+@media (max-width: 760px) {
+  .chat { height: auto; }
+  .chat-scroll { flex: none; overflow: visible; padding-right: 0; }
+
+  /* Une suggestion est une phrase, pas une étiquette : pleine largeur, lue de
+     gauche à droite. Le retrait annule le rembourrage de la pastille, pour que
+     le texte tombe sur la marge intérieure de la carte comme le reste. */
+  .suggestions { display: grid; gap: 7px; margin-inline: -13px; }
+  .suggestion { text-align: left; border-radius: var(--radius-sm); }
+}
+
 /* ── Provenance de la disponibilité ───────────────────────────────────────── */
 
 /* Une composante par ligne : son nom, d'où elle vient, ce qu'elle vaut. Une
@@ -415,13 +438,21 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 @media (max-width: 520px) {
   .q-extras { grid-template-columns: 1fr 1fr; }
   /* L'envoi reste sous le pouce : répondre à une seule question et envoyer ne
-     doit pas demander de redescendre la page. */
+     doit pas demander de redescendre la page.
+
+     Il se pose sur la barre d'onglets, sans bande de fond entre les deux : le
+     décalage vaut la réserve du bas, si bien qu'en fin de défilement le bloc
+     retrouve sa place dans le flux là où il était collé. Le bouton, sa légende
+     et les onglets font ainsi un seul bloc, et la dernière carte s'arrête
+     au-dessus au lieu d'être coupée en deux. */
   .checkin-send {
-    position: sticky; bottom: calc(57px + env(safe-area-inset-bottom)); z-index: 5;
-    margin: 18px -16px 0; padding: 11px 16px;
+    position: sticky; bottom: var(--bars); z-index: 5;
+    margin: 18px -20px 0; padding: 9px 20px 10px;
+    gap: 5px 10px;
     background: var(--bg); border-top: 1px solid var(--border);
   }
-  .checkin-send p { font-size: 11px; }
+  .checkin-send .btn { min-height: 46px; }
+  .checkin-send p { font-size: 11px; line-height: 1.35; }
 }
 
 /* ── Le chemin du matin ──────────────────────────────────────────────────── */
@@ -429,7 +460,11 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 /* Une colonne, lue de haut en bas : la date et l'échéance, la séance dessinée
    puis dite, la réserve du jour, la question du matin. Aucune carte bordée : ce
    qui sépare, ce sont le blanc et l'échelle typographique. */
-.morning { max-width: 420px; display: flex; flex-direction: column; gap: 22px; }
+/* La colonne occupe la hauteur qu'on lui laisse : sans quoi, un jour de repos,
+   cent quarante pixels de vide tombent sous la question du matin — la seule
+   chose qu'on touche sur cet écran. Le blanc qui reste se pose au-dessus
+   d'elle, et elle sous le pouce. */
+.morning { max-width: 420px; min-height: 100%; padding-bottom: 10px; display: flex; flex-direction: column; gap: 22px; }
 
 .m-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; color: var(--text-dim); }
 .m-goal { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
@@ -510,8 +545,8 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 /* La disponibilité se lit à la forme avant de se lire au nombre : trois barres,
    dont le verdict occupe deux. Une couleur d'état demanderait de traduire ; une
    barre remplie, non. */
-.m-avail { display: flex; flex-direction: column; gap: 18px; }
-.m-avail-grid { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: start; }
+.m-avail { flex: 1 1 auto; display: flex; flex-direction: column; gap: 18px; }
+.m-avail-grid { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: baseline; }
 .m-gauge { display: flex; flex-direction: column; gap: 9px; }
 .m-score {
   font-stretch: 70%; font-size: 44px; font-weight: 600; line-height: 0.9;
@@ -547,10 +582,10 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 /* Cinq mots sur une échelle ordonnée, du pire au meilleur — la même échelle et
    les mêmes valeurs enregistrées que sur /point. Le trait qui les relie dit
    qu'il s'agit d'un degré, pas de cinq boutons. */
-.m-ask { display: flex; flex-direction: column; gap: 6px; }
+.m-ask { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
 .m-ask-head { font-size: 14px; color: var(--text); }
 .m-scale { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.m-scale-line { position: absolute; left: 10%; right: 10%; top: 12px; height: 1px; background: var(--border); }
+.m-scale-line { position: absolute; left: 0; right: 0; top: 12px; height: 1px; background: var(--border); }
 .m-step {
   position: relative; min-height: 50px; padding: 9px 2px 0;
   display: flex; flex-direction: column; align-items: center; gap: 9px;
@@ -562,6 +597,26 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-step[data-on="true"] { color: var(--text); }
 .m-step[data-on="true"] .m-tick { width: 2px; height: 13px; margin-top: -6px; background: var(--text); }
 .m-step:disabled { cursor: default; }
+
+/* ── Ce qui ne vient pas du réseau ───────────────────────────────────────── */
+
+/* Une donnée gardée porte sa date, toujours : discrète tant qu'elle est fraîche,
+   en alerte au-delà de 36 h, parce qu'un état périmé servi en silence se lit
+   comme l'état du jour. Même ligne pour les écritures qui n'ont pas pu partir :
+   c'est le même mensonge qu'on évite, dans l'autre sens. */
+.stale {
+  padding: 10px 12px; margin-bottom: 18px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg-elev);
+  font-size: 12.5px; line-height: 1.45; color: var(--text-dim);
+}
+.stale[data-old="true"] {
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  background: color-mix(in srgb, var(--warn) 9%, var(--bg-elev));
+  color: var(--text);
+}
+.stale strong { font-weight: 600; }
+/* L'écran du matin espace ses blocs lui-même : une marge de plus ferait un trou. */
+.morning .stale { margin-bottom: 0; }
 
 /* ── Divers ───────────────────────────────────────────────────────────────── */
 

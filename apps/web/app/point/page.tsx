@@ -2,14 +2,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  frDate, get, markdown, post, todayIso,
+  frDate, getStamped, markdown, todayIso,
   type CheckInResult, type Readiness, type StateResponse,
 } from '@/lib/api';
 import {
   answersOf, EXTRAS, extrasOf, QUESTIONS,
   type AnswerKey, type Answers, type Extras,
 } from '@/lib/checkin';
-import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, unweighed } from '@/components/ui';
+import { sendOrQueue, useOutbox } from '@/lib/offline';
+import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, Stale, unweighed } from '@/components/ui';
 import { Gauge } from '@/components/charts';
 
 /**
@@ -30,9 +31,13 @@ export default function CheckInPage() {
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const [before, setBefore] = useState<Readiness | null>(null);
   const [result, setResult] = useState<CheckInResult | null>(null);
+  /** Le point est en file : il n'est pas enregistré, et l'écran ne dit pas qu'il l'est. */
+  const [queued, setQueued] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Non nul : l'état lu sort du cache, et la disponibilité affichée date. */
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
   /**
    * Le jour vient du serveur, jamais de l'horloge du téléphone : c'est lui qui
    * range les relevés. Un téléphone à l'étranger ouvrirait sinon un second point
@@ -43,9 +48,10 @@ export default function CheckInPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const s = await get<StateResponse>('/api/state');
+      const { data: s, recordedAt: at } = await getStamped<StateResponse>('/api/state');
       setToday(s.today.date);
       setBefore(s.readiness);
+      setRecordedAt(at);
       // Un point déjà commencé se reprend, il ne se recommence pas.
       if (s.checkIn) {
         setAnswers(answersOf(s.checkIn));
@@ -93,7 +99,11 @@ export default function CheckInPage() {
         const raw = (extras[e.key] ?? '').trim();
         if (raw !== '') body[e.key] = Number(raw.replace(',', '.'));
       }
-      setResult(await post<CheckInResult>('/api/checkin', body));
+      const sent = await sendOrQueue<CheckInResult>('/api/checkin', body);
+      // Mis en file : rien n'a été enregistré et aucun score n'a été recalculé.
+      // Afficher « c'est noté » ici serait le seul vrai mensonge de l'écran.
+      if (sent) setResult(sent);
+      else setQueued(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -115,6 +125,8 @@ export default function CheckInPage() {
     );
   }
 
+  if (queued) return <Queued today={today} onEdit={() => setQueued(false)} />;
+
   return (
     <div className="checkin">
       <div className="page-head" style={{ marginBottom: 14 }}>
@@ -123,6 +135,10 @@ export default function CheckInPage() {
           <p className="page-sub">{frDate(today, { weekday: true })}</p>
         </div>
       </div>
+
+      {/* La disponibilité affichée plus bas vient d'un état relevé, pas du Mac :
+          la dire d'aujourd'hui ferait répondre l'athlète contre un chiffre faux. */}
+      {recordedAt && <Stale recordedAt={recordedAt} />}
 
       {before && unweighed(before).length > 0 && (
         <p className="checkin-lede">
@@ -208,6 +224,53 @@ export default function CheckInPage() {
             ? 'Ce que tu laisses vide reste marqué non renseigné : rien n’est inventé à ta place.'
             : 'Une seule réponse suffit pour envoyer.'}
         </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Le point n'est pas parti.
+ *
+ * L'écran du résultat montre un score recalculé par le serveur ; sans serveur,
+ * il n'y a pas de score, et rien n'a été enregistré. Servir « C'est noté » ici
+ * serait le seul vrai mensonge de l'application : l'athlète cesserait de
+ * revenir sur un point qui n'existe pas.
+ */
+function Queued({ today, onEdit }: { today: string; onEdit: () => void }) {
+  // La file se vide toute seule au retour du réseau : l'écran suit, plutôt que
+  // de laisser l'athlète devant une attente qui n'a plus lieu.
+  const { pending } = useOutbox();
+  const gone = pending === 0;
+  return (
+    <div className="checkin">
+      <div className="page-head" style={{ marginBottom: 14 }}>
+        <div>
+          <h1 className="page-title">{gone ? 'C’est parti.' : 'En attente d’envoi.'}</h1>
+          <p className="page-sub">{frDate(today, { weekday: true })}</p>
+        </div>
+      </div>
+
+      <Card>
+        <p className="small muted" style={{ margin: 0 }}>
+          {gone ? (
+            <>
+              Ton point a quitté le téléphone et ta disponibilité a été recalculée avec.
+              Rouvre le tableau de bord pour la lire.
+            </>
+          ) : (
+            <>
+              Ton point est gardé sur le téléphone. Il partira au retour du réseau, et c&apos;est à
+              ce moment-là que ta disponibilité sera recalculée — pas avant. Pour l&apos;instant,
+              rien n&apos;est enregistré et aucun score n&apos;a changé.
+            </>
+          )}
+        </p>
+      </Card>
+
+      <div className="checkin-send">
+        <Link href="/" className="btn" data-variant="primary">Retour au tableau de bord</Link>
+        <button className="btn" onClick={onEdit}>Corriger</button>
       </div>
     </div>
   );

@@ -39,6 +39,8 @@ const SERVICE = join(REPO, '.service.nosync');
 const RELEASES = join(SERVICE, 'releases');
 const CURRENT = join(SERVICE, 'current');
 const LOCK = join(SERVICE, 'lock');
+/** Ce que la surveillance a constaté : dernier contact, dernières reprises. */
+const WATCH = join(SERVICE, 'watch.json');
 const NEXT = join(REPO, 'node_modules/next/dist/bin/next');
 
 const LABEL = 'com.pchuze.cairn';
@@ -51,6 +53,8 @@ const WEB_PORT = 3000;
 const API_PORT = Number(readEnv(CODE).API_PORT ?? 4000);
 /** Tailscale standalone n'installe pas de commande dans le PATH : c'est le binaire de l'application. */
 const TAILSCALE = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale'];
+/** La maille de la surveillance : assez fine pour qu'un réveil se rattrape avant le matin. */
+const WATCH_EVERY_MS = 5 * 60_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -123,6 +127,133 @@ function run() {
       ? `prêt en ${((Date.now() - t0) / 1000).toFixed(1)} s, instantané ${basename(CODE)}`
       : 'ne répond toujours pas après 2 min'),
   );
+
+  watch();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Surveillance du chemin du téléphone
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Les deux serveurs peuvent tourner, répondre sur 127.0.0.1, et Cairn rester
+ * injoignable : le téléphone ne l'atteint que par Tailscale, dont le démon
+ * s'arrête au réveil ou perd son `serve` sans que rien ne le signale — sinon
+ * une erreur réseau sur le téléphone, au moment précis où on en a besoin.
+ *
+ * Toutes les cinq minutes : le démon tourne-t-il, et sert-il le site ? Sinon,
+ * `tailscale up --accept-routes` puis réaffirmation de `tailscale serve`, et la
+ * reprise est journalisée — c'est la trace qui dira, au bout d'un mois, si le
+ * problème du 19 septembre était le sommeil du Mac ou autre chose.
+ *
+ * Le dernier passage où la chaîne tenait est écrit dans `watch.json` : c'est la
+ * seule mesure qu'on ait de l'accessibilité réelle, et c'est elle que
+ * `status` affiche.
+ */
+function watch() {
+  const tick = () => {
+    let seen;
+    try {
+      seen = inspect();
+    } catch (e) {
+      log('veille', `surveillance en échec : ${e.message}`);
+      return;
+    }
+    const now = new Date().toISOString();
+    const before = readWatch();
+    writeWatch({
+      lastCheckAt: now,
+      lastContactAt: seen.reachable ? now : before.lastContactAt ?? null,
+      lastRecoveryAt: seen.recovered ? now : before.lastRecoveryAt ?? null,
+      recoveries: (before.recoveries ?? 0) + (seen.recovered ? 1 : 0),
+    });
+  };
+  tick();
+  // Sans `unref`, l'intervalle retiendrait le processus après l'arrêt des serveurs.
+  setInterval(tick, WATCH_EVERY_MS).unref();
+}
+
+/**
+ * Un passage : constate, répare, dit ce qu'il a fait.
+ *
+ * `spawnSync` bloque ici le processus de service — quelques dizaines de
+ * millisecondes pour un `status`, quelques secondes pour un `up`. Les deux
+ * serveurs sont des processus séparés : ils continuent de répondre pendant ce
+ * temps, seul le journal attend.
+ */
+function inspect() {
+  const state = backendState();
+  if (state === null) {
+    log('veille', 'tailscale introuvable : rien à relancer');
+    return { reachable: false, recovered: false };
+  }
+  // « Starting » est un état de passage : le tick suivant tranchera.
+  if (state === 'Starting') return { reachable: false, recovered: false };
+
+  let recovered = false;
+
+  if (state !== 'Running') {
+    const up = tailscaleCli('up', '--accept-routes');
+    if (up.status !== 0) {
+      log('veille', `tailscale ${state} ; up : ${message(up)}`);
+      return { reachable: false, recovered: false };
+    }
+    log('veille', `reprise : tailscale était ${state}, up --accept-routes a rendu la main`);
+    recovered = true;
+  }
+
+  // `up` remet le démon en route, pas l'exposition : un `serve` perdu rend le
+  // site aussi injoignable qu'un démon arrêté.
+  if (!serving()) {
+    const res = tailscaleCli('serve', '--bg', '--https=443', `http://127.0.0.1:${WEB_PORT}`);
+    if (res.status !== 0) {
+      log('veille', `tailscale serve : ${message(res)}`);
+      return { reachable: false, recovered };
+    }
+    log('veille', `reprise : serve réaffirmé, https://…:443 → 127.0.0.1:${WEB_PORT}`);
+    recovered = true;
+  }
+
+  return { reachable: true, recovered };
+}
+
+/** L'état du démon ; `null` quand Tailscale ne répond pas du tout. */
+function backendState() {
+  const res = tailscaleCli('status', '--json');
+  if (res.error) return null;
+  try {
+    return JSON.parse(res.stdout || '{}').BackendState ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const message = (res) => (res.stderr || res.stdout || String(res.error ?? '')).trim();
+
+/** « il y a 4 min », « il y a 37 h » : c'est l'écart qui se lit, pas l'horodatage. */
+function ago(iso) {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return 'à l\'instant';
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `il y a ${hours} h` : `il y a ${Math.round(hours / 24)} jours`;
+}
+
+function readWatch() {
+  try {
+    return JSON.parse(readFileSync(WATCH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeWatch(next) {
+  try {
+    mkdirSync(dirname(WATCH), { recursive: true });
+    writeFileSync(WATCH, `${JSON.stringify(next, null, 2)}\n`);
+  } catch (e) {
+    log('veille', `surveillance non enregistrée : ${e.message}`);
+  }
 }
 
 const LEVELS = { 40: 'ATTENTION', 50: 'ERREUR', 60: 'FATAL' };
@@ -241,6 +372,17 @@ async function status() {
 
   const tailscale = tailnet();
   console.log(`https     ${tailscale.error ?? (serving() ? tailscale.url : `${tailscale.url} (Serve non configuré : npm run service -- install)`)}`);
+
+  // Ce que le téléphone aurait trouvé s'il avait ouvert Cairn : la dernière fois
+  // que Tailscale tournait et servait le site. Un contact vieux de deux jours
+  // dit ce qu'aucune autre ligne ne dit — l'application n'a pas existé.
+  const seen = readWatch();
+  const when = (iso) => new Date(iso).toLocaleString('sv-SE');
+  const reprises = seen.recoveries
+    ? ` ; ${seen.recoveries} reprise${seen.recoveries > 1 ? 's' : ''}, dernière ${when(seen.lastRecoveryAt)}`
+    : '';
+  console.log(`contact   ${seen.lastContactAt ? `${when(seen.lastContactAt)}, ${ago(seen.lastContactAt)}` : 'aucun enregistré (surveillance démarrée au prochain lancement)'}${reprises}`);
+
   console.log(`journaux  ${LOG}`);
 }
 

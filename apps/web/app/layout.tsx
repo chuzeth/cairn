@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Archivo } from 'next/font/google';
 import { Nav } from '@/components/Nav';
+import { Offline } from '@/components/Offline';
 import './globals.css';
 
 /**
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="fr" className={archivo.variable}>
       <body>
+        <Offline />
         <div className="app">
           <Nav />
           <main className="main">{children}</main>

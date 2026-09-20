@@ -1,14 +1,15 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, get, post, signed, shortDate,
+  duration, frDate, get, getStamped, post, signed, shortDate,
   type ActivityRow, type InsightRow, type PlanResponse, type PmcResponse, type StateResponse,
 } from '@/lib/api';
+import { useOutbox } from '@/lib/offline';
 import { useIsPhone } from '@/lib/viewport';
 import {
   AbsenceNotice, Badge, Card, ErrorBox, Loading, Metric, MISSING_LABEL,
-  ReadinessBasis, ThreeZoneBar, unweighed,
+  ReadinessBasis, Stale, ThreeZoneBar, unweighed, Waiting,
 } from '@/components/ui';
 import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
 import { Morning } from '@/components/Morning';
@@ -28,6 +29,8 @@ export default function Dashboard() {
   const [insights, setInsights] = useState<InsightRow[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
+  /** Non nul : ce qui est à l'écran sort du cache, et date de ce moment-là. */
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [filing, setFiling] = useState<string | null>(null);
@@ -38,10 +41,10 @@ export default function Dashboard() {
     try {
       const [h, s, pl] = await Promise.all([
         get<Health>('/health'),
-        get<StateResponse>('/api/state'),
+        getStamped<StateResponse>('/api/state'),
         get<PlanResponse>('/api/plan?weeks=2'),
       ]);
-      setHealth(h); setState(s); setPlan(pl);
+      setHealth(h); setState(s.data); setPlan(pl); setRecordedAt(s.recordedAt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -72,6 +75,15 @@ export default function Dashboard() {
     await load();
     if (phone === false) await loadDeskOnly();
   }, [load, loadDeskOnly, phone]);
+
+  // Une réponse partie en différé a été calculée par le serveur, pas ici :
+  // l'écran ne connaît le score qu'elle produit qu'en relisant l'état.
+  const { pending } = useOutbox();
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    if (wasPending.current > 0 && pending === 0) void reload();
+    wasPending.current = pending;
+  }, [pending, reload]);
 
   const runSync = async () => {
     setSyncing(true);
@@ -111,6 +123,7 @@ export default function Dashboard() {
         state={state}
         plan={plan}
         stravaConnected={health?.stravaConnected ?? true}
+        recordedAt={recordedAt}
         onReload={reload}
         onFileNote={(d) => { void fileNote(d); }}
         filing={filing}
@@ -118,7 +131,10 @@ export default function Dashboard() {
     );
   }
 
-  if (!pmc) return <Loading label="Chargement de ton état de forme…" />;
+  // L'état peut venir de la réserve du service worker ; les cent quatre-vingts
+  // jours de PMC, non. Sans eux, le tableau de bord n'a rien à montrer et le
+  // dit — un chargement sans fin masquerait une API arrêtée.
+  if (!pmc) return error ? <ErrorBox error={error} onRetry={reload} /> : <Loading label="Chargement de ton état de forme…" />;
 
   const today = state.today;
   // Une séance retirée par une absence déclarée n'est pas à venir : elle n'est
@@ -142,6 +158,9 @@ export default function Dashboard() {
 
   return (
     <>
+      {recordedAt && <Stale recordedAt={recordedAt} />}
+      <Waiting />
+
       <div className="page-head">
         <div>
           <h1 className="page-title">Tableau de bord</h1>

@@ -7,12 +7,27 @@ import { sessionDuration } from '@cairn/core/format';
  * et ce qui fait qu'aucun appel ne traverse d'origine.
  */
 export async function get<T>(path: string): Promise<T> {
+  return (await getStamped<T>(path)).data;
+}
+
+/** Une lecture, et la date à laquelle elle a été obtenue. */
+export interface Stamped<T> {
+  data: T;
+  /**
+   * `null` : la réponse vient du réseau, elle est de maintenant. Sinon, c'est la
+   * date où le service worker l'a relevée — ce qui suit n'est pas une mesure
+   * d'aujourd'hui, et l'écran doit le dire.
+   */
+  recordedAt: string | null;
+}
+
+export async function getStamped<T>(path: string): Promise<Stamped<T>> {
   const res = await fetch(path, { cache: 'no-store' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((body as { error?: string }).error ?? `Erreur ${res.status}`);
   }
-  return res.json() as Promise<T>;
+  return { data: (await res.json()) as T, recordedAt: res.headers.get('x-cairn-recorded-at') };
 }
 
 export async function post<T>(path: string, body?: unknown): Promise<T> {
@@ -135,6 +150,19 @@ export function frDate(isoDate: string, opts: { weekday?: boolean; year?: boolea
   const prefix = opts.weekday ? `${DAYS[d.getDay()]} ` : '';
   const suffix = opts.year ? ` ${d.getFullYear()}` : '';
   return `${prefix}${day}${suffix}`;
+}
+
+/**
+ * « 20 sept., 7 h 12 » — l'instant d'un relevé, à la minute.
+ *
+ * Un relevé en cache se date à la minute et pas au jour : entre « ce matin » et
+ * « hier soir », il n'y a qu'une nuit de sommeil, mais ce n'est pas le même
+ * chiffre qu'on lit.
+ */
+export function frStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${d.getHours()} h ${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 /** « Mardi 15 septembre » — la date telle qu'on la dit, en haut de l'écran du matin. */

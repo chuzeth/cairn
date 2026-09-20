@@ -2,14 +2,15 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, longDate, markdown, nbsp, post, prime, shortRace, signed, spelledDuration,
+  duration, frDate, longDate, markdown, nbsp, prime, shortRace, signed, spelledDuration,
   type CheckInResult, type DeclaredAbsence, type PlanResponse, type Readiness, type SessionRow,
   type StateResponse,
 } from '@/lib/api';
 import { QUESTIONS } from '@/lib/checkin';
+import { sendOrQueue, useOutbox } from '@/lib/offline';
 import { CRITERION_LABELS, circuitText, originLabel, sessionHeadline, slopeOf } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
-import { ABSENCE_KIND_LABEL, MISSING_LABEL, ReadinessBasis, unweighed } from '@/components/ui';
+import { ABSENCE_KIND_LABEL, MISSING_LABEL, ReadinessBasis, Stale, unweighed, Waiting } from '@/components/ui';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -53,11 +54,13 @@ const blockLabel = (label: string) => label.replace(/\s*\((?:\d+\s*(?:min|s|h))\
 const firstSentence = (text: string) => /^.*?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text;
 
 export function Morning({
-  state, plan, stravaConnected, onReload, onFileNote, filing,
+  state, plan, stravaConnected, recordedAt, onReload, onFileNote, filing,
 }: {
   state: StateResponse;
   plan: PlanResponse;
   stravaConnected: boolean;
+  /** Non nul : l'écran se rend sur ce que le service worker avait gardé. */
+  recordedAt: string | null;
   onReload: () => Promise<void> | void;
   onFileNote: (date: string) => void;
   filing: string | null;
@@ -86,6 +89,11 @@ export function Morning({
         <span>{longDate(today)}</span>
         {race && <span className="m-goal">J−{race.daysUntil} · {shortRace(race.name)}</span>}
       </div>
+
+      {/* La fraîcheur avant le contenu : ce qui suit ne se lit pas pareil selon
+          qu'il vient du Mac ou de ce que le téléphone avait gardé. */}
+      {recordedAt && <Stale recordedAt={recordedAt} />}
+      <Waiting />
 
       <Headline session={session} absence={absence} done={doneToday} />
 
@@ -372,8 +380,7 @@ function Trace({
   // Le cadre suit le tracé. Une séance qui ne monte nulle part occuperait sinon
   // la même hauteur qu'une rando-course, avec soixante pixels de vide au-dessus
   // d'une ligne plate — et ce vide se lirait comme un graphique manquant.
-  const captionY = Math.max(11, y(p.height) - 13);
-  const viewTop = captionY - 11;
+  const viewTop = Math.max(0, y(p.height) - 8);
 
   // Un seul trait par registre : les segments qui se suivent et se ressemblent
   // ne valent pas un chemin chacun.
@@ -386,18 +393,12 @@ function Trace({
     else paths.push({ d: `M${from}L${to}`, tone: s.tone });
   }
 
-  // La légende se pose au milieu de ce qu'elle nomme, sans sortir du cadre.
-  const shown = p.segments.filter((s) => (p.captionIsClimb ? s.tone === 'climb' : s.tone !== 'ease'));
-  const spread = shown.length > 0 ? shown : p.segments;
-  const mid = (Math.min(...spread.map((s) => s.x0)) + Math.max(...spread.map((s) => s.x1))) / 2;
-  const captionX = Math.min(W - 52, Math.max(52, x(mid)));
-
   const marks = p.marks.filter((m, i, all) => i === 0 || m.at - all[i - 1]!.at > 0.08);
 
   return (
     <svg
       className="m-trace"
-      viewBox={`0 ${viewTop.toFixed(1)} ${W} ${(118 - viewTop).toFixed(1)}`}
+      viewBox={`0 ${viewTop.toFixed(1)} ${W} ${(134 - viewTop).toFixed(1)}`}
       role="img"
       data-muted={muted}
       aria-label={`Profil de la séance : ${spoken(session)}. ${p.caption}.`}
@@ -406,9 +407,6 @@ function Trace({
       {paths.map((s, i) => (
         <path key={i} d={s.d} className="m-trace-line" data-tone={s.tone} />
       ))}
-      <text x={captionX} y={captionY} className="m-trace-caption" data-climb={p.captionIsClimb} textAnchor="middle">
-        {p.caption}
-      </text>
       {marks.map((m, i) => (
         <text
           key={m.seconds}
@@ -420,6 +418,12 @@ function Trace({
           {prime(m.seconds) || '0′'}
         </text>
       ))}
+      {/* La légende appartient à l'axe, pas au ciel du tracé : posée sous les
+          repères de temps et alignée sur eux, elle se lit comme la ligne de
+          chiffres qu'elle est, et non comme une note laissée au milieu. */}
+      <text x="0" y="130" className="m-trace-caption" data-climb={p.captionIsClimb}>
+        {p.caption}
+      </text>
     </svg>
   );
 }
@@ -471,12 +475,15 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
   const [before] = useState(state.readiness);
   const [result, setResult] = useState<CheckInResult | null>(null);
   const [sending, setSending] = useState<number | null>(null);
+  /** La réponse donnée, mise en file faute de réseau : retenue, pas enregistrée. */
+  const [queued, setQueued] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [basis, setBasis] = useState(false);
+  const { pending } = useOutbox();
 
   const readiness = result?.readiness ?? state.readiness;
   const question = QUESTIONS[0];
-  const answer = result?.checkIn?.fatigue ?? state.checkIn?.fatigue ?? null;
+  const answer = result?.checkIn?.fatigue ?? queued ?? state.checkIn?.fatigue ?? null;
   const missing = unweighed(readiness).map((k) => MISSING_LABEL[k]);
   const delta = readiness.score - before.score;
   const verdict = VERDICT[readiness.verdict];
@@ -487,7 +494,12 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
     setSending(value);
     setError(null);
     try {
-      setResult(await post<CheckInResult>('/api/checkin', { date: state.today.date, fatigue: value }));
+      const sent = await sendOrQueue<CheckInResult>('/api/checkin', { date: state.today.date, fatigue: value });
+      // Rien n'est parti : la réponse est retenue, et le score reste celui
+      // d'avant. Un score recalculé ici serait un score que personne n'a produit.
+      if (!sent) return setQueued(value);
+      setQueued(null);
+      setResult(sent);
       // Un réajustement change la séance affichée plus haut : on la relit.
       await onReload();
     } catch (e) {
@@ -575,6 +587,16 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
           ))}
         </div>
       </div>
+
+      {/* Tant que la file n'est pas vide, et pas une seconde de plus : une
+          attente annoncée après le départ ferait renvoyer une réponse déjà
+          partie. */}
+      {queued != null && pending > 0 && (
+        <p className="m-after" data-warn>
+          En attente d&apos;envoi : ta réponse partira au retour du réseau. Ta disponibilité ne
+          bougera pas avant que le serveur l&apos;ait recalculée.
+        </p>
+      )}
 
       {error && <p className="m-after" data-warn>{error}</p>}
 

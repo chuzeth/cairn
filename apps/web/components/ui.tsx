@@ -1,7 +1,8 @@
 'use client';
 import type { ReactNode } from 'react';
-import { frDate } from '@/lib/api';
+import { frDate, frStamp } from '@/lib/api';
 import type { DeclaredAbsence, Readiness, ReadinessComponent, ReadinessSource } from '@/lib/api';
+import { useOutbox } from '@/lib/offline';
 
 export function Card({
   title, hint, action, children, style,
@@ -119,6 +120,73 @@ export function Legend({ items }: { items: { color: string; label: string }[] })
           {i.label}
         </span>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Au-delà, un état gardé cesse de se présenter comme l'état du jour.
+ *
+ * Trente-six heures, c'est une nuit de trop : une séance faite hier soir, un
+ * relevé de ce matin, une adaptation de charge — rien de tout cela n'est dans
+ * ce qu'on affiche. Un état périmé servi en silence est du même ordre qu'une
+ * estimation saturée présentée comme une mesure.
+ */
+const STALE_HOURS = 36;
+
+/** « 37 h », puis « 3 jours » — au-delà de deux jours, les heures ne se lisent plus. */
+function since(hours: number): string {
+  return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} jours`;
+}
+
+/**
+ * Ce que l'écran dit quand ce qu'il montre ne vient pas du réseau.
+ *
+ * Jamais un chiffre sans sa fraîcheur : tant que le Mac répond, cette ligne
+ * n'existe pas ; dès qu'il ne répond plus, elle porte la date du relevé. Au-delà
+ * de {@link STALE_HOURS}, elle dit en toutes lettres que ce n'est pas l'état du
+ * jour, parce qu'une date seule finit par se lire comme un détail.
+ */
+export function Stale({ recordedAt }: { recordedAt: string }) {
+  const hours = Math.max(0, Math.floor((Date.now() - new Date(recordedAt).getTime()) / 3_600_000));
+  const expired = hours >= STALE_HOURS;
+  return (
+    <div className="stale" data-old={expired}>
+      {expired ? (
+        <>
+          <strong>Sans contact depuis {since(hours)}.</strong> Ce que tu lis a été relevé le{' '}
+          {frStamp(recordedAt)}. Ce n&apos;est pas ton état d&apos;aujourd&apos;hui : ni ta charge, ni
+          ta disponibilité, ni ta séance n&apos;ont été recalculées depuis.
+        </>
+      ) : (
+        <>Hors réseau · relevé du {frStamp(recordedAt)}</>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Ce qui attend de partir.
+ *
+ * Tant que cette ligne est là, rien n'est enregistré — c'est toute la raison
+ * pour laquelle elle est là. Un refus du serveur, lui, ne s'efface pas tout
+ * seul : l'écriture est perdue, et se taire reviendrait à la déclarer partie.
+ */
+export function Waiting() {
+  const { pending, refused } = useOutbox();
+  if (refused) {
+    return (
+      <div className="stale" data-old="true">
+        <strong>Ton envoi a été refusé.</strong> {refused} Rien n&apos;a été enregistré.
+      </div>
+    );
+  }
+  if (pending === 0) return null;
+  return (
+    <div className="stale">
+      {pending === 1 ? 'Une réponse' : `${pending} réponses`} en attente d&apos;envoi
+      {pending === 1 ? ' : elle partira' : ' : elles partiront'} au retour du réseau. Rien n&apos;est
+      encore enregistré.
     </div>
   );
 }
