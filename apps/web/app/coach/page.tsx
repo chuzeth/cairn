@@ -13,6 +13,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_activities: 'historique des séances',
   get_activity_analysis: 'analyse de séance',
   get_performance_curves: 'courbes de performance',
+  get_terrain: 'terrain et montées connues',
   get_plan: 'plan en cours',
   list_races: 'objectifs',
   upsert_race: 'enregistrement de la course',

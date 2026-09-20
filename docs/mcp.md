@@ -54,6 +54,7 @@ paquet : le serveur trouve la bonne base quel que soit le répertoire de lanceme
 | `list_activities` | Historique filtrable par période, sport, durée, dénivelé. |
 | `get_activity_analysis` | Analyse détaillée d'une séance : charges, zones, dérive, blocs, durabilité, alertes. |
 | `get_performance_curves` | Courbe vitesse-durée, courbe VAM, ajustement de la vitesse critique. |
+| `get_terrain` | Terrains de départ, montées récurrentes et leurs records, écart de dénivelé sorties/courses. |
 | `get_plan` | Plan en cours, phases, séances et leur statut. |
 | `list_races` / `upsert_race` | Objectifs de course, profil de parcours, ambition. |
 | `predict_race` | Temps prédit, intervalle, plan d'allure, ravitaillement, facteurs limitants. |

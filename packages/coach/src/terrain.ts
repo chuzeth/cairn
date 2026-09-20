@@ -1,0 +1,403 @@
+import type { ActivityStreams, ParameterProvenance } from '@cairn/core';
+import { computeGrade, mean, quantile } from '@cairn/physiology';
+
+/**
+ * Le terrain.
+ *
+ * Cairn conserve la trace complète de chaque sortie — position, altitude,
+ * fréquence cardiaque à la seconde — et n'en lisait que le temps et le
+ * dénivelé cumulé. Le coach savait donc ce que Pierre a couru, jamais où. Ce
+ * module extrait des flux les montées qu'il emprunte et les endroits d'où il
+ * part, pour qu'une prescription de dénivelé puisse désigner une montée réelle
+ * au lieu d'un nombre de mètres.
+ *
+ * Tout ici est pur : un flux entre, un résultat sort. Ni base, ni réseau.
+ *
+ * **Rien n'est nommé.** Nous n'avons pas de géocodage, et un toponyme inventé
+ * serait une donnée fausse posée au milieu de données mesurées. Une montée
+ * s'identifie par ses coordonnées, sa longueur, et les titres des activités où
+ * elle apparaît — « KV de Rochefort » est un nom que Strava porte, pas un lieu
+ * que nous aurions résolu. Ce qui est mesuré au GPS porte la provenance
+ * `field` : c'est du terrain, jamais du laboratoire.
+ */
+
+/** Dénivelé minimal pour qu'une montée compte comme telle, m. */
+export const CLIMB_MIN_GAIN_M = 30;
+
+/** Pente moyenne minimale d'une montée, fraction (0.03 = 3 %). */
+export const CLIMB_MIN_GRADE = 0.03;
+
+/** Au-delà de cette distance sans monter, la montée est terminée, m. */
+export const CLIMB_BREAK_M = 50;
+
+/**
+ * Sous cette pente, l'échantillon ne monte pas : c'est du replat.
+ *
+ * Plus basse que la pente moyenne exigée, et pour une raison : une montée à 3 %
+ * de moyenne passe par des portions à 2,5 %, et un seuil de continuation placé
+ * à 3 % la découperait en morceaux dont aucun n'atteindrait 30 m de gain.
+ */
+const CLIMB_HOLD_GRADE = 0.02;
+
+/** Fenêtre de calcul de la pente, m — celle du reste du moteur. */
+const GRADE_WINDOW_M = 30;
+
+/**
+ * Une montée soutenue, telle qu'une trace la donne.
+ *
+ * Distincte du `Climb` de la bibliothèque de séances, qui est une montée
+ * prescrite : celle-ci a été courue, et porte ce qu'on en a mesuré.
+ */
+export interface MeasuredClimb {
+  /** Indices du bas et du sommet dans le flux. */
+  startIndex: number;
+  endIndex: number;
+  /** Coordonnées du bas de la montée, si la trace en porte. */
+  start: [number, number] | null;
+  startAltitudeM: number;
+  /** Distance parcourue du bas au sommet, m. */
+  lengthM: number;
+  /** Dénivelé net, m. */
+  gainM: number;
+  /** Pente moyenne, fraction. */
+  grade: number;
+  /** Durée en mouvement, s — une pause au sommet ne gonfle pas la montée. */
+  durationS: number;
+  /** Vitesse ascensionnelle, m D+/h. */
+  vamMh: number;
+  /** FC moyenne sur la montée, null si la trace n'en porte pas. */
+  avgHr: number | null;
+  provenance: ParameterProvenance;
+}
+
+/**
+ * Extrait les montées soutenues d'une trace.
+ *
+ * Une montée court tant que l'athlète monte, et survit à un replat court : ce
+ * sont plus de 50 m sans gagner d'altitude qui la coupent. Une descente y coupe
+ * aussi, par la même règle — un col suivi d'un creux puis d'une seconde rampe
+ * fait deux montées, pas une.
+ *
+ * La durée retenue est le temps en mouvement. Un arrêt n'avance pas la
+ * distance, donc ne coupe pas la montée ; il ne doit pas non plus écraser la
+ * vitesse ascensionnelle, qui mesure comment il grimpe et non combien il
+ * s'arrête.
+ */
+export function detectClimbs(stream: ActivityStreams): MeasuredClimb[] {
+  const { distance, altitude, time } = stream;
+  const n = Math.min(distance.length, altitude.length, time.length);
+  if (n < 2) return [];
+
+  const grade =
+    stream.grade.length >= n ? stream.grade : computeGrade(distance, altitude, GRADE_WINDOW_M);
+
+  const climbs: MeasuredClimb[] = [];
+  let foot = -1; // bas de la montée en cours
+  let top = -1; // dernier échantillon clairement montant
+  let flatM = 0;
+
+  for (let i = 1; i < n; i++) {
+    const rising = (grade[i] ?? 0) >= CLIMB_HOLD_GRADE;
+    if (rising) {
+      if (foot < 0) foot = i - 1;
+      top = i;
+      flatM = 0;
+      continue;
+    }
+    if (foot < 0) continue;
+    flatM += (distance[i] as number) - (distance[i - 1] as number);
+    if (flatM > CLIMB_BREAK_M) {
+      const climb = measureClimb(stream, foot, top);
+      if (climb) climbs.push(climb);
+      foot = -1;
+      top = -1;
+      flatM = 0;
+    }
+  }
+  if (foot >= 0 && top > foot) {
+    const climb = measureClimb(stream, foot, top);
+    if (climb) climbs.push(climb);
+  }
+  return climbs;
+}
+
+/** Mesure une montée délimitée, ou `null` si elle n'en est pas une. */
+function measureClimb(stream: ActivityStreams, foot: number, top: number): MeasuredClimb | null {
+  if (top <= foot) return null;
+  const { distance, altitude, time } = stream;
+  const lengthM = (distance[top] as number) - (distance[foot] as number);
+  const gainM = (altitude[top] as number) - (altitude[foot] as number);
+  if (lengthM <= 0 || gainM < CLIMB_MIN_GAIN_M) return null;
+  const grade = gainM / lengthM;
+  if (grade < CLIMB_MIN_GRADE) return null;
+
+  // Temps en mouvement, avec repli sur le temps écoulé quand la trace ne dit
+  // pas le mouvement. Une montée sans durée n'est pas mesurable : on la jette
+  // plutôt que d'en tirer une vitesse ascensionnelle infinie.
+  let movingS = 0;
+  for (let i = foot + 1; i <= top; i++) {
+    if (stream.moving && stream.moving[i] === false) continue;
+    movingS += (time[i] as number) - (time[i - 1] as number);
+  }
+  const durationS = movingS > 0 ? movingS : (time[top] as number) - (time[foot] as number);
+  if (durationS <= 0) return null;
+
+  const hr = stream.heartrate ? mean(stream.heartrate.slice(foot, top + 1)) : null;
+
+  return {
+    startIndex: foot,
+    endIndex: top,
+    start: firstFix(stream.latlng, foot, top),
+    startAltitudeM: Math.round(altitude[foot] as number),
+    lengthM: Math.round(lengthM),
+    gainM: Math.round(gainM),
+    grade: Math.round(grade * 1000) / 1000,
+    durationS: Math.round(durationS),
+    vamMh: Math.round((gainM / durationS) * 3600),
+    avgHr: hr == null ? null : Math.round(hr),
+    provenance: 'field',
+  };
+}
+
+/** Première position relevée entre deux indices — le GPS accroche parfois tard. */
+function firstFix(
+  latlng: ActivityStreams['latlng'],
+  from: number,
+  to: number,
+): [number, number] | null {
+  if (!latlng) return null;
+  for (let i = from; i <= to && i < latlng.length; i++) {
+    const p = latlng[i];
+    if (p) return [p[0], p[1]];
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Montées récurrentes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Rayon sous lequel deux montées partent du même endroit, m. */
+export const SAME_START_M = 80;
+
+/** Rapport de longueur sous lequel deux montées ne sont plus la même. */
+export const SAME_LENGTH_RATIO = 0.75;
+
+/** Sorties minimales sous lesquelles une tendance ne veut rien dire. */
+const TREND_MIN_OUTINGS = 3;
+
+/** Écart relatif sous lequel deux VAM médianes se valent. */
+const TREND_BAND = 0.03;
+
+/** Une montée, rattachée à la sortie où elle a été mesurée. */
+export interface ClimbOccurrence extends MeasuredClimb {
+  activityId: string;
+  /** Titre de l'activité, tel que Strava le porte. */
+  activityName: string;
+  /** Jour de la sortie, YYYY-MM-DD. */
+  date: string;
+}
+
+export interface RecurringClimb {
+  /** Départ retenu : la médiane des passages. */
+  start: [number, number];
+  /** Longueur, dénivelé et pente médians des passages. */
+  lengthM: number;
+  gainM: number;
+  grade: number;
+  /** Nombre de montées, toutes sorties confondues. */
+  passages: number;
+  /** Nombre de sorties distinctes — deux répétitions le même jour font une sortie. */
+  outings: number;
+  firstDate: string;
+  lastDate: string;
+  /** Meilleure vitesse ascensionnelle mesurée, et le passage qui la porte. */
+  bestVamMh: number;
+  best: ClimbOccurrence;
+  medianVamMh: number;
+  /** Sens de la meilleure VAM par sortie au fil du temps. */
+  trend: 'up' | 'flat' | 'down' | 'unknown';
+  /** Titres des activités où elle apparaît — ce sont eux qui la nomment. */
+  activityNames: string[];
+  occurrences: ClimbOccurrence[];
+  provenance: ParameterProvenance;
+}
+
+/**
+ * Regroupe les montées de plusieurs sorties en montées récurrentes.
+ *
+ * Deux montées sont la même quand elles partent du même endroit à 80 m près et
+ * que leurs longueurs sont comparables : le rayon seul confondrait la côte de
+ * dix minutes et le col d'une heure qui commencent au même carrefour.
+ *
+ * Une montée vue une seule fois n'est pas récurrente et ne sort pas d'ici.
+ */
+export function groupRecurring(climbs: readonly ClimbOccurrence[]): RecurringClimb[] {
+  const located = climbs.filter((c) => c.start != null);
+  const ordered = [...located].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.activityId.localeCompare(b.activityId) ||
+      a.startIndex - b.startIndex,
+  );
+
+  // Agrégation par chef de file : chaque montée rejoint le premier groupe dont
+  // le fondateur lui ressemble, sinon elle en fonde un.
+  const groups: ClimbOccurrence[][] = [];
+  for (const climb of ordered) {
+    const group = groups.find((g) => sameClimb(g[0] as ClimbOccurrence, climb));
+    if (group) group.push(climb);
+    else groups.push([climb]);
+  }
+
+  return groups
+    .filter((g) => g.length >= 2)
+    .map(summarizeGroup)
+    .sort((a, b) => b.passages - a.passages || b.gainM - a.gainM);
+}
+
+/** Même départ, longueur comparable. */
+function sameClimb(a: ClimbOccurrence, b: ClimbOccurrence): boolean {
+  if (!a.start || !b.start) return false;
+  if (haversineM(a.start, b.start) > SAME_START_M) return false;
+  const ratio = Math.min(a.lengthM, b.lengthM) / Math.max(a.lengthM, b.lengthM);
+  return ratio >= SAME_LENGTH_RATIO;
+}
+
+function summarizeGroup(group: ClimbOccurrence[]): RecurringClimb {
+  const starts = group.map((c) => c.start as [number, number]);
+  const dates = group.map((c) => c.date).sort();
+  const best = group.reduce((a, b) => (b.vamMh > a.vamMh ? b : a));
+  const lengthM = Math.round(quantile(group.map((c) => c.lengthM), 0.5));
+  const gainM = Math.round(quantile(group.map((c) => c.gainM), 0.5));
+  const outings = new Set(group.map((c) => c.activityId));
+
+  return {
+    start: [
+      Math.round(quantile(starts.map((p) => p[0]), 0.5) * 1e6) / 1e6,
+      Math.round(quantile(starts.map((p) => p[1]), 0.5) * 1e6) / 1e6,
+    ],
+    lengthM,
+    gainM,
+    grade: lengthM > 0 ? Math.round((gainM / lengthM) * 1000) / 1000 : 0,
+    passages: group.length,
+    outings: outings.size,
+    firstDate: dates[0] as string,
+    lastDate: dates[dates.length - 1] as string,
+    bestVamMh: best.vamMh,
+    best,
+    medianVamMh: Math.round(quantile(group.map((c) => c.vamMh), 0.5)),
+    trend: trendOf(group),
+    activityNames: [...new Set(group.map((c) => c.activityName))],
+    occurrences: group,
+    provenance: 'field',
+  };
+}
+
+/**
+ * Sens de la progression sur une montée.
+ *
+ * Mesuré sur la **meilleure** VAM de chaque sortie, jamais sur tous les
+ * passages : dans une séance de côtes, la cinquième répétition est plus lente
+ * que la première, et compter les deux ferait passer une bonne séance pour une
+ * régression. En dessous de trois sorties il n'y a pas de tendance, seulement
+ * deux points : on le dit plutôt que d'en inventer une.
+ */
+function trendOf(group: readonly ClimbOccurrence[]): RecurringClimb['trend'] {
+  const byOuting = new Map<string, { date: string; vamMh: number }>();
+  for (const c of group) {
+    const seen = byOuting.get(c.activityId);
+    if (!seen || c.vamMh > seen.vamMh) byOuting.set(c.activityId, { date: c.date, vamMh: c.vamMh });
+  }
+  const series = [...byOuting.values()].sort((a, b) => a.date.localeCompare(b.date));
+  if (series.length < TREND_MIN_OUTINGS) return 'unknown';
+
+  const half = Math.floor(series.length / 2);
+  const before = quantile(series.slice(0, half).map((s) => s.vamMh), 0.5);
+  const after = quantile(series.slice(series.length - half).map((s) => s.vamMh), 0.5);
+  if (before <= 0) return 'unknown';
+  const change = (after - before) / before;
+  return change > TREND_BAND ? 'up' : change < -TREND_BAND ? 'down' : 'flat';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Terrains d'entraînement
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Rayon d'un terrain d'entraînement, m. */
+export const HOME_GROUND_RADIUS_M = 1500;
+
+/** Le départ d'une sortie, réduit à ce dont le regroupement a besoin. */
+export interface OutingStart {
+  activityId: string;
+  date: string;
+  start: [number, number];
+  elevationGainM: number;
+}
+
+export interface HomeGround {
+  /** Centre retenu : la médiane des départs. */
+  center: [number, number];
+  outings: number;
+  firstDate: string;
+  lastDate: string;
+  /** Dénivelé médian d'une sortie partie d'ici — c'est ce que le terrain offre. */
+  medianElevationGainM: number;
+  activityIds: string[];
+  provenance: ParameterProvenance;
+}
+
+/**
+ * Les points de départ récurrents.
+ *
+ * À 1,5 km près : c'est la maille qui réunit les départs d'un même quartier
+ * sans confondre deux vallées. Un départ unique n'est pas un terrain
+ * d'entraînement et ne sort pas d'ici — un déplacement d'un week-end ne fait
+ * pas une habitude.
+ */
+export function homeGrounds(outings: readonly OutingStart[]): HomeGround[] {
+  const ordered = [...outings].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.activityId.localeCompare(b.activityId),
+  );
+
+  const groups: OutingStart[][] = [];
+  for (const outing of ordered) {
+    const group = groups.find(
+      (g) => haversineM((g[0] as OutingStart).start, outing.start) <= HOME_GROUND_RADIUS_M,
+    );
+    if (group) group.push(outing);
+    else groups.push([outing]);
+  }
+
+  return groups
+    .filter((g) => g.length >= 2)
+    .map((g) => {
+      const dates = g.map((o) => o.date).sort();
+      return {
+        center: [
+          Math.round(quantile(g.map((o) => o.start[0]), 0.5) * 1e6) / 1e6,
+          Math.round(quantile(g.map((o) => o.start[1]), 0.5) * 1e6) / 1e6,
+        ] as [number, number],
+        outings: g.length,
+        firstDate: dates[0] as string,
+        lastDate: dates[dates.length - 1] as string,
+        medianElevationGainM: Math.round(quantile(g.map((o) => o.elevationGainM), 0.5)),
+        activityIds: g.map((o) => o.activityId),
+        provenance: 'field' as ParameterProvenance,
+      };
+    })
+    .sort((a, b) => b.outings - a.outings || b.medianElevationGainM - a.medianElevationGainM);
+}
+
+/** Distance orthodromique entre deux positions, m. */
+export function haversineM(a: readonly [number, number], b: readonly [number, number]): number {
+  const R = 6_371_000;
+  const toRad = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * toRad;
+  const dLng = (b[1] - a[1]) * toRad;
+  const lat1 = a[0] * toRad;
+  const lat2 = b[0] * toRad;
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}

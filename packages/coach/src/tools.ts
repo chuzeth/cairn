@@ -10,7 +10,8 @@ import * as db from '@cairn/db';
 import {
   ACWR_SPIKE, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration,
   formatPace, goalProbability, interpretAcwr, interpretDurability, msToKmh, predictLapRace,
-  predictRace, summarizeForCoach, targetRaceDayTsb, verticalCapacity, type LoadRatioExceedance,
+  predictRace, quantile, summarizeForCoach, targetRaceDayTsb, verticalCapacity,
+  type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { describeDirectives } from './directives.js';
@@ -18,6 +19,11 @@ import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
 import { describeOrigin, type PlanCarryOver } from './preserve.js';
 import { PRESCRIPTION_MARGIN } from './plausibility.js';
+import {
+  CLIMB_BREAK_M, CLIMB_MIN_GAIN_M, CLIMB_MIN_GRADE, HOME_GROUND_RADIUS_M, SAME_START_M,
+  detectClimbs, groupRecurring, homeGrounds,
+  type ClimbOccurrence, type OutingStart, type RecurringClimb,
+} from './terrain.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
   eccentricStrengthOf, elevationGainOf, renderSession, restateVert, sessionTotals, transformSession,
@@ -230,6 +236,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Courbes de performance : meilleure vitesse corrigée de la pente par durée, meilleure vitesse ascensionnelle par durée, ajustement de la vitesse critique et de D'. Sert à situer le niveau réel et à repérer les trous dans le profil.",
     input_schema: obj({}),
+  },
+  {
+    name: 'get_terrain',
+    description:
+      "Le terrain, mesuré sur les traces GPS : points de départ récurrents, montées que l'athlète emprunte déjà — longueur, pente, VAM record, tendance — et l'écart entre le dénivelé de ses sorties et celui des courses visées. Aucun lieu n'est nommé : Cairn n'a pas de géocodage, une montée se désigne par ses coordonnées, ses chiffres et les titres des sorties où elle apparaît. À consulter avant de prescrire du dénivelé, pour dire où la séance se court.",
+    input_schema: obj({
+      from: str('Date de début, YYYY-MM-DD. Par défaut : il y a 365 jours.'),
+      min_gain_m: num("Ne retenir que les montées d'au moins N mètres de dénivelé."),
+      limit: num('Nombre maximum de montées récurrentes rendues (défaut 12).'),
+    }),
   },
   {
     name: 'get_plan',
@@ -706,6 +722,90 @@ export async function executeTool(
           },
           note:
             "La courbe est l'enveloppe des 90 derniers jours, pondérée par la fraîcheur. Un trou sur une durée signifie qu'aucun effort maximal n'y a été produit récemment — pas nécessairement une faiblesse. `preuve_effort_maximal` est la part de l'ajustement portée par des efforts dont la FC a atteint le seuil 2 : c'est elle, et non le r², qui pondère le terrain face au laboratoire.",
+        },
+      };
+    }
+
+    case 'get_terrain': {
+      const from = arg<string>(input, 'from') ?? daysAgo(365);
+      const to = iso(new Date());
+      const minGain = arg<number>(input, 'min_gain_m') ?? 0;
+      const limit = arg<number>(input, 'limit') ?? 12;
+
+      const { activities, traced, climbs, outings } = await readTerrain(athleteId, from, to);
+      const grounds = homeGrounds(outings);
+      const recurring = groupRecurring(climbs).filter((r) => r.gainM >= minGain);
+      const main = grounds[0];
+
+      const races = await db.listRaceGoals(athleteId, to);
+      const raceVert = races.map((r) => ({ course: r.name, date: r.date, denivele_m: raceElevation(r) }));
+      const measured = raceVert.map((r) => r.denivele_m).filter((v): v is number => v != null);
+      const perOuting = Math.round(quantile(activities.map((a) => a.totalElevationGainM), 0.5));
+      const perRace = measured.length > 0 ? Math.round(quantile(measured, 0.5)) : null;
+
+      return {
+        summary:
+          `${grounds.length} terrain(s), ${recurring.length} montée(s) récurrente(s) sur ${traced} trace(s) lue(s)`,
+        content: {
+          fenetre: { du: from, au: to, sorties: activities.length, sorties_avec_trace: traced },
+          terrains: grounds.map((g) => ({
+            coordonnees: g.center,
+            sorties: g.outings,
+            premiere: g.firstDate,
+            derniere: g.lastDate,
+            denivele_median_par_sortie_m: g.medianElevationGainM,
+            provenance: g.provenance,
+          })),
+          montees_recurrentes: recurring.slice(0, limit).map((r) => ({
+            depart: r.start,
+            altitude_depart_m: r.best.startAltitudeM,
+            longueur_m: r.lengthM,
+            denivele_m: r.gainM,
+            pente_pct: round2(r.grade * 100),
+            passages: r.passages,
+            sorties: r.outings,
+            premier_passage: r.firstDate,
+            dernier_passage: r.lastDate,
+            record_vam_m_par_h: r.bestVamMh,
+            record_duree: formatDuration((r.gainM / r.bestVamMh) * 3600),
+            record_le: r.best.date,
+            record_activite: r.best.activityName,
+            record_fc_moy: r.best.avgHr,
+            vam_mediane_m_par_h: r.medianVamMh,
+            duree_mediane: formatDuration((r.gainM / r.medianVamMh) * 3600),
+            tendance: TREND_FR[r.trend],
+            activites: r.activityNames,
+            provenance: r.provenance,
+          })),
+          asymetrie_plat_montagne: {
+            terrain_principal: main
+              ? {
+                  coordonnees: main.center,
+                  sorties: main.outings,
+                  part_des_departs_pct: Math.round((main.outings / Math.max(1, outings.length)) * 100),
+                  denivele_median_par_sortie_m: main.medianElevationGainM,
+                }
+              : null,
+            denivele_median_par_sortie_m: perOuting,
+            denivele_median_des_courses_visees_m: perRace,
+            rapport_course_sur_sortie: perRace != null && perOuting > 0 ? round2(perRace / perOuting) : null,
+            courses: raceVert,
+            courses_sans_denivele_renseigne: raceVert.filter((r) => r.denivele_m == null).map((r) => r.course),
+          },
+          seuils: {
+            montee_retenue:
+              `au moins ${CLIMB_MIN_GAIN_M} m de gain et ${Math.round(CLIMB_MIN_GRADE * 100)} % de pente moyenne`,
+            montee_coupee_par: `plus de ${CLIMB_BREAK_M} m de replat, ou de descente`,
+            meme_montee: `départs à moins de ${SAME_START_M} m et longueurs comparables`,
+            meme_terrain: `départs à moins de ${HOME_GROUND_RADIUS_M} m`,
+          },
+          note:
+            "Aucun lieu n'est nommé ici : Cairn n'a pas de géocodage. Une montée se désigne par ses coordonnées, " +
+            "sa longueur, son dénivelé et les titres des sorties où elle apparaît — ces titres viennent de Strava, " +
+            "pas de nous. `passages` compte les montées et `sorties` les jours : huit passages sur trois sorties, " +
+            "ce sont des répétitions. Tout est mesuré au GPS, donc de provenance `field` : ce qui est ici est ce " +
+            "qui a été couru, et une montée qu'il n'a jamais prise n'y figure pas. La tendance se lit sur la " +
+            "meilleure VAM de chaque sortie, et reste indéterminée sous trois sorties.",
         },
       };
     }
@@ -1609,6 +1709,69 @@ export async function refreshModel(athleteId: string) {
     summary: `Modèle recalculé (confiance ${Math.round(model.confidence * 100)} %)`,
     content: model,
   };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Terrain
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Sens d'une tendance de VAM, en clair. */
+const TREND_FR: Record<RecurringClimb['trend'], string> = {
+  up: 'en progression',
+  flat: 'stable',
+  down: 'en recul',
+  unknown: 'indéterminée — moins de trois sorties',
+};
+
+/**
+ * Lit le terrain dans les traces.
+ *
+ * Seul endroit qui décompresse les flux pour y chercher autre chose que de la
+ * physiologie. Une soixantaine de traces se lisent en quelques centaines de
+ * millisecondes : à ce prix-là, rien ne justifie d'en garder une copie qui
+ * pourrait vieillir à côté des flux.
+ */
+async function readTerrain(athleteId: string, from: string, to: string) {
+  const activities = await db.listActivities(athleteId, { from, to, limit: 500 });
+  const climbs: ClimbOccurrence[] = [];
+  const outings: OutingStart[] = [];
+  let traced = 0;
+  for (const a of activities) {
+    const stored = await db.getStreams(a.id);
+    if (!stored) continue;
+    traced++;
+    const date = a.startDateLocal.slice(0, 10);
+    const start = stored.streams.latlng?.find((p) => p != null);
+    if (start) {
+      outings.push({
+        activityId: a.id,
+        date,
+        start: [start[0], start[1]],
+        elevationGainM: a.totalElevationGainM,
+      });
+    }
+    for (const c of detectClimbs(stored.streams)) {
+      climbs.push({ ...c, activityId: a.id, activityName: a.name, date });
+    }
+  }
+  return { activities, traced, climbs, outings };
+}
+
+/**
+ * Dénivelé d'une course visée, ou `null`.
+ *
+ * Sur un format à boucles il se compte en boucles visées, et non sur le total
+ * inscrit au parcours : ce total suppose déjà une ambition, qui peut changer.
+ * Un dénivelé non renseigné sort en `null` — il se dit, il ne se comble pas.
+ */
+function raceElevation(race: RaceGoal): number | null {
+  if (isLapCourse(race.course)) {
+    const laps = targetLaps(race);
+    const perLap = race.course.lap.elevationGainM;
+    return laps != null && perLap != null ? laps * perLap : null;
+  }
+  return courseHasUnknown(race.course, 'elevation') ? null : race.course.elevationGainM;
 }
 
 /**
