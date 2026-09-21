@@ -27,6 +27,9 @@ export const metadata: Metadata = {
   // Ouvert depuis l'écran d'accueil : un nom court sous l'icône, et une barre
   // d'état ardoise au-dessus d'une application ardoise.
   appleWebApp: { capable: true, title: 'Cairn', statusBarStyle: 'black' },
+  // Le commit de cette construction, que le service worker relit avant de
+  // ranger une coquille neuve (`public/sw.js`).
+  ...(process.env.CAIRN_COMMIT ? { other: { 'cairn-commit': process.env.CAIRN_COMMIT } } : {}),
 };
 
 export const viewport: Viewport = {

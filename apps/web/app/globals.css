@@ -194,6 +194,15 @@ button { font-family: inherit; font-size: inherit; }
 .sheet-link[data-active="true"] .nav-icon { color: inherit; }
 .sheet-foot { margin-top: 8px; padding: 12px 10px 0; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }
 
+/* La version sous les yeux, et ce que le service a refusé après elle. */
+.version { margin-top: 5px; }
+.version[data-warn="true"] { color: var(--warn); }
+
+/* Un écran dont le rendu a échoué : une phrase, la version, rien d'autre. */
+.broken { padding: 48px 0; max-width: 420px; }
+.broken p { margin: 0; font-size: 17px; }
+.broken .broken-version { margin-top: 8px; font-size: 13px; color: var(--text-faint); font-family: var(--mono); }
+
 /* Au téléphone, la barre latérale disparaît au profit d'une barre d'onglets
    sous le pouce : le haut de l'écran appartient à la réponse du jour, pas au
    menu. Cf. `.tabbar`. */

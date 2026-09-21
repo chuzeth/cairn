@@ -4,23 +4,33 @@
  * s'ils tombent ; Tailscale Serve les expose en HTTPS au réseau privé, et à lui
  * seul — les deux serveurs n'écoutent que sur 127.0.0.1.
  *
- * Le service n'exécute que du code construit et vérifié. `install` et `update`
- * copient les sources dans un instantané (`.service.nosync/releases/<date>`), y passent
- * `npm test` et `npx tsc -b`, y construisent le site, puis basculent
- * `.service.nosync/current` dessus. launchd ne lance que `current` : un plantage, un
- * réveil ou une ouverture de session relancent le code vérifié, quoi que le
- * dossier de travail contienne entre-temps.
+ * Le service n'exécute que du code construit et vérifié, et ce code est un
+ * commit. `install` et `update` extraient HEAD dans un instantané
+ * (`.service.nosync/releases/<date>`) — jamais le dossier de travail, qu'ils
+ * refusent tant qu'il n'est pas commité —, y passent `npm test` et `npx tsc -b`,
+ * y construisent le site, puis basculent `.service.nosync/current` dessus.
+ * launchd ne lance que `current` : un plantage, un réveil ou une ouverture de
+ * session relancent le code vérifié, quoi que le dossier contienne entre-temps.
+ * L'instantané porte son commit (`release.json`) : le site le grave dans la page,
+ * l'API le rend sur /health, et l'app se recharge quand les deux diffèrent.
  *
- *   npm run service -- install     vérifie, construit, installe, démarre, expose
- *   npm run service -- update      après un changement de code : vérifie, construit, bascule
- *   npm run service -- uninstall   arrête, désinstalle, retire l'exposition et les instantanés
- *   npm run service -- status      état launchd, instantané, réponses, adresse HTTPS
+ * Un commit sur main suffit : les crochets git lancent `follow`, qui met main en
+ * service en arrière-plan, par les mêmes étapes et avec les mêmes garde-fous.
+ * Chaque tentative laisse sa trace dans `deploy.json` — en cours, refusée,
+ * faite —, que `status` affiche et que /health rend : un refus se lit jusque
+ * sur le téléphone.
  *
- * `run` est la commande que launchd exécute, depuis l'instantané.
+ *   npm run service -- install     vérifie, construit, installe, démarre, expose, pose les crochets
+ *   npm run service -- update      met HEAD en service sans attendre de commit, ou retente un refus
+ *   npm run service -- uninstall   arrête, désinstalle, retire l'exposition, les crochets, les instantanés
+ *   npm run service -- status      état launchd, version, dernière tentative, réponses, adresse HTTPS
+ *
+ * `run` est la commande que launchd exécute, depuis l'instantané ; `follow` celle
+ * des crochets, qui détache `deploy`.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
-  constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync,
   renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -41,12 +51,22 @@ const CURRENT = join(SERVICE, 'current');
 const LOCK = join(SERVICE, 'lock');
 /** Ce que la surveillance a constaté : dernier contact, dernières reprises. */
 const WATCH = join(SERVICE, 'watch.json');
+/** La dernière mise à jour tentée — commit, issue, étape en cause —, lue par `status` et par /health. */
+const DEPLOY = join(SERVICE, 'deploy.json');
 const NEXT = join(REPO, 'node_modules/next/dist/bin/next');
+
+/** La branche que le service suit, et les crochets par lesquels elle avance : commit, fusion, réécriture. */
+const BRANCH = 'main';
+const HOOKS = ['post-commit', 'post-merge', 'post-rewrite'];
+/** Ce qui distingue nos crochets de ceux que d'autres auraient écrits, et qu'on ne remplace pas. */
+const HOOK_MARK = 'cairn:service';
 
 const LABEL = 'com.pchuze.cairn';
 const DOMAIN = `gui/${process.getuid()}`;
 const PLIST = join(homedir(), 'Library/LaunchAgents', `${LABEL}.plist`);
 const LOG = join(homedir(), 'Library/Logs/Cairn/cairn.log');
+/** Ce que les mises à jour d'arrière-plan écrivent : tests, typage, construction. */
+const DEPLOY_LOG = join(homedir(), 'Library/Logs/Cairn/deploy.log');
 
 /** Le service garde les ports documentés ; `npm run dev` prend 3001 et 4001. */
 const WEB_PORT = 3000;
@@ -86,7 +106,17 @@ function run() {
     process.exit(1);
   }
 
-  const env = { ...process.env, NODE_ENV: 'production', DATABASE_URL: database };
+  // La version que /health rend, et le fichier où lire ce que le service a
+  // tenté depuis. Le site, lui, porte déjà son commit : gravé à la construction.
+  const version = readRelease(CODE);
+  const env = {
+    ...process.env,
+    NODE_ENV: 'production',
+    DATABASE_URL: database,
+    CAIRN_DEPLOY_FILE: DEPLOY,
+    ...(version?.short && { CAIRN_COMMIT: version.short }),
+    ...(version?.deployedAt && { CAIRN_DEPLOYED_AT: version.deployedAt }),
+  };
   const stdio = ['ignore', 'pipe', 'pipe'];
   const servers = {
     api: spawn(process.execPath, [`--env-file-if-exists=${join(CODE, '.env')}`, '--import', 'tsx', 'src/index.ts'], {
@@ -317,24 +347,71 @@ async function waitReady(timeoutMs) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function install() {
+  const sha = committed();
   lock();
-  const dir = release();
+  const built = release(sha, 'manuel');
   mkdirSync(dirname(LOG), { recursive: true });
   mkdirSync(dirname(PLIST), { recursive: true });
-  rotateLog();
+  rotateLog(LOG);
   await unload();
   writeFileSync(PLIST, plist());
-  await activate(dir);
+  await activate(built);
+  hooks();
   expose();
   await status();
 }
 
 async function update() {
   if (servicePid() == null) fail('Service non installé : npm run service -- install');
+  const sha = committed();
   lock();
-  const dir = release();
-  rotateLog();
-  await activate(dir);
+  const built = release(sha, 'manuel');
+  rotateLog(LOG);
+  await activate(built);
+  hooks();
+  expose();
+  await status();
+}
+
+/**
+ * Ce que lancent les crochets git quand main avance : rend la main au commit
+ * tout de suite, la mise à jour part en arrière-plan. Détachée, elle survit au
+ * terminal ou à la session qui a commité ; sa sortie va dans `deploy.log`.
+ */
+function follow() {
+  mkdirSync(dirname(DEPLOY_LOG), { recursive: true });
+  rotateLog(DEPLOY_LOG);
+  const out = openSync(DEPLOY_LOG, 'a');
+  // Git passe au crochet son propre environnement — un index temporaire, entre
+  // autres — qui ne vaut que le temps du commit : la mise à jour part sans lui.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+  spawn(process.execPath, [SELF, 'deploy'], { cwd: REPO, env, detached: true, stdio: ['ignore', out, out] }).unref();
+  console.log('Cairn : mise en service de main en arrière-plan — npm run service -- status');
+}
+
+/**
+ * La mise à jour qu'un commit déclenche : main, vérifié et construit comme par
+ * `update`. Le verrou s'attend au lieu de refuser — une rafale de commits met
+ * chaque processus en file, et chacun, à son tour, ne construit que si main a
+ * changé depuis ce qui tourne. Un commit déjà refusé ne se reconstruit pas à
+ * chaque crochet : `update` le retente, sur demande.
+ */
+async function deploy() {
+  console.log(`\n══ ${new Date().toLocaleString('sv-SE')} ${BRANCH} a avancé`);
+  if (servicePid() == null) return console.log('Service non installé : rien à mettre en service.');
+  if (!(await waitLock(30 * 60_000))) {
+    return console.log('Le verrou est tenu depuis 30 min : abandon. npm run service -- update pour reprendre.');
+  }
+  const sha = git('rev-parse', '--verify', `refs/heads/${BRANCH}^{commit}`);
+  const short = git('rev-parse', '--short=7', sha);
+  if (readRelease(currentRelease())?.commit === sha) return console.log(`${short} est déjà en service.`);
+  const last = readDeploy();
+  if (last?.commit === sha && last.state === 'refused') {
+    return console.log(`${short} a déjà été refusé (${last.step}) : npm run service -- update pour le retenter.`);
+  }
+  const built = release(sha, 'commit');
+  rotateLog(LOG);
+  await activate(built);
   expose();
   await status();
 }
@@ -344,6 +421,7 @@ async function uninstall() {
   if (!tailnet().error && serving()) tailscaleCli('serve', '--https=443', 'off');
   await unload();
   rmSync(PLIST, { force: true });
+  for (const file of ourHooks()) rmSync(file, { force: true });
   rmSync(SERVICE, { recursive: true, force: true });
   console.log(`Service désinstallé. Journaux conservés : ${LOG}`);
 }
@@ -354,14 +432,17 @@ async function status() {
   const field = (key) => new RegExp(`\\n\\s*${key} = ([^\\n]+)`).exec(job.stdout)?.[1];
   const pid = field('pid');
   const current = currentRelease();
+  const version = readRelease(current);
+  const at = (iso) => new Date(iso).toLocaleString('sv-SE');
   console.log(`launchd   ${LABEL} : ${field('state')}, pid ${pid ?? '—'}, ${field('runs')} démarrage(s), dernier arrêt ${field('last exit code')}`);
-  console.log(`code      instantané ${current ? basename(current) : 'aucun'}`);
+  const since = version?.deployedAt ? `, en service depuis le ${at(version.deployedAt)}` : '';
+  console.log(`code      ${version ? `${version.short}${since}` : 'version inconnue'} (instantané ${current ? basename(current) : 'aucun'})`);
+  console.log(`suivi     ${following(version)}`);
 
   const [page, state, health] = [await probe(WEB_PORT, '/'), await probe(WEB_PORT, '/api/state'), await probe(API_PORT, '/health')];
   console.log(`site      http://127.0.0.1:${WEB_PORT}/ → ${page.status} en ${page.ms} ms ; /api/state → ${state.status} en ${state.ms} ms`);
   if (health.ok) {
     const { poll } = JSON.parse(health.body);
-    const at = (iso) => new Date(iso).toLocaleString('sv-SE');
     const last = poll?.lastRunAt ? `dernière ${at(poll.lastRunAt)} (${poll.lastOutcome})` : 'aucune depuis le démarrage';
     console.log(`relève    ${poll?.enabled ? `${poll.running ? 'en cours' : `prochaine ${at(poll.nextRunAt)}`} ; ${last}` : 'désactivée'}`);
   }
@@ -383,7 +464,32 @@ async function status() {
     : '';
   console.log(`contact   ${seen.lastContactAt ? `${when(seen.lastContactAt)}, ${ago(seen.lastContactAt)}` : 'aucun enregistré (surveillance démarrée au prochain lancement)'}${reprises}`);
 
-  console.log(`journaux  ${LOG}`);
+  console.log(`journaux  ${LOG} ; mises à jour ${DEPLOY_LOG}`);
+}
+
+/**
+ * Où en est main par rapport à ce qui tourne, en une ligne : la dernière
+ * tentative quand elle porte sur un autre commit, sinon l'écart, sinon rien.
+ * Sans crochets, un commit n'atteint plus le téléphone : cela se dit aussi.
+ */
+function following(version) {
+  const at = (iso) => new Date(iso).toLocaleString('sv-SE');
+  const hooked = ourHooks().length === HOOKS.length ? '' : ' ; ⚠ crochets git absents : npm run service -- update';
+  const last = readDeploy();
+  if (last && last.commit !== version?.commit) {
+    if (last.state === 'running' && alive(last.pid)) return `${last.short} en vérification depuis le ${at(last.at)}, voir ${DEPLOY_LOG}${hooked}`;
+    if (last.state === 'running') return `${last.short} interrompu le ${at(last.at)} : npm run service -- update${hooked}`;
+    if (last.state === 'refused') return `${last.short} refusé le ${at(last.at)}, ${last.step} en échec : voir ${DEPLOY_LOG}${hooked}`;
+  }
+  let main;
+  try {
+    main = git('rev-parse', '--verify', '--quiet', `refs/heads/${BRANCH}^{commit}`);
+  } catch {
+    return `pas de branche ${BRANCH}${hooked}`;
+  }
+  if (!version) return `${BRANCH} à ${main.slice(0, 7)}, version en service inconnue : npm run service -- update${hooked}`;
+  if (main !== version.commit) return `${BRANCH} à ${main.slice(0, 7)}, pas en service : npm run service -- update${hooked}`;
+  return `${BRANCH} en service${hooked || ' ; chaque commit y part de lui-même'}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -391,43 +497,74 @@ async function status() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Un instantané : les sources de cet instant, vérifiées et construites sur place.
- * Ce qui tourne ensuite est exactement ce qui a été vérifié — une modification
- * faite pendant `update` n'y entre pas, elle attendra le suivant.
+ * Le commit qu'`install` et `update` mettent en service : HEAD, et seulement si
+ * le dossier de travail n'a rien d'autre. Construire HEAD par-dessus des
+ * modifications non commitées laisserait croire qu'elles sont en service ; les
+ * construire, elles, donnerait à la version un nom qui ne la désigne pas.
  */
-function release() {
+function committed() {
+  const dirty = git('status', '--porcelain').split('\n').filter(Boolean);
+  if (dirty.length > 0) {
+    const shown = dirty.slice(0, 8).map((line) => `  ${line}`).join('\n');
+    const more = dirty.length > 8 ? `\n  … et ${dirty.length - 8} autres` : '';
+    fail(`Arbre non commité — le service se construit à partir d'un commit :\n${shown}${more}\nCommite ou mets de côté, puis relance.`);
+  }
+  return git('rev-parse', '--verify', 'HEAD^{commit}');
+}
+
+/**
+ * Un instantané : un commit, vérifié et construit sur place. Ce qui tourne
+ * ensuite est exactement ce qui a été vérifié, et porte le nom de ce commit —
+ * le dossier de travail peut changer pendant ce temps, rien n'en entre.
+ *
+ * La tentative est écrite avant de commencer et une fois tranchée : un refus
+ * reste lisible, dans `status` comme dans l'app, jusqu'à ce qu'un autre commit
+ * passe.
+ */
+function release(sha, trigger) {
+  const short = git('rev-parse', '--short=7', sha);
   const dir = join(RELEASES, new Date().toLocaleString('sv-SE').replace(' ', '_').replaceAll(':', ''));
-  copySources(dir);
+  const attempt = { commit: sha, short, trigger, pid: process.pid };
+  writeDeploy({ ...attempt, state: 'running', at: new Date().toISOString() });
+
+  const refuse = (step) => {
+    rmSync(dir, { recursive: true, force: true });
+    writeDeploy({ ...attempt, state: 'refused', step, at: new Date().toISOString() });
+    const current = currentRelease();
+    fail(`${short} refusé, ${step} en échec : rien n'est remplacé, le service reste sur ${current ? `l'instantané ${basename(current)}` : 'ce qui tourne'}.`);
+  };
+
+  try {
+    extract(sha, dir);
+    writeRelease(dir, { commit: sha, short, committedAt: git('show', '-s', '--format=%cI', sha) });
+  } catch (e) {
+    console.error(e.message);
+    refuse('extraction');
+  }
   const steps = [
     ['npm test', 'npm', ['test'], dir],
     ['npx tsc -b', 'npx', ['tsc', '-b'], dir],
     ['next build', process.execPath, [NEXT, 'build'], join(dir, 'apps/web')],
   ];
   for (const [label, command, args, cwd] of steps) {
-    console.log(`\n── ${label} (${dir})`);
-    if (spawnSync(command, args, { cwd, stdio: 'inherit' }).status !== 0) {
-      rmSync(dir, { recursive: true, force: true });
-      const current = currentRelease();
-      fail(`${label} en échec : rien n'est remplacé, le service reste sur ${current ? `l'instantané ${basename(current)}` : 'ce qui tourne'}.`);
-    }
+    console.log(`\n── ${label} (${short}, ${dir})`);
+    if (spawnSync(command, args, { cwd, stdio: 'inherit' }).status !== 0) refuse(label);
   }
-  return dir;
+  return { dir, attempt };
 }
 
 /**
- * Les fichiers suivis ou non ignorés par git, plus `.env` : ce que `npm test` et
- * `npx tsc -b` liraient dans le dossier de travail. Sans le verrou npm, Next
- * prend le dépôt pour racine, là où sont les `node_modules` ; les paquets
- * `@cairn/*`, eux, se résolvent dans la copie et jamais dans le dépôt.
+ * Les fichiers du commit, et rien d'autre — plus `.env`, qui n'est pas du code
+ * mais la configuration de cette machine. Sans le verrou npm, Next prend le
+ * dépôt pour racine, là où sont les `node_modules` ; les paquets `@cairn/*`,
+ * eux, se résolvent dans la copie et jamais dans le dépôt.
  */
-function copySources(dir) {
-  const files = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: REPO, encoding: 'utf8' });
-  for (const file of [...files.split('\0'), '.env']) {
-    const from = join(REPO, file);
-    if (!file || file === 'package-lock.json' || !existsSync(from) || !statSync(from).isFile()) continue;
-    mkdirSync(dirname(join(dir, file)), { recursive: true });
-    copyFileSync(from, join(dir, file), constants.COPYFILE_FICLONE);
-  }
+function extract(sha, dir) {
+  mkdirSync(dir, { recursive: true });
+  const tar = execFileSync('git', ['archive', '--format=tar', sha], { cwd: REPO, maxBuffer: 1 << 30 });
+  execFileSync('tar', ['-x', '-f', '-', '-C', dir], { input: tar });
+  rmSync(join(dir, 'package-lock.json'), { force: true });
+  if (existsSync(join(REPO, '.env'))) copyFileSync(join(REPO, '.env'), join(dir, '.env'));
   mkdirSync(join(dir, 'node_modules/@cairn'), { recursive: true });
   symlinkSync(join(REPO, 'node_modules/.bin'), join(dir, 'node_modules/.bin'));
   for (const pkg of readdirSync(join(dir, 'packages'))) {
@@ -439,12 +576,15 @@ function copySources(dir) {
 /**
  * Bascule `current` sur le nouvel instantané et redémarre. L'ancien reste en
  * place tant que le nouveau n'a pas répondu ; s'il ne répond pas, `current`
- * revient sur l'ancien et le service redémarre dessus.
+ * revient sur l'ancien et le service redémarre dessus. La date de mise en
+ * service s'écrit juste avant la bascule : c'est elle que /health rend.
  */
-async function activate(dir) {
+async function activate({ dir, attempt }) {
   const previous = currentRelease();
+  writeRelease(dir, { ...readRelease(dir), deployedAt: new Date().toISOString() });
   point(dir);
   if (!(await restart())) {
+    writeDeploy({ ...attempt, state: 'refused', step: 'démarrage', at: new Date().toISOString() });
     if (!previous) {
       await unload();
       fail('Le nouvel instantané ne démarre pas.', true);
@@ -454,6 +594,7 @@ async function activate(dir) {
     rmSync(dir, { recursive: true, force: true });
     fail(`Le nouvel instantané ne démarre pas : ${back ? 'retour' : 'échec du retour'} sur l'instantané ${basename(previous)}.`, true);
   }
+  writeDeploy({ ...attempt, state: 'deployed', at: new Date().toISOString() });
   for (const name of readdirSync(RELEASES)) {
     if (join(RELEASES, name) !== dir) rmSync(join(RELEASES, name), { recursive: true, force: true });
   }
@@ -475,33 +616,158 @@ function currentRelease() {
   }
 }
 
+/** La version d'un instantané : son commit, et depuis quand il est en service. */
+function readRelease(dir) {
+  if (!dir) return null;
+  try {
+    return JSON.parse(readFileSync(join(dir, 'release.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeRelease(dir, version) {
+  writeFileSync(join(dir, 'release.json'), `${JSON.stringify(version, null, 2)}\n`);
+}
+
+function readDeploy() {
+  try {
+    return JSON.parse(readFileSync(DEPLOY, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Remplacé d'un coup : /health le relit à chaque ouverture de l'app, jamais à moitié écrit. */
+function writeDeploy(attempt) {
+  mkdirSync(dirname(DEPLOY), { recursive: true });
+  writeFileSync(`${DEPLOY}.next`, `${JSON.stringify(attempt, null, 2)}\n`);
+  renameSync(`${DEPLOY}.next`, DEPLOY);
+}
+
+/** git dans le dépôt, sans prendre le verrou d'index qu'une autre session tient peut-être. */
+function git(...args) {
+  return execFileSync('git', args, {
+    cwd: REPO, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+  }).trimEnd();
+}
+
 /** Deux commandes simultanées se disputeraient `current`, launchd et les ports. */
 function lock() {
-  mkdirSync(dirname(LOCK), { recursive: true });
-  try {
-    writeFileSync(LOCK, String(process.pid), { flag: 'wx' });
-  } catch {
-    const holder = Number(readFileSync(LOCK, 'utf8'));
-    let running = true;
-    try {
-      process.kill(holder, 0);
-    } catch (e) {
-      running = e.code === 'EPERM';
-    }
-    if (running) fail(`Une autre commande du service est en cours (pid ${holder}).`);
-    writeFileSync(LOCK, String(process.pid));
+  const holder = tryLock();
+  if (holder) fail(`Une autre commande du service est en cours (pid ${holder}).`);
+}
+
+/** Le verrou attendu plutôt que refusé : une mise à jour déclenchée par un commit passe après la précédente. */
+async function waitLock(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (tryLock()) {
+    if (Date.now() > deadline) return false;
+    await sleep(2000);
   }
-  process.on('exit', () => rmSync(LOCK, { force: true }));
+  return true;
+}
+
+/**
+ * Prend le verrou, ou rend le pid qui le tient. Le verrou d'un processus mort
+ * se lève ; un verrou vide est en train de s'écrire, il compte comme tenu.
+ */
+function tryLock() {
+  mkdirSync(dirname(LOCK), { recursive: true });
+  for (;;) {
+    try {
+      writeFileSync(LOCK, String(process.pid), { flag: 'wx' });
+      process.on('exit', unlock);
+      return null;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    let holder;
+    try {
+      holder = Number(readFileSync(LOCK, 'utf8'));
+    } catch {
+      continue; // Levé entre-temps.
+    }
+    if (!holder || alive(holder)) return holder || 'inconnu';
+    rmSync(LOCK, { force: true });
+  }
+}
+
+function unlock() {
+  try {
+    if (Number(readFileSync(LOCK, 'utf8')) === process.pid) rmSync(LOCK, { force: true });
+  } catch {
+    // Déjà levé.
+  }
+}
+
+function alive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Crochets git
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Les crochets qui font suivre main au service. Écrits plutôt que versionnés :
+ * comme le plist, ils portent le chemin de ce Node, et celui de l'instantané en
+ * service — c'est son `service.mjs`, vérifié, qui déploie le commit suivant, et
+ * non celui du dossier de travail, peut-être en cours d'édition. Un crochet que
+ * Cairn n'a pas écrit reste en place, et on le dit.
+ */
+function hooks() {
+  const quote = (s) => `'${s.replaceAll("'", "'\\''")}'`;
+  const script = `#!/bin/sh
+# ${HOOK_MARK} — écrit par npm run service -- install | update.
+# Un commit sur ${BRANCH} part en service en arrière-plan : tests, typage et
+# construction dans un instantané, rien de remplacé si l'un échoue. L'issue se lit
+# dans npm run service -- status, et dans l'app.
+[ "$(git symbolic-ref -q --short HEAD)" = ${BRANCH} ] || exit 0
+exec ${quote(process.execPath)} ${quote(join(CURRENT, 'scripts/service.mjs'))} follow
+`;
+  const dir = hooksDir();
+  mkdirSync(dir, { recursive: true });
+  for (const name of HOOKS) {
+    const file = join(dir, name);
+    if (existsSync(file) && !readFileSync(file, 'utf8').includes(HOOK_MARK)) {
+      console.log(`⚠ ${file} n'est pas de Cairn : laissé en place, ${name} ne mettra pas le service à jour.`);
+      continue;
+    }
+    writeFileSync(file, script);
+    chmodSync(file, 0o755);
+  }
+}
+
+function ourHooks() {
+  const dir = hooksDir();
+  return HOOKS.map((name) => join(dir, name)).filter((file) => {
+    try {
+      return readFileSync(file, 'utf8').includes(HOOK_MARK);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function hooksDir() {
+  return resolve(REPO, git('rev-parse', '--git-path', 'hooks'));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // launchd, journal, Tailscale
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** launchd rouvre le journal à chaque démarrage : le renommer juste avant suffit à le faire tourner. */
-function rotateLog() {
+/** Un journal se rouvre à chaque démarrage — par launchd, ou par `follow` : le renommer juste avant suffit à le faire tourner. */
+function rotateLog(file) {
   try {
-    if (statSync(LOG).size > 5_000_000) renameSync(LOG, `${LOG}.1`);
+    if (statSync(file).size > 5_000_000) renameSync(file, `${file}.1`);
   } catch {
     // Pas encore de journal.
   }
@@ -595,7 +861,7 @@ function fail(message, withLog = false) {
   process.exit(1);
 }
 
-const commands = { install, update, uninstall, status, run };
+const commands = { install, update, uninstall, status, run, follow, deploy };
 const command = commands[process.argv[2]];
 if (!command) {
   console.error('usage : npm run service -- install | update | uninstall | status');

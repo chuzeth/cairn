@@ -11,6 +11,9 @@
  *
  *   coquille   `/`, `/point` et `/coach` sortent du cache avant tout réseau ;
  *              le réseau les rafraîchit derrière, sans retenir l'affichage.
+ *              Quand la page se découvre plus ancienne que le Mac, elle fait
+ *              ranger ici la coquille du nouveau commit avant de se recharger
+ *              (`lib/version.ts`).
  *   lecture    la dernière réponse réussie est gardée, datée du moment où elle
  *              a été obtenue. Resservie, elle porte cette date dans l'en-tête
  *              `x-cairn-recorded-at`, que l'écran affiche. Une réponse du
@@ -66,11 +69,11 @@ self.addEventListener('install', (event) => {
 });
 
 /**
- * Pas de `skipWaiting` : une page ouverte demande les fragments de la
- * construction qui l'a rendue. Prendre la main sous elle pour lui servir une
- * autre coquille casserait la page qu'on a sous les yeux. La nouvelle version
- * attend que l'application soit refermée — sur un téléphone, le prochain
- * réveil.
+ * Pas de `skipWaiting` à l'installation : une page ouverte demande les fragments
+ * de la construction qui l'a rendue. Prendre la main sous elle pour lui servir
+ * une autre coquille casserait la page qu'on a sous les yeux. La nouvelle
+ * version attend que l'application soit refermée — ou que la page, qui va se
+ * recharger, le demande elle-même (`skip-waiting`, plus bas).
  */
 self.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -97,6 +100,58 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') return event.respondWith(shell(event));
   if (url.pathname.startsWith('/_next/static/')) return event.respondWith(fragment(request));
 });
+
+/**
+ * Ce que la page demande avant de se recharger sur une nouvelle version.
+ *
+ *   skip-waiting   ce worker, neuf, prend la main : la page qui le demande va
+ *                  se recharger, rien ne se casse sous elle.
+ *   renew-shell    ranger la coquille d'un commit ; la réponse dit si c'est fait.
+ */
+self.addEventListener('message', (event) => {
+  const { data } = event;
+  if (data?.type === 'skip-waiting') {
+    event.waitUntil(self.skipWaiting());
+  } else if (data?.type === 'renew-shell' && typeof data.commit === 'string') {
+    const reply = (ok) => event.ports[0]?.postMessage({ ok });
+    event.waitUntil(renew(data.commit).then(reply, () => reply(false)));
+  }
+});
+
+/**
+ * La coquille d'un commit précis, rangée d'un bloc.
+ *
+ * Les trois écrans sont relus sans cache et doivent tous porter ce commit dans
+ * leur `<meta name="cairn-commit">` : sinon le Mac est entre deux versions, et
+ * rien n'est rangé. Leurs fragments entrent avant eux, si bien que la page
+ * rechargée s'ouvre sur une coquille complète — même si le réseau tombe entre
+ * les deux.
+ */
+async function renew(commit) {
+  const pages = await Promise.all(
+    SHELL_ROUTES.map(async (route) => {
+      const res = await fetch(route, { cache: 'no-store' });
+      return { route, res, html: res.ok ? await res.clone().text() : '' };
+    }),
+  );
+  if (pages.some(({ html }) => commitOf(html) !== commit)) return false;
+
+  const cache = await caches.open(SHELL);
+  const fragments = new Set(pages.flatMap(({ html }) => html.match(/\/_next\/static\/[^"'\\\s)]+/g) ?? []));
+  const stored = await Promise.all(
+    [...fragments].map(async (url) => {
+      if (await cache.match(url, { ignoreVary: true })) return true;
+      const res = await fetch(url);
+      if (res.ok) await put(cache, url, res);
+      return res.ok;
+    }),
+  );
+  if (stored.includes(false)) return false;
+  for (const { route, res } of pages) await put(cache, route, res);
+  return true;
+}
+
+const commitOf = (html) => /<meta name="cairn-commit" content="([^"]*)"/.exec(html)?.[1] ?? null;
 
 /**
  * La coquille : le cache d'abord, le réseau derrière.

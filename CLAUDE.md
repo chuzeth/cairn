@@ -32,9 +32,11 @@ npm run dev                           npm run sync -w @cairn/api -- sync [n]
 npm run service -- update             npm run service -- status
 ```
 
-Le téléphone ouvre le service installé, qui tourne sur un instantané vérifié : un
-changement de code ne l'atteint qu'après `npm run service -- update`, qui refuse
-de remplacer ce qui tourne si `npm test` ou `npx tsc -b` échoue.
+Le téléphone ouvre le service installé, qui tourne sur un instantané vérifié.
+Commiter sur main, c'est déployer : un crochet git met le service à jour en
+arrière-plan, et rien n'est remplacé si `npm test`, `npx tsc -b` ou la
+construction échoue — le refus se lit dans `npm run service -- status` et dans
+l'app. Un changement non commité ne l'atteint jamais.
 
 ## Méthode de travail
 

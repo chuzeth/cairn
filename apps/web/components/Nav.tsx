@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { frDate } from '@/lib/api';
+import { Version } from './Version';
 
 /**
  * Deux navigations pour un seul site.
@@ -94,6 +95,7 @@ export function Nav() {
         <div className="sidebar-foot">
           <div>Pierre Chuzeville</div>
           <div style={{ marginTop: 3 }}>Test d'effort du {LAB_TEST_DATE}</div>
+          <Version />
         </div>
       </nav>
 
@@ -107,7 +109,10 @@ export function Nav() {
                 {l.label}
               </Link>
             ))}
-            <div className="sheet-foot">Pierre Chuzeville · test d'effort du {LAB_TEST_DATE}</div>
+            <div className="sheet-foot">
+              Pierre Chuzeville · test d'effort du {LAB_TEST_DATE}
+              <Version />
+            </div>
           </div>
         </div>
       )}

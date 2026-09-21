@@ -29,8 +29,28 @@ function rootEnv(key: string): string | undefined {
   }
 }
 
+/**
+ * Le commit de cette construction.
+ *
+ * Le service construit le site dans un instantané tiré d'un commit, où il a
+ * écrit `release.json` (`scripts/service.mjs`). Le commit est gravé dans la
+ * page — dans le code, et dans `<meta name="cairn-commit">` que relit le
+ * service worker : c'est lui que l'app compare à /health pour savoir si elle
+ * est la version en service. Hors instantané — `npm run dev` —, pas de version,
+ * et l'app ne se compare à rien.
+ */
+function builtCommit(): string {
+  try {
+    const release = JSON.parse(readFileSync(new URL('../../release.json', import.meta.url), 'utf8')) as { short?: string };
+    return release.short ?? '';
+  } catch {
+    return '';
+  }
+}
+
 const config: NextConfig = {
   reactStrictMode: true,
+  env: { CAIRN_COMMIT: builtCommit() },
   // Les paquets du monorepo sont consommés directement en TypeScript source.
   transpilePackages: ['@cairn/core'],
   typescript: { ignoreBuildErrors: false },

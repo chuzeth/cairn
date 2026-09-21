@@ -16,6 +16,7 @@ import {
 } from '@cairn/physiology';
 import { env, missingConfig } from './env.js';
 import { activityPollerStatus } from './poller.js';
+import { lastDeploy, runningVersion } from './release.js';
 import { backfill, ingestActivity, processPendingWebhooks, stravaClientFor } from './sync.js';
 
 const dayMs = 86_400_000;
@@ -90,7 +91,30 @@ export async function buildServer() {
       // ressemble à une relève sans rien à faire.
       poll: activityPollerStatus(),
       hasActivities: activityCount > 0,
+      // La version qui répond, à laquelle l'app se compare ; et la dernière
+      // mise à jour tentée, qu'elle affiche quand elle a été refusée.
+      version: runningVersion(),
+      deploy: lastDeploy(),
     };
+  });
+
+  /**
+   * Un écran dont le rendu a échoué, rapporté par sa frontière d'erreur.
+   *
+   * Rien en base : l'erreur va au journal du service, avec l'écran, la version
+   * de la page et la pile — de quoi retrouver le code qui a cassé sans avoir à
+   * reproduire la panne sur le téléphone.
+   */
+  app.post('/api/errors', async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.slice(0, max) : undefined);
+    const digest = text(body.digest, 100);
+    req.log.error(
+      { err: { stack: text(body.stack, 8000) } },
+      `rendu en échec sur ${text(body.screen, 200) ?? 'un écran inconnu'}, version ${text(body.commit, 40) ?? 'inconnue'}` +
+        `${digest ? ` (digest ${digest})` : ''} : ${text(body.message, 1000) ?? 'erreur sans message'}`,
+    );
+    return reply.code(204).send();
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

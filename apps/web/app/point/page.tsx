@@ -10,6 +10,7 @@ import {
   type AnswerKey, type Answers, type Extras,
 } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
+import { useUnsent } from '@/lib/version';
 import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, Stale, unweighed } from '@/components/ui';
 import { Gauge } from '@/components/charts';
 
@@ -27,6 +28,9 @@ export default function CheckInPage() {
   const [extras, setExtras] = useState<Extras>({});
   const [note, setNote] = useState('');
   const [showExtras, setShowExtras] = useState(false);
+  /** Une réponse choisie depuis le dernier envoi : la page ne se recharge pas sous elle. */
+  const [edited, setEdited] = useState(false);
+  useUnsent(edited);
 
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const [before, setBefore] = useState<Readiness | null>(null);
@@ -77,13 +81,15 @@ export default function CheckInPage() {
     el.style.height = `${el.scrollHeight}px`;
   }, [note]);
 
-  const setAnswer = (key: AnswerKey, value: number) =>
+  const setAnswer = (key: AnswerKey, value: number) => {
+    setEdited(true);
     setAnswers((a) => {
       const next: Answers = { ...a };
       if (next[key] === value) delete next[key];
       else next[key] = value;
       return next;
     });
+  };
 
   const answered =
     Object.keys(answers).length > 0 ||
@@ -100,6 +106,7 @@ export default function CheckInPage() {
         if (raw !== '') body[e.key] = Number(raw.replace(',', '.'));
       }
       const sent = await sendOrQueue<CheckInResult>('/api/checkin', body);
+      setEdited(false);
       // Mis en file : rien n'a été enregistré et aucun score n'a été recalculé.
       // Afficher « c'est noté » ici serait le seul vrai mensonge de l'écran.
       if (sent) setResult(sent);

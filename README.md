@@ -30,12 +30,14 @@ le téléphone, en 4G comme en wifi, et à ajouter à l'écran d'accueil
 veille tant que Cairn tourne ; sur batterie il dort, et la relève Strava rattrape
 au réveil.
 
-Le service n'exécute que du code vérifié. `npm run service -- update` copie les
-sources dans un instantané, y passe `npm test` et `npx tsc -b`, y construit le
-site, et ne remplace ce qui tourne qu'une fois tout passé ; l'instantané
-précédent reste en place tant que le nouveau n'a pas démarré. Une modification
-non suivie d'`update` n'atteint pas le service, même après un plantage ou un
-redémarrage. Pour développer, `npm run dev` sert le site sur
+Le service n'exécute que du code vérifié, et ce code est un commit. Chaque commit
+sur main le met à jour en arrière-plan (crochets git posés par `install` et
+`update`) : le commit est extrait dans un instantané, qui passe `npm test` et
+`npx tsc -b`, construit le site, et ne remplace ce qui tourne qu'une fois tout
+passé ; l'instantané précédent reste en place tant que le nouveau n'a pas
+démarré. Un refus se lit dans `npm run service -- status` et dans la feuille
+« Plus » de l'app, qui dit aussi quelle version elle sert. Une modification non
+commitée n'atteint jamais le service. Pour développer, `npm run dev` sert le site sur
 http://localhost:3001 et l'API sur 4001, sans relève Strava : celle du service
 suffit, et deux relèves sur la même base se marcheraient dessus.
 
@@ -163,7 +165,7 @@ Le serveur MCP expose exactement les mêmes outils et les mêmes données. Voir
 | Commande | Effet |
 |---|---|
 | `npm run service -- install` / `uninstall` | installe ou retire le service (LaunchAgent, Tailscale Serve) |
-| `npm run service -- update` | vérifie (tests, typecheck), construit un instantané et y bascule le service |
+| `npm run service -- update` | met HEAD en service sans attendre de commit, ou retente un refus ; refuse un arbre non commité |
 | `npm run service -- status` | état launchd, réponses des serveurs, adresse HTTPS, journaux |
 | `npm run dev` | API + interface web en développement, sur 4001 et 3001 |
 | `npm run dev:api` / `npm run dev:web` | l'un ou l'autre |
