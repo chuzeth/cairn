@@ -1193,7 +1193,7 @@ export async function executeTool(
       // reprises, elles ne sont pas réécrites.
       const previous = await db.getActivePlan(athleteId);
 
-      const { plan, weeks, tsbCheck, ratioCheck, carryOver } = buildTrainingPlan({
+      const { plan, weeks, tsbCheck, ratioCheck, volumeCheck, carryOver } = buildTrainingPlan({
         athleteId,
         model: state.model,
         constraints: state.profile.constraints,
@@ -1285,7 +1285,8 @@ export async function executeTool(
           `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}` +
           (ratioCheck.exceedances.length
             ? ` — ⚠ ratio de charge au-delà de son seuil : ${describeRatioExceedances(ratioCheck.exceedances)}`
-            : ''),
+            : '') +
+          (volumeCheck.statement ? ` — ⚠ ${volumeCheck.statement}` : ''),
         content: {
           plan_id: plan.id,
           course: race.name,
@@ -1306,6 +1307,19 @@ export async function executeTool(
             du: ratioCheck.from,
             au: ratioCheck.to,
             jours_de_charge_connus_avant_le_plan: ratioCheck.historyDays,
+          },
+          // Le plafond horaire est tenu par construction ; ce qui se dit ici,
+          // c'est la place qu'il reste et ce qu'elle coûte.
+          volume_hebdomadaire: {
+            plafond_h: Math.round((volumeCheck.ceilingS / 3600) * 10) / 10,
+            semaine_la_plus_lourde_h: Math.round((volumeCheck.peakS / 3600) * 10) / 10,
+            semaines_sous_utilisees: volumeCheck.underused.map((u) => ({
+              semaine: u.weekStart,
+              volume_h: Math.round((u.writtenS / 3600) * 10) / 10,
+              inutilise_h: Math.round((u.unusedS / 3600) * 10) / 10,
+            })),
+            durabilite_facteur_limitant_mesure: volumeCheck.durabilityLimiting,
+            a_dire: volumeCheck.statement,
           },
           // Sur un format à boucle répétée, ce n'est pas un temps prédit mais la
           // durée que l'ambition enregistrée représente : la cloche la fixe.

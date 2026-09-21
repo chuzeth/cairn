@@ -701,7 +701,9 @@ export async function getActivePlan(
       index,
       phase: (list[0]?.phase ?? 'base') as TrainingWeek['phase'],
       targetLoad: list.reduce((a, s) => a + s.plannedLoad, 0),
-      targetDurationS: list.reduce((a, s) => a + s.plannedDurationS, 0),
+      plannedDurationS: list
+        .filter((s) => s.type !== 'race')
+        .reduce((a, s) => a + s.plannedDurationS, 0),
       targetElevationGainM: list.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0),
       intensityDistribution: { low: 0, moderate: 0, high: 0 },
       isDeload: false,

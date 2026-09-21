@@ -207,8 +207,15 @@ export interface AppliedDirective {
    */
   directiveId: string;
   origin: DirectiveOrigin;
-  /** Semaine qui dispense la séance du plancher d'une plage de durée. Un fait du plan, pas du contenu. */
-  exemption?: 'deload' | 'taper';
+  /**
+   * Ce qui dispense la séance du plancher d'une plage de durée — un fait du
+   * plan, pas du contenu.
+   *
+   * `deload` et `taper` : la semaine a une autre fonction que de construire.
+   * `ceiling` : la plage ne tenait pas sous le plafond horaire déclaré, et le
+   * temps que l'athlète a réellement l'emporte sur ce que le dossier écrit.
+   */
+  exemption?: 'deload' | 'taper' | 'ceiling';
 }
 
 /** Une trace lue sur la séance telle qu'elle est. */
@@ -1120,7 +1127,16 @@ export interface TrainingWeek {
   phase: TrainingPhase;
   /** Charge métabolique cible pour la semaine. */
   targetLoad: number;
-  targetDurationS: number;
+  /**
+   * Temps d'entraînement que la semaine écrit, course exclue — mesuré sur les
+   * séances, jamais déduit de la charge.
+   *
+   * C'était une durée cible, quotient de la charge par une constante de 55
+   * points l'heure. Elle ne décrivait ni ce que la semaine contenait — le
+   * volume facile coûte moins l'heure que le seuil — ni ce que l'athlète avait
+   * déclaré pouvoir donner.
+   */
+  plannedDurationS: number;
   targetElevationGainM: number;
   /** Répartition d'intensité visée (modèle 3 zones), fractions sommant à 1. */
   intensityDistribution: { low: number; moderate: number; high: number };

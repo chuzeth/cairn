@@ -94,7 +94,7 @@ function session(over: Partial<PlannedSession> & { id: string; date: string; tit
  */
 const PREVIOUS: TrainingWeek[] = [
   {
-    weekStart: '2026-09-14', index: 0, phase: 'base', targetLoad: 250, targetDurationS: 5 * 3600,
+    weekStart: '2026-09-14', index: 0, phase: 'base', targetLoad: 250, plannedDurationS: 5 * 3600,
     targetElevationGainM: 600, intensityDistribution: { low: 0.8, moderate: 0.1, high: 0.1 },
     isDeload: false, focus: 'Reprise', sessions: [
       session({ id: 'p1', date: '2026-09-15', title: 'Côtes — 8 × 90 s à 10 %', status: 'completed', plannedLoad: 37 }),
@@ -105,7 +105,7 @@ const PREVIOUS: TrainingWeek[] = [
     ],
   },
   {
-    weekStart: '2026-09-21', index: 1, phase: 'build', targetLoad: 320, targetDurationS: 6 * 3600,
+    weekStart: '2026-09-21', index: 1, phase: 'build', targetLoad: 320, plannedDurationS: 6 * 3600,
     targetElevationGainM: 900, intensityDistribution: { low: 0.75, moderate: 0.1, high: 0.15 },
     isDeload: false, focus: 'Construction', sessions: [
       session({
@@ -129,7 +129,7 @@ const PREVIOUS: TrainingWeek[] = [
     ],
   },
   {
-    weekStart: '2026-09-28', index: 2, phase: 'build', targetLoad: 340, targetDurationS: 6.5 * 3600,
+    weekStart: '2026-09-28', index: 2, phase: 'build', targetLoad: 340, plannedDurationS: 6.5 * 3600,
     targetElevationGainM: 950, intensityDistribution: { low: 0.75, moderate: 0.1, high: 0.15 },
     isDeload: false, focus: 'Construction', sessions: [
       session({

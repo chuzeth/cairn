@@ -350,10 +350,13 @@ function effectOf(
       // Dire « plancher dispensé » d'une séance que rien ne dispense serait un
       // mensonge de plus dans une trace censée expliquer d'où vient la consigne.
       if (running < directive.minS && trace.exemption) {
-        return (
-          `Plage prescrite ${plage} ; ${retained} retenues — ` +
-          `${trace.exemption === 'deload' ? 'semaine de décharge' : "semaine d'affûtage"}, le plancher ne s'y applique pas.`
-        );
+        const why =
+          trace.exemption === 'deload'
+            ? "semaine de décharge, le plancher ne s'y applique pas"
+            : trace.exemption === 'taper'
+              ? "semaine d'affûtage, le plancher ne s'y applique pas"
+              : 'la plage ne tenait pas sous le plafond horaire déclaré, qui prime';
+        return `Plage prescrite ${plage} ; ${retained} retenues — ${why}.`;
       }
       return `Plage prescrite ${plage} ; ${retained} retenues — hors de la plage.`;
     }

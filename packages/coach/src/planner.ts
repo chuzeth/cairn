@@ -3,8 +3,9 @@ import type {
   RaceGoal, SessionBlock, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import {
-  ACWR_SPIKE, DURABILITY_MEASURABLE, prescribedMechanicalLoad, projectFrom, projectLoadRatios,
-  ratioExceedances, targetDistribution, targetRaceDayTsb, type DailyLoad, type LoadRatioExceedance,
+  ACWR_SPIKE, DURABILITY_MEASURABLE, interpretDurability, prescribedMechanicalLoad, projectFrom,
+  projectLoadRatios, ratioExceedances, targetDistribution, targetRaceDayTsb, type DailyLoad,
+  type LoadRatioExceedance,
 } from '@cairn/physiology';
 import {
   TAPER_SCALE_BOUNDS, addDays, buildPeriodization, mondayOf, type WeekPlanSpec,
@@ -170,10 +171,18 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
   const isMountain = raceVertPerKm > 25;
   const longAmbition = isLongFormat(input.ambition);
 
-  // Le volume de la sortie longue suit la cible hebdomadaire : ~35 % du temps
-  // total en base, jusqu'à 45 % en spécifique. L'ambition longue distance fait
+  // Le volume de la sortie longue est une part du temps dont l'athlète dispose :
+  // ~38 % en base, jusqu'à 50 % en spécifique. L'ambition longue distance fait
   // monter la part : la durabilité se construit — et ne se mesure — que sur un
   // effort d'un seul tenant, jamais sur un cumul de footings de semaine.
+  //
+  // Le temps dont il s'agit est celui que l'athlète a déclaré, pondéré par le
+  // poids de la semaine dans la préparation — une décharge ou un affûtage n'en
+  // prennent pas autant qu'une semaine de pic. La part portait auparavant sur
+  // une durée hebdomadaire obtenue en divisant la charge cible par 55 points
+  // l'heure : le plafond déclaré n'y entrait pas, et le plan sortait d'un côté
+  // des semaines de onze heures et demie, de l'autre des semaines qui en
+  // laissaient quatre inutilisées.
   const share =
     spec.phase === 'specific'
       ? longAmbition ? 0.5 : 0.45
@@ -181,7 +190,7 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
         ? 0.3
         : longAmbition ? 0.45 : 0.38;
   const durationMin = Math.round(
-    Math.min((spec.targetDurationS * share) / 60, spec.phase === 'taper' ? 90 : 300),
+    Math.min((spec.maxDurationS * spec.loadShare * share) / 60, spec.phase === 'taper' ? 90 : 300),
   );
   const vert = Math.round(
     Math.min(spec.targetElevationGainM * 0.65, constraints.accessibleVertPerSession * 1.8),
@@ -347,19 +356,179 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   // ferme l'écart entre « Décrassage 40 min » et les 58 minutes enregistrées.
   for (const s of sessions) humanize(s, model);
 
+  // ── 7. Plafond horaire ────────────────────────────────────────────────────
+  capToWeeklyCeiling(sessions, spec, set, model);
+
   const dist = targetDistribution(spec.phase);
   return {
     weekStart: spec.weekStart,
     index: spec.index,
     phase: spec.phase,
     targetLoad: spec.targetLoad,
-    targetDurationS: spec.targetDurationS,
+    plannedDurationS: writtenDurationS(sessions),
     targetElevationGainM: spec.targetElevationGainM,
     intensityDistribution: dist,
     isDeload: spec.isDeload,
     focus: spec.focus,
     sessions,
   };
+}
+
+/**
+ * Temps d'entraînement qu'une semaine écrit.
+ *
+ * La course n'en fait pas partie : le plafond porte sur ce que l'athlète
+ * s'impose à l'entraînement, et une épreuve de onze heures n'est pas une
+ * semaine trop chargée — c'est l'objet de la préparation.
+ */
+export function writtenDurationS(sessions: readonly PlannedSession[]): number {
+  return sessions.filter((s) => s.type !== 'race').reduce((a, s) => a + s.plannedDurationS, 0);
+}
+
+/**
+ * Ce qui se négocie dans une séance : son contenu facile.
+ *
+ * Ce que le dossier prescrit — tours d'un circuit, souplesse, respiration — n'en
+ * fait pas partie, et `transformSession` le tient déjà hors de ses facteurs. Le
+ * plafond horaire n'a pas à défaire ce que le praticien a écrit.
+ */
+function negotiableS(s: PlannedSession): number {
+  return lib.totalDuration(s.blocks.filter((b) => !lib.isPrescribed(b)));
+}
+
+/**
+ * Ramène la semaine sous le plafond horaire déclaré.
+ *
+ * Le plafond était converti en charge — neuf heures valaient 495 points — puis
+ * appliqué là. Du volume facile à 45 points l'heure le franchissait de plus de
+ * deux heures sans qu'aucune ligne ne le dise. Il porte maintenant sur ce que la
+ * semaine écrit, et il ne se dépasse pas.
+ *
+ * Ce qui cède, dans l'ordre : le décrassage, puis le volume facile, puis la
+ * sortie longue ; et s'il le faut la plage du dossier elle-même, puis un jour
+ * qui devient repos. Jamais les séances de qualité : leur dosage est
+ * physiologique, et une semaine qui déborde n'est pas une semaine trop intense,
+ * c'est une semaine trop longue.
+ *
+ * Que la plage du dossier puisse céder n'est pas une licence. Un dossier qui
+ * prescrit trois heures de rando-course et une heure et demie de foncier ne
+ * tient pas dans six heures hebdomadaires avec deux séances de qualité : le
+ * conflit est réel, et le trancher en faveur du temps déclaré est le seul choix
+ * exécutable. La séance le porte (`exemption: 'ceiling'`) — elle n'a pas
+ * silencieusement quitté sa plage.
+ */
+function capToWeeklyCeiling(
+  sessions: PlannedSession[],
+  spec: WeekPlanSpec,
+  set: DirectiveSet,
+  model: PhysiologyModel,
+): void {
+  const over = () => writtenDurationS(sessions) - spec.maxDurationS;
+  if (over() <= 0) return;
+
+  // La décharge et l'affûtage dispensent du plancher du dossier, ici comme
+  // partout : ces semaines-là ont une autre fonction que de construire.
+  const exempt = spec.isDeload || spec.phase === 'taper';
+  const prescribedFloor = (s: PlannedSession) =>
+    exempt ? 0 : durationDirectiveFor(set, s.type)?.minS ?? 0;
+
+  const isVolume = (s: PlannedSession) => s.type === 'recovery' || s.type === 'endurance';
+  const isWithLong = (s: PlannedSession) =>
+    isVolume(s) || s.type === 'long_run' || s.type === 'long_trail';
+  const volume = sessions.filter(isVolume);
+  const withLong = sessions.filter(isWithLong);
+
+  for (const [pool, honourDossier] of [
+    [sessions.filter((s) => s.type === 'recovery'), true],
+    [volume, true],
+    [withLong, true],
+    [withLong, false],
+  ] as const) {
+    // En deçà d'un quart d'heure, une séance n'a plus de forme : on la retire
+    // plutôt que de la raboter.
+    const floorOf = (s: PlannedSession) =>
+      Math.max(lib.SESSION_GRID_S, honourDossier ? prescribedFloor(s) : 0);
+    // La maille du quart d'heure fait qu'un facteur ne tombe pas juste du
+    // premier coup : on réduit, on remesure, on recommence tant qu'il reste du
+    // mou.
+    for (let pass = 0; pass < 4 && over() > 0; pass++) {
+      const movable = pool
+        .map((x) => ({ x, body: negotiableS(x), room: negotiableS(x) - floorOf(x) }))
+        .filter((m) => m.room > 0 && m.body > 0);
+      const room = movable.reduce((a, m) => a + m.room, 0);
+      if (room <= 0) break;
+      // Chacun cède au prorata de ce qu'il peut céder : le plafond ne vide pas
+      // la première séance venue pour épargner la suivante.
+      const share = Math.min(1, over() / room);
+      for (const m of movable) {
+        const factor = (m.body - m.room * share) / m.body;
+        // Une sortie qui mesurait la durabilité continue de la mesurer : le
+        // plafond lui prend du temps, pas le dénivelé qui la rend lisible. Ce
+        // que l'athlète ne peut pas tenir sur le temps qui reste cède quand
+        // même — les courbes décident, et la séance le dit.
+        const carried = lib.elevationGainOf(m.x.blocks);
+        const measuring =
+          carried >= DURABILITY_MEASURABLE.minVertM &&
+          m.body * factor >= DURABILITY_MEASURABLE.minDurationS;
+        const vertical = measuring
+          ? Math.max(factor, DURABILITY_MEASURABLE.minVertM / carried)
+          : factor;
+        const t = lib.transformSession(m.x, { duration: factor, vertical }, model);
+        m.x.blocks = t.blocks;
+        if (t.amendments.length) {
+          m.x.rationale = [m.x.rationale, ...t.amendments].filter(Boolean).join(' ');
+        }
+        humanize(m.x, model);
+      }
+    }
+  }
+
+  // Dernier recours : le plafond fait tomber un jour, et la semaine le dit — un
+  // jour retiré faute de temps n'est pas un jour de repos choisi. Les jours qui
+  // portent un bloc du dossier passent en dernier : la fréquence hebdomadaire
+  // qu'ils honorent ne se rattrape nulle part ailleurs.
+  const droppable = volume
+    .filter((x) => x.plannedDurationS > 0)
+    .sort(
+      (a, b) =>
+        Number(a.blocks.some((x) => x.kind)) - Number(b.blocks.some((x) => x.kind)) ||
+        a.plannedLoad - b.plannedLoad ||
+        a.date.localeCompare(b.date),
+    );
+  for (const x of droppable) {
+    if (over() <= 0) break;
+    const rest = lib.restDay();
+    x.type = 'rest';
+    x.title = rest.title;
+    x.intent = rest.intent;
+    x.blocks = rest.blocks;
+    x.plannedLoad = 0;
+    x.plannedMechanicalLoad = 0;
+    x.plannedDurationS = 0;
+    x.plannedElevationGainM = 0;
+    x.plannedDistanceM = 0;
+    x.directives = undefined;
+    x.rationale =
+      `Jour retiré par le plafond horaire : la semaine dépassait les ` +
+      `${formatHours(spec.maxDurationS)} déclarées, et le volume facile ne pouvait plus reculer.`;
+  }
+
+  // La trace suit ce qui a cédé. Une séance sortie de sa plage sans que rien ne
+  // l'explique ferait passer le dossier pour bafoué ; c'est le plafond qui a
+  // tranché, et c'est lui qu'on écrit.
+  for (const x of sessions) {
+    const directive = durationDirectiveFor(set, x.type);
+    if (!directive || negotiableS(x) >= directive.minS) continue;
+    x.directives = x.directives?.map((t) =>
+      t.directiveId === directive.id && !t.exemption ? { ...t, exemption: 'ceiling' as const } : t,
+    );
+  }
+}
+
+/** Un nombre d'heures tel qu'on l'écrit à l'athlète — « 9 h », « 7 h 30 ». */
+function formatHours(seconds: number): string {
+  const min = Math.round(seconds / 60);
+  return min % 60 === 0 ? `${min / 60} h` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
 }
 
 /**
@@ -786,6 +955,89 @@ export interface LoadRatioCheck {
   historyDays: number;
 }
 
+/**
+ * Ce que le plan fait du temps que l'athlète a déclaré pouvoir donner.
+ *
+ * Le plafond hebdomadaire était traité dans les deux sens : converti en charge,
+ * il laissait prescrire onze heures et demie là où neuf étaient permises, et il
+ * en laissait quatre inutilisées ailleurs. Il est maintenant une contrainte dure,
+ * vérifiée sur ce que les semaines écrivent. La place qu'elles n'utilisent pas
+ * n'est pas une faute en soi — mais quand la durabilité est le facteur limitant
+ * **mesuré** de l'athlète, elle se paie : le volume est le seul levier qui la
+ * construit, et du temps disponible non prescrit est du gain laissé de côté.
+ *
+ * Les semaines de décharge et d'affûtage en sont exclues : elles laissent du mou
+ * par construction, et le leur reprocher noierait le signal.
+ */
+export interface WeeklyVolumeCheck {
+  /** Plafond horaire déclaré, en secondes de semaine. */
+  ceilingS: number;
+  /** Le plus haut volume d'entraînement qu'une semaine de construction écrit. */
+  peakS: number;
+  /** Semaines de construction laissant plus de deux heures sous le plafond. */
+  underused: { weekStart: string; writtenS: number; unusedS: number }[];
+  /** La durabilité est-elle un facteur limitant mesuré, et non un repli de population ? */
+  durabilityLimiting: boolean;
+  /** Ce qu'il faut en dire. `null` quand il n'y a rien à dire. */
+  statement: string | null;
+}
+
+/** Au-delà, la place laissée sous le plafond n'est plus un arrondi de planning. */
+const VOLUME_SLACK_S = 2 * 3600;
+
+/**
+ * La durabilité est-elle le facteur limitant **mesuré** de cet athlète ?
+ *
+ * Deux conditions, et la première n'est pas négociable : le chiffre vient du
+ * terrain, pas du repli de population. Une durabilité par défaut jugée faible
+ * ne dit rien de l'athlète — elle dit qu'on ne l'a pas encore mesurée, et bâtir
+ * une recommandation de volume dessus propagerait une erreur silencieuse.
+ */
+function durabilityIsLimiting(model: PhysiologyModel): boolean {
+  if ((model.provenance.durabilityPctPerHour ?? 'default') === 'default') return false;
+  const { tier } = interpretDurability(model.durabilityPctPerHour);
+  return tier === 'moyen' || tier === 'fragile';
+}
+
+function checkWeeklyVolume(
+  weeks: readonly TrainingWeek[],
+  model: PhysiologyModel,
+  constraints: AthleteConstraints,
+  from: string,
+): WeeklyVolumeCheck {
+  const ceilingS = Math.round(constraints.maxWeeklyHours * 3600);
+  const building = weeks.filter((w) => w.weekStart >= from && w.phase !== 'taper' && !w.isDeload);
+  const measured = building.map((w) => ({
+    weekStart: w.weekStart,
+    writtenS: writtenDurationS(w.sessions),
+    unusedS: ceilingS - writtenDurationS(w.sessions),
+  }));
+  const underused = measured.filter((m) => m.unusedS > VOLUME_SLACK_S);
+  const durabilityLimiting = durabilityIsLimiting(model);
+
+  const statement =
+    underused.length === 0 || !durabilityLimiting
+      ? null
+      : `${underused.length} semaine${underused.length > 1 ? 's' : ''} de construction sur ` +
+        `${building.length} laisse${underused.length > 1 ? 'nt' : ''} plus de deux heures sous le ` +
+        `plafond de ${formatHours(ceilingS)} — ` +
+        `${underused
+          .slice(0, 4)
+          .map((m) => `${m.weekStart} : ${formatHours(m.writtenS)}`)
+          .join(', ')}${underused.length > 4 ? ', …' : ''}. ` +
+        `La durabilité est le facteur limitant mesuré de cet athlète ` +
+        `(−${model.durabilityPctPerHour.toFixed(1)} %/h, relevée sur le terrain), et le volume est le ` +
+        `seul levier qui la construit : ce temps déclaré et non prescrit est du gain laissé de côté.`;
+
+  return {
+    ceilingS,
+    peakS: measured.reduce((a, m) => Math.max(a, m.writtenS), 0),
+    underused,
+    durabilityLimiting,
+    statement,
+  };
+}
+
 const CHANNEL_FR = { metabolic: 'métabolique', mechanical: 'mécanique' } as const;
 
 /** Dépassements de ratio en une phrase, filière par filière. */
@@ -950,6 +1202,8 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   weeks: TrainingWeek[];
   tsbCheck: RaceDayTsbCheck;
   ratioCheck: LoadRatioCheck;
+  /** Ce que le plan fait du temps déclaré — plafond tenu, place laissée. */
+  volumeCheck: WeeklyVolumeCheck;
   /** Ce que la reconstruction reprend, remplace, ajoute et retire. */
   carryOver: PlanCarryOver;
 } {
@@ -1026,6 +1280,12 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   const carryOver = carryDecisions(input.previous ?? [], fresh, input.today ?? planStart);
   const weeks = carryOver.weeks;
 
+  // La durée d'une semaine se mesure sur ses séances : elle suit donc ce que la
+  // course substituée et la reprise des décisions viennent d'y changer. Écrite
+  // une fois pour toutes à la construction, elle annoncerait le volume d'un plan
+  // qu'on n'enregistre pas.
+  for (const w of weeks) w.plannedDurationS = writtenDurationS(w.sessions);
+
   // ── Ce que le plan écrit produit, mesuré sur le plan écrit ─────────────────
   // La profondeur d'affûtage s'est résolue sur ce que le planificateur peut
   // encore écrire — il ne rattrapera pas une cible en réécrivant une séance
@@ -1077,6 +1337,9 @@ export function buildTrainingPlan(input: BuildPlanInput): {
       : 0,
   };
 
+  // ── Ce que le plan fait du temps déclaré ───────────────────────────────────
+  const volumeCheck = checkWeeklyVolume(weeks, input.model, input.constraints, planStart);
+
   const now = new Date().toISOString();
 
   return {
@@ -1104,6 +1367,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
               ? ` ⚠ Ratio charge aiguë/chronique projeté au-delà de son seuil — ` +
                 `${describeRatioExceedances(ratioCheck.exceedances)}.`
               : '') +
+            (volumeCheck.statement ? ` ⚠ ${volumeCheck.statement}` : '') +
             (input.directives?.length
               ? ` ${input.directives.length} directives du dossier honorées (durées du travail foncier, ` +
                 `critère de dérive cardiaque, fréquences hebdomadaires, cadence, un fractionné par semaine).`
@@ -1123,13 +1387,14 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     weeks,
     tsbCheck,
     ratioCheck,
+    volumeCheck,
     carryOver,
   };
 }
 
 /** Résumé lisible d'une semaine — utilisé dans le chat et l'export. */
 export function summarizeWeek(week: TrainingWeek): string {
-  const hours = Math.round((week.targetDurationS / 3600) * 10) / 10;
+  const hours = Math.round((week.plannedDurationS / 3600) * 10) / 10;
   const header =
     `**Semaine du ${week.weekStart}** — ${week.phase}${week.isDeload ? ' (décharge)' : ''} · ` +
     `charge ${week.targetLoad} · ${hours} h · ${week.targetElevationGainM} m D+`;

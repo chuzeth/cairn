@@ -17,9 +17,31 @@ export interface WeekPlanSpec {
   weekStart: string;
   phase: TrainingPhase;
   isDeload: boolean;
-  /** Charge métabolique cible pour la semaine. */
+  /**
+   * Charge métabolique cible pour la semaine.
+   *
+   * Elle oriente le choix des séances et leur calibration. Elle ne fabrique
+   * aucune durée : une séance porte son contenu, sa charge se mesure dessus.
+   */
   targetLoad: number;
-  targetDurationS: number;
+  /**
+   * Plafond horaire déclaré par l'athlète, en secondes de semaine.
+   *
+   * C'est une contrainte dure, pas une cible : le volume écrit ne la dépasse
+   * jamais, et rien n'oblige à l'atteindre. Elle remplace une durée cible qui
+   * se déduisait de la charge par une constante de 55 points par heure — donc
+   * ni le plafond dans un sens, ni le contenu réel dans l'autre.
+   */
+  maxDurationS: number;
+  /**
+   * Poids de la semaine dans la préparation : sa charge cible rapportée à celle
+   * de la semaine la plus lourde du plan.
+   *
+   * Sans dimension — c'est un rapport de deux charges. C'est lui qui rend à une
+   * décharge ou à un affûtage la place qu'ils prennent réellement, là où une
+   * durée cible le faisait en convertissant des points en heures à taux fixe.
+   */
+  loadShare: number;
   targetElevationGainM: number;
   /** Nombre de séances de qualité autorisées. */
   qualitySlots: number;
@@ -116,11 +138,13 @@ const TAPER_WEEK_BOUNDS = { min: 0.25, max: 0.85 } as const;
 const TAPER_SHAPE = [0.75, 0.58, 0.42] as const;
 
 /**
- * Construit le squelette de la préparation : une charge cible par semaine.
+ * Construit le squelette de la préparation : une charge cible par semaine, et
+ * le temps que la semaine n'a pas le droit de dépasser.
  *
  * Les garde-fous appliqués sont ceux de la littérature sur la charge :
- * progression de 5 à 8 % par semaine, décharge toutes les 3-4 semaines, et
- * plafond absolu lié au temps réellement disponible.
+ * progression de 5 à 8 % par semaine, décharge toutes les 3-4 semaines. Le
+ * squelette ne prescrit aucune durée — il ne sait pas ce que la semaine
+ * contiendra, et le volume facile ne coûte pas l'heure du travail au seuil.
  */
 export function buildPeriodization(input: PeriodizationInput): WeekPlanSpec[] {
   const { startDate, race, currentCtl, constraints, raceElevationGainM } = input;
@@ -133,9 +157,12 @@ export function buildPeriodization(input: PeriodizationInput): WeekPlanSpec[] {
   // Charge de départ : la charge chronique actuelle, exprimée en équivalent
   // hebdomadaire. On ne repart jamais de zéro, ni d'un chiffre arbitraire.
   const baselineWeekly = Math.max(currentCtl * 7, 180);
-  // Plafond dicté par le temps disponible : ~55 points de charge par heure
-  // d'entraînement, ordre de grandeur d'une semaine à dominante endurance.
-  const ceilingWeekly = constraints.maxWeeklyHours * 55;
+  // Borne de la progression, pas le plafond de la semaine : l'ordre de grandeur
+  // de ce que coûte le temps déclaré, qui empêche la rampe de s'emballer et
+  // l'affûtage de partir d'un pic jamais écrit. Le plafond, lui, porte sur les
+  // heures et se vérifie sur le contenu (`maxDurationS`).
+  const rampCeiling = constraints.maxWeeklyHours * 55;
+  const maxDurationS = Math.round(constraints.maxWeeklyHours * 3600);
 
   const out: WeekPlanSpec[] = [];
   let load = baselineWeekly;
@@ -176,14 +203,15 @@ export function buildPeriodization(input: PeriodizationInput): WeekPlanSpec[] {
       // déchargé transformerait chaque décharge en plafonnement définitif de la
       // progression, et l'athlète stagnerait en croyant progresser.
       const base = justDeloaded ? peakLoad : load;
-      load = Math.min(base * rampRate, ceilingWeekly);
+      load = Math.min(base * rampRate, rampCeiling);
       peakLoad = Math.max(peakLoad, load);
       consecutiveBuild++;
       justDeloaded = false;
     }
 
-    // Garde-fou absolu : aucune semaine ne dépasse le temps disponible déclaré.
-    load = Math.min(load, ceilingWeekly);
+    // Aucune branche ne sort de la borne : décharge et affûtage partent du pic,
+    // qui y est déjà tenu.
+    load = Math.min(load, rampCeiling);
 
     // Progression du dénivelé : on vise 90 % du D+ de la course en une semaine,
     // atteint au pic de la phase spécifique.
@@ -199,7 +227,10 @@ export function buildPeriodization(input: PeriodizationInput): WeekPlanSpec[] {
       phase,
       isDeload,
       targetLoad: Math.round(load),
-      targetDurationS: Math.round((load / 55) * 3600),
+      maxDurationS,
+      // Renseigné une fois toutes les semaines écrites : la plus lourde n'est
+      // connue qu'à la fin.
+      loadShare: 1,
       targetElevationGainM: targetVert,
       qualitySlots: qualitySlotsFor(phase, isDeload, constraints.maxQualitySessionsPerWeek),
       focus: focusFor(phase, isDeload, weeksToRace),
@@ -207,7 +238,8 @@ export function buildPeriodization(input: PeriodizationInput): WeekPlanSpec[] {
     });
   }
 
-  return out;
+  const peak = out.reduce((a, w) => Math.max(a, w.targetLoad), 0);
+  return peak > 0 ? out.map((w) => ({ ...w, loadShare: w.targetLoad / peak })) : out;
 }
 
 function qualitySlotsFor(phase: TrainingPhase, isDeload: boolean, max: number): number {

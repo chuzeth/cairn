@@ -70,12 +70,22 @@ describe('Périodisation', () => {
     }
   });
 
-  it('respecte le plafond horaire déclaré', () => {
+  it('porte le plafond horaire déclaré sans en fabriquer une durée', () => {
     const specs = buildPeriodization({
       startDate: '2026-01-01', race: { ...RACE, date: '2026-12-05' }, estimatedRaceDurationS: 3 * 3600,
       currentCtl: 60, constraints: { ...PIERRE.constraints, maxWeeklyHours: 6 }, raceElevationGainM: 1200,
     });
-    for (const s of specs) expect(s.targetLoad).toBeLessThanOrEqual(6 * 55 + 1);
+    // Le squelette ne dit pas combien de temps dure une semaine — il ne sait pas
+    // ce qu'elle contiendra. Il dit ce qu'elle vise et ce qu'elle n'a pas le
+    // droit de dépasser.
+    for (const s of specs) {
+      expect(s).not.toHaveProperty('targetDurationS');
+      expect(s.maxDurationS).toBe(6 * 3600);
+    }
+    // Le poids d'une semaine est un rapport de deux charges, sans conversion.
+    const peak = Math.max(...specs.map((x) => x.targetLoad));
+    for (const s of specs) expect(s.loadShare).toBeCloseTo(s.targetLoad / peak, 6);
+    expect(Math.max(...specs.map((x) => x.loadShare))).toBe(1);
   });
 
   it('estime une charge de départ plausible depuis les heures déclarées', () => {
@@ -1281,7 +1291,7 @@ describe('Ce qu\'une reconstruction n\'a pas le droit de réécrire', () => {
   });
 
   const week = (weekStart: string, sessions: PlannedSession[]): TrainingWeek => ({
-    weekStart, index: 0, phase: 'base', targetLoad: 250, targetDurationS: 5 * 3600,
+    weekStart, index: 0, phase: 'base', targetLoad: 250, plannedDurationS: 5 * 3600,
     targetElevationGainM: 500, intensityDistribution: { low: 0.8, moderate: 0.1, high: 0.1 },
     isDeload: false, focus: '', sessions,
   });
@@ -1434,6 +1444,129 @@ describe('Ambition longue distance', () => {
       .filter((w) => !w.isDeload && w.phase !== 'taper')
       .some((w) => (longOf(w)?.plannedElevationGainM ?? 0) < DURABILITY_MEASURABLE.minVertM);
     expect(flat).toBe(true);
+  });
+});
+
+describe('Le plafond horaire est une contrainte dure', () => {
+  const directives = directivesFor(PIERRE);
+  const plan = (maxWeeklyHours: number, over: Partial<Parameters<typeof buildTrainingPlan>[0]> = {}) =>
+    buildTrainingPlan({
+      athleteId: 'pierre', model, constraints: { ...PIERRE.constraints, maxWeeklyHours },
+      race: RACE, currentCtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+      directives, ambition: PIERRE.ambition, ...over,
+    });
+
+  it('ne laisse aucune semaine dépasser les heures déclarées', () => {
+    // Le plafond était converti en charge à 55 points l'heure : du volume facile
+    // en coûte 45, et la semaine dépassait de deux heures sans que rien ne le
+    // dise. Trois plafonds très différents, aucun franchi.
+    for (const hours of [6, 9, 14]) {
+      for (const w of plan(hours).weeks) {
+        expect(w.plannedDurationS, `${hours} h — ${w.weekStart}`).toBeLessThanOrEqual(hours * 3600);
+      }
+    }
+  });
+
+  it('mesure la durée de la semaine sur ses séances, course exclue', () => {
+    const { weeks } = plan(9);
+    for (const w of weeks) {
+      const written = w.sessions
+        .filter((x) => x.type !== 'race')
+        .reduce((a, x) => a + x.plannedDurationS, 0);
+      expect(w.plannedDurationS, w.weekStart).toBe(written);
+    }
+    // Une course de quatorze heures n'est pas une semaine trop chargée : c'est
+    // l'objet de la préparation, et elle ne mange pas le plafond.
+    const ultra = plan(9, { estimatedRaceDurationS: 14 * 3600 }).weeks;
+    const raceWeek = ultra.find((w) => w.sessions.some((x) => x.type === 'race'))!;
+    const total = raceWeek.sessions.reduce((a, x) => a + x.plannedDurationS, 0);
+    expect(total).toBeGreaterThan(9 * 3600);
+    expect(raceWeek.plannedDurationS).toBe(total - 14 * 3600);
+    expect(raceWeek.plannedDurationS).toBeLessThanOrEqual(9 * 3600);
+  });
+
+  it('ne fait plus correspondre la durée à la charge par un taux fixe', () => {
+    const sessions = plan(9).weeks.flatMap((w) => w.sessions).filter((x) => x.plannedLoad > 0);
+    // Deux séances de même charge et de durées différentes existent — c'est le
+    // fait physiologique que la constante niait : le seuil coûte plus l'heure
+    // que le volume facile.
+    const pairs = sessions.flatMap((a) =>
+      sessions.filter((b) => b.plannedLoad === a.plannedLoad && b.plannedDurationS !== a.plannedDurationS),
+    );
+    expect(pairs.length).toBeGreaterThan(0);
+    // Et la semaine ne dit plus ses heures comme un quotient de sa charge.
+    for (const w of plan(9).weeks) {
+      expect(w.plannedDurationS).not.toBe(Math.round((w.targetLoad / 55) * 3600));
+    }
+  });
+
+  it('dit que la plage du dossier a cédé, quand le plafond ne la contient pas', () => {
+    // Le dossier prescrit 3 à 5 h de rando-course et 1 h 30 à 2 h 30 de foncier.
+    // Six heures par semaine avec deux séances de qualité ne les contiennent
+    // pas : le temps réel de l'athlète tranche, et la séance le porte.
+    const building = plan(6).weeks.filter((w) => !w.isDeload && w.phase !== 'taper');
+    const traces = building
+      .flatMap((w) => w.sessions)
+      .flatMap((x) => x.directives ?? [])
+      .filter((t) => t.exemption === 'ceiling');
+    expect(traces.length).toBeGreaterThan(0);
+    // À neuf heures, le conflit n'existe pas : rien ne sort de sa plage.
+    const roomy = plan(9)
+      .weeks.filter((w) => !w.isDeload && w.phase !== 'taper')
+      .flatMap((w) => w.sessions)
+      .flatMap((x) => x.directives ?? [])
+      .filter((t) => t.exemption === 'ceiling');
+    expect(roomy).toHaveLength(0);
+  });
+
+  it('ne rabote jamais une séance de qualité pour tenir sous le plafond', () => {
+    const quality = plan(6).weeks.flatMap((w) => w.sessions).filter((x) => x.priority === 'key');
+    // Une semaine qui déborde n'est pas une semaine trop intense : le plafond
+    // prend sur le volume, jamais sur le stimulus.
+    for (const x of quality) {
+      if (x.type === 'race' || x.type === 'long_run' || x.type === 'long_trail') continue;
+      expect(x.plannedDurationS, `${x.date} ${x.title}`).toBeGreaterThanOrEqual(30 * 60);
+    }
+  });
+
+  it('dit le temps laissé sous le plafond quand la durabilité est le facteur limitant mesuré', () => {
+    // Quatorze heures déclarées, une préparation qui n'en écrit que onze : la
+    // place restante n'est pas neutre pour qui perd du rendement à l'heure.
+    const measured = {
+      ...model,
+      durabilityPctPerHour: 4.2,
+      provenance: { ...model.provenance, durabilityPctPerHour: 'field' as const },
+    };
+    const { volumeCheck } = plan(14, { model: measured });
+    expect(volumeCheck.ceilingS).toBe(14 * 3600);
+    expect(volumeCheck.durabilityLimiting).toBe(true);
+    expect(volumeCheck.underused.length).toBeGreaterThan(0);
+    for (const u of volumeCheck.underused) expect(u.unusedS).toBeGreaterThan(2 * 3600);
+    expect(volumeCheck.statement).toContain('volume');
+    expect(volumeCheck.statement).toContain('14 h');
+  });
+
+  it('se tait quand la durabilité n\'est qu\'un repli de population', () => {
+    // Le même plan, la même place laissée — mais rien ne l'a mesurée. Une
+    // recommandation de volume bâtie sur un repli propagerait une erreur
+    // silencieuse jusqu'à la prédiction de course.
+    const { volumeCheck } = plan(14);
+    expect(model.provenance.durabilityPctPerHour).toBe('default');
+    expect(volumeCheck.underused.length).toBeGreaterThan(0);
+    expect(volumeCheck.durabilityLimiting).toBe(false);
+    expect(volumeCheck.statement).toBeNull();
+  });
+
+  it('se tait aussi quand le plan occupe le temps déclaré', () => {
+    const measured = {
+      ...model,
+      durabilityPctPerHour: 4.2,
+      provenance: { ...model.provenance, durabilityPctPerHour: 'field' as const },
+    };
+    const { volumeCheck } = plan(9, { model: measured });
+    expect(volumeCheck.durabilityLimiting).toBe(true);
+    expect(volumeCheck.underused).toHaveLength(0);
+    expect(volumeCheck.statement).toBeNull();
   });
 });
 
