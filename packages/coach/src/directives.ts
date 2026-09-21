@@ -229,15 +229,18 @@ const ANCILLARY_HOSTS: SessionType[] = ['recovery', 'endurance', 'long_run', 'lo
 export function honourWeeklyFrequency(
   sessions: PlannedSession[],
   set: DirectiveSet,
+  /** Séances conservées de la semaine : elles comptent, et ne se touchent pas. */
+  held: readonly PlannedSession[] = [],
 ): void {
   for (const directive of set.frequency) {
-    const existing = sessions.filter((s) => s.blocks.some((b) => b.kind === directive.block));
+    const carries = (s: PlannedSession) => s.blocks.some((b) => b.kind === directive.block);
+    const existing = sessions.filter(carries);
     // Une séance qui portait déjà le bloc — le renforcement a sa propre séquence
     // de souplesse — porte aussi son origine : sinon l'athlète voit la consigne
     // sur un jour et pas sur l'autre, pour la même prescription.
     for (const s of existing) s.directives = [...(s.directives ?? []), applied(directive)];
 
-    const carriers = new Set(existing.map((s) => s.date));
+    const carriers = new Set([...existing, ...held.filter(carries)].map((s) => s.date));
     let missing = directive.timesPerWeek - carriers.size;
     if (missing <= 0) continue;
 

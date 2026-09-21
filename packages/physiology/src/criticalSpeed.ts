@@ -31,8 +31,11 @@ export interface CriticalSpeedFit {
 /**
  * Fenêtre d'ajustement. En dessous de 2 min la contribution anaérobie fausse la
  * linéarité ; au-delà de ~20 min, la fatigue lente tire CS vers le bas.
+ *
+ * Exportée : un effort maximal plus court que la fenêtre ne mesure pas la
+ * vitesse critique, et le planificateur ne le compte pas comme un test.
  */
-const FIT_MIN_S = 120;
+export const CS_FIT_MIN_S = 120;
 const FIT_MAX_S = 1200;
 
 /** Ajuste CS et D' par régression linéaire de la distance sur le temps. */
@@ -44,7 +47,7 @@ export function fitCriticalSpeed(curve: MmpCurve): CriticalSpeedFit {
         Number.isFinite(p.durationS) &&
         Number.isFinite(p.speedMs) &&
         p.speedMs > 0 &&
-        p.durationS >= FIT_MIN_S &&
+        p.durationS >= CS_FIT_MIN_S &&
         p.durationS <= FIT_MAX_S,
     )
     .map((p) => ({ ...p, distanceM: p.speedMs * p.durationS }))

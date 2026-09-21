@@ -3,9 +3,9 @@ import type {
   RaceGoal, SessionBlock, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import {
-  ACWR_SPIKE, DURABILITY_MEASURABLE, interpretDurability, prescribedMechanicalLoad, projectFrom,
-  projectLoadRatios, ratioExceedances, targetDistribution, targetRaceDayTsb, type DailyLoad,
-  type LoadRatioExceedance,
+  ACWR_SPIKE, CS_FIT_MIN_S, DURABILITY_MEASURABLE, interpretDurability, prescribedMechanicalLoad,
+  projectFrom, projectLoadRatios, ratioExceedances, targetDistribution, targetRaceDayTsb,
+  type DailyLoad, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import {
   TAPER_SCALE_BOUNDS, addDays, buildPeriodization, mondayOf, type WeekPlanSpec,
@@ -15,7 +15,7 @@ import {
   formatDirectiveDuration, honourWeeklyFrequency, indexDirectives, isIntervalSession,
   nextIntervalFormat, type DirectiveSet,
 } from './directives.js';
-import { carryDecisions, type PlanCarryOver } from './preserve.js';
+import { carryDecisions, decisionOn, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
 
@@ -63,6 +63,12 @@ export interface WeekBuildInput {
    * de son index.
    */
   intervalFormat?: 'short' | 'medium';
+  /**
+   * Les séances que la reconstruction conserve (`decisionOn`), toutes semaines
+   * confondues : celles de la semaine en sont les points fixes, et une voisine
+   * de la semaine d'avant ou d'après impose ses préalables par-delà le lundi.
+   */
+  fixed?: readonly PlannedSession[];
 }
 
 /** L'ambition qui change ce que le plan privilégie : la tenue dans la durée. */
@@ -216,26 +222,141 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
   return lib.longRun(model, Math.max(60, minDurationMin, durationMin), Math.max(0, minVert, vert));
 }
 
+const QUALITY_TYPES: readonly SessionType[] = [
+  'tempo', 'threshold', 'vo2max', 'hill_repeats', 'downhill', 'fartlek', 'race_pace',
+];
+const isLongType = (t: SessionType) => t === 'long_run' || t === 'long_trail';
+
+/**
+ * Un test maximal, lu sur le contenu : un effort d'un seul tenant — ni répété,
+ * ni coupé de récupérations — prescrit au-delà du seuil 2, et assez long pour
+ * entrer dans l'ajustement de la vitesse critique. C'est la signature de la
+ * preuve d'effort maximal du modèle, lue sur ce qu'on demande à l'athlète.
+ */
+export function isMaximalTest(s: Pick<PlannedSession, 'blocks'>, model: PhysiologyModel): boolean {
+  return s.blocks.some(
+    (b) =>
+      !lib.isPrescribed(b) &&
+      (b.repeat ?? 1) <= 1 &&
+      !b.recovery &&
+      (b.durationS ?? 0) >= CS_FIT_MIN_S &&
+      (b.zone === 'Z5' || (b.hrRange != null && b.hrRange[0] >= model.vt2.hr)),
+  );
+}
+
+/** Ce que les séances conservées prennent à une semaine avant qu'elle ne s'écrive. */
+interface FixedPoints {
+  /** Les conservées de la semaine, par jour. */
+  byDay: Map<number, PlannedSession>;
+  /** Leur temps d'entraînement et leur charge, course exclue : la semaine les a déjà. */
+  durationS: number;
+  load: number;
+  long: PlannedSession[];
+  /** Séances de qualité conservées, test compris : autant de créneaux tenus. */
+  quality: PlannedSession[];
+  /** Un fractionné conservé, ou un test qui en prend la place : le dossier n'en veut qu'un. */
+  holdsIntervals: boolean;
+  /** Jours des conservées exigeantes, pour les distances que le remplissage mesure. */
+  hard: number[];
+  /** Veille et lendemain d'une conservée exigeante : ni qualité ni sortie longue du planificateur. */
+  near: Set<number>;
+  /** Jours qui ne peuvent être que repos ou décrassage, et pourquoi. */
+  easy: Map<number, string>;
+  /** Lendemain d'une sortie longue conservée : le repos complet y vaut le plus. */
+  afterLong: Set<number>;
+}
+
+/**
+ * Les points fixes d'une semaine.
+ *
+ * Une séance conservée n'est pas un ajout : elle occupe son jour, consomme les
+ * heures, la charge et le créneau de la semaine, et impose à ses voisines ce
+ * que le planificateur impose autour des siennes — 48 h avant et après une
+ * séance exigeante, un décrassage le lendemain. Un test maximal y ajoute sa
+ * veille : il ne se mesure que reposé. Les voisines se lisent par date, pas
+ * par jour de la semaine : la rando-course d'un dimanche commande le lundi qui
+ * suit, pas celui qui la précède.
+ */
+function fixedPoints(all: readonly PlannedSession[], weekStart: string, model: PhysiologyModel): FixedPoints {
+  const weekEnd = addDays(weekStart, 6);
+  const inWeek = (date: string) => date >= weekStart && date <= weekEnd;
+  const dow = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
+  const out: FixedPoints = {
+    byDay: new Map(), durationS: 0, load: 0, long: [], quality: [], holdsIntervals: false,
+    hard: [], near: new Set(), easy: new Map(), afterLong: new Set(),
+  };
+
+  for (const s of all) {
+    const test = isMaximalTest(s, model);
+    const quality = test || QUALITY_TYPES.includes(s.type);
+    const hard = quality || isLongType(s.type) || s.type === 'race';
+
+    if (inWeek(s.date)) {
+      out.byDay.set(dow(s.date), s);
+      if (s.type !== 'race') {
+        out.durationS += s.plannedDurationS;
+        out.load += s.plannedLoad;
+      }
+      if (isLongType(s.type)) out.long.push(s);
+      if (quality) out.quality.push(s);
+      if (test || isIntervalSession(s.type)) out.holdsIntervals = true;
+      if (hard) out.hard.push(dow(s.date));
+    }
+    if (!hard) continue;
+
+    const before = addDays(s.date, -1);
+    const after = addDays(s.date, 1);
+    for (const d of [before, after]) if (inWeek(d)) out.near.add(dow(d));
+    if (inWeek(after)) {
+      out.easy.set(dow(after), `lendemain de « ${s.title} », séance conservée`);
+      if (isLongType(s.type)) out.afterLong.add(dow(after));
+    }
+    if (test && inWeek(before)) {
+      out.easy.set(dow(before), `veille du test maximal conservé du ${s.date} : un effort maximal ne se mesure que reposé`);
+    }
+  }
+  return out;
+}
+
 /**
  * Place les séances dans la semaine.
  *
- * Ordre de priorité : la sortie longue d'abord (elle contraint le plus), puis
- * les séances de qualité en respectant les espacements, puis le remplissage.
+ * Ordre de priorité : les séances conservées d'abord — elles sont déjà là —,
+ * puis la sortie longue (elle contraint le plus), puis les séances de qualité
+ * en respectant les espacements, puis le remplissage. Rien de ce qui suit ne
+ * touche une conservée : quand la semaine manque de place, ce sont les séances
+ * du planificateur qui cèdent.
  */
 export function buildWeek(input: WeekBuildInput): TrainingWeek {
   const { spec, model, constraints, athleteId } = input;
   const set = indexDirectives(input.directives);
   const available = new Set(constraints.availableDays);
   const longDays = constraints.longRunDays.filter((d) => available.has(d));
+  const fixed = fixedPoints(input.fixed ?? [], spec.weekStart, model);
+  // Un jour qu'une conservée tient n'est plus à écrire ; son voisin ne reçoit
+  // rien d'exigeant.
+  const open = (d: number) => available.has(d) && !fixed.byDay.has(d);
+  const clear = (d: number) => !fixed.byDay.has(d) && !fixed.near.has(d);
 
   const assigned = new Map<number, SessionTemplate>();
   const reasons = new Map<number, string>();
 
   // ── 1. Sortie longue ──────────────────────────────────────────────────────
-  const longSession = selectLongSession(input);
+  // Une sortie longue conservée tient le créneau : pas de seconde. Une
+  // rando-course le tient toujours ; un footing prolongé ne tient que le sien
+  // quand la sortie longue de la semaine est une rando-course.
+  const template = selectLongSession(input);
+  const longSession =
+    template && !fixed.long.some((s) => s.type === 'long_trail' || s.type === template.type) ? template : null;
   let longDay: number | null = null;
   if (longSession) {
-    longDay = longDays[spec.index % Math.max(1, longDays.length)] ?? 6;
+    // Le jour tourne d'une semaine sur l'autre ; celui qu'une conservée tient
+    // ou borde passe son tour.
+    const turn = spec.index % Math.max(1, longDays.length);
+    const rotation = longDays.length ? [...longDays.slice(turn), ...longDays.slice(0, turn)] : [6];
+    longDay = rotation.find(clear) ?? null;
+  }
+  if (longSession && longDay != null) {
     assigned.set(longDay, longSession);
     reasons.set(
       longDay,
@@ -244,11 +365,17 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   }
 
   // ── 2. Séances de qualité ─────────────────────────────────────────────────
-  const quality = selectQualitySessions(input);
-  // Jours candidats : disponibles, ni la veille ni le lendemain de la sortie longue.
+  // Chaque conservée de qualité tient un créneau.
+  const slots = Math.min(spec.qualitySlots, constraints.maxQualitySessionsPerWeek) - fixed.quality.length;
+  const quality = selectQualitySessions(input)
+    .filter((s) => !fixed.holdsIntervals || !isIntervalSession(s.type))
+    .slice(0, Math.max(0, slots));
+  // Jours candidats : disponibles, ni la veille ni le lendemain de la sortie
+  // longue ni d'une conservée exigeante.
   const candidates = [2, 4, 1, 3, 5, 0, 6].filter(
     (d) =>
-      available.has(d) &&
+      open(d) &&
+      clear(d) &&
       !assigned.has(d) &&
       (longDay == null || circularDistance(d, longDay) >= 2),
   );
@@ -268,10 +395,13 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   }
 
   // ── 3. Remplissage : endurance, renforcement, récupération ────────────────
-  const remaining = [1, 2, 3, 4, 5, 6, 0].filter((d) => available.has(d) && !assigned.has(d));
+  const remaining = [1, 2, 3, 4, 5, 6, 0].filter((d) => open(d) && !assigned.has(d));
   // Une journée de repos complet au minimum, sauf en phase de décharge où il y en a deux.
   const restCount = spec.isDeload ? 2 : constraints.availableDays.length >= 7 ? 1 : 0;
-  const restDays = pickRestDays(remaining, usedQualityDays, longDay, restCount);
+  const hard = [...usedQualityDays, ...(longDay != null ? [longDay] : []), ...fixed.hard];
+  const afterLong = new Set(fixed.afterLong);
+  if (longDay != null) afterLong.add((longDay + 1) % 7);
+  const restDays = pickRestDays(remaining, hard, afterLong, restCount);
 
   for (const d of remaining) {
     if (restDays.includes(d)) {
@@ -282,9 +412,15 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
     // Lendemain d'une séance clef ou de la sortie longue → décrassage.
     const prev = (d + 6) % 7;
     const afterHard = usedQualityDays.includes(prev) || prev === longDay;
-    if (afterHard) {
+    const held = fixed.easy.get(d);
+    if (afterHard || held) {
       assigned.set(d, lib.recovery(model, spec.isDeload ? 30 : 45));
-      reasons.set(d, `Décrassage : lendemain d'une séance exigeante, on facilite la récupération sans ajouter de charge.`);
+      reasons.set(
+        d,
+        held && !afterHard
+          ? `Décrassage : ${held}.`
+          : `Décrassage : lendemain d'une séance exigeante, on facilite la récupération sans ajouter de charge.`,
+      );
     } else {
       assigned.set(d, lib.endurance(model, 60, Math.round(spec.targetElevationGainM * 0.12)));
       reasons.set(d, 'Endurance fondamentale : le volume qui construit la base aérobie.');
@@ -299,11 +435,16 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   // le jour d'endurance le plus éloigné des séances exigeantes. Ni en décharge
   // ni en affûtage : ces semaines-là ont une autre fonction, et la trace de la
   // directive le retient déjà.
+  //
+  // Le créneau existe dans une semaine que le planificateur aurait bâtie sur
+  // une rando-course, que celle-ci soit la sienne ou une conservée ; un footing
+  // prolongé conservé le tient déjà. Sortie longue lui aussi, il ne se pose pas
+  // à côté d'une conservée exigeante.
   const footing = durationDirectiveFor(set, 'long_run');
-  if (footing && !spec.isDeload && spec.phase !== 'taper' && longSession?.type === 'long_trail') {
-    const hard = [...usedQualityDays, ...(longDay != null ? [longDay] : [])];
+  const footingHeld = fixed.long.some((s) => s.type === 'long_run');
+  if (footing && !spec.isDeload && spec.phase !== 'taper' && template?.type === 'long_trail' && !footingHeld) {
     const day = remaining
-      .filter((d) => !restDays.includes(d) && assigned.get(d)?.type === 'endurance')
+      .filter((d) => !restDays.includes(d) && clear(d) && assigned.get(d)?.type === 'endurance')
       .sort((a, b) => minDistance(b, hard) - minDistance(a, hard))[0];
     if (day != null) {
       assigned.set(
@@ -344,10 +485,11 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   }
 
   // ── 4. Calibration sur la charge cible ────────────────────────────────────
-  const sessions = calibrateToTarget([...assigned.entries()], spec, athleteId, reasons, set, model);
+  // La charge des conservées est déjà dans la semaine.
+  const sessions = calibrateToTarget([...assigned.entries()], spec, athleteId, reasons, set, model, fixed.load);
 
   // ── 5. Directives du dossier ──────────────────────────────────────────────
-  honourDirectives(sessions, set, input);
+  honourDirectives(sessions, set, input, [...fixed.byDay.values()]);
 
   // ── 6. Nombres humains, une fois le contenu complet ───────────────────────
   // Les blocs annexes qu'une fréquence hebdomadaire vient d'adosser font partie
@@ -357,20 +499,22 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   for (const s of sessions) humanize(s, model);
 
   // ── 7. Plafond horaire ────────────────────────────────────────────────────
-  capToWeeklyCeiling(sessions, spec, set, model);
+  // Il se vérifie sur la semaine entière, conservées comprises.
+  capToWeeklyCeiling(sessions, spec, set, model, fixed.durationS);
 
+  const week = [...sessions, ...fixed.byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
   const dist = targetDistribution(spec.phase);
   return {
     weekStart: spec.weekStart,
     index: spec.index,
     phase: spec.phase,
     targetLoad: spec.targetLoad,
-    plannedDurationS: writtenDurationS(sessions),
+    plannedDurationS: writtenDurationS(week),
     targetElevationGainM: spec.targetElevationGainM,
     intensityDistribution: dist,
     isDeload: spec.isDeload,
     focus: spec.focus,
-    sessions,
+    sessions: week,
   };
 }
 
@@ -416,14 +560,19 @@ function negotiableS(s: PlannedSession): number {
  * conflit est réel, et le trancher en faveur du temps déclaré est le seul choix
  * exécutable. La séance le porte (`exemption: 'ceiling'`) — elle n'a pas
  * silencieusement quitté sa plage.
+ *
+ * Les séances conservées comptent dans la semaine (`heldS`) et ne cèdent
+ * jamais. Quand elles laissent trop peu de place, ce sont les séances du
+ * planificateur qui tombent, qualité comprise en tout dernier.
  */
 function capToWeeklyCeiling(
   sessions: PlannedSession[],
   spec: WeekPlanSpec,
   set: DirectiveSet,
   model: PhysiologyModel,
+  heldS = 0,
 ): void {
-  const over = () => writtenDurationS(sessions) - spec.maxDurationS;
+  const over = () => writtenDurationS(sessions) + heldS - spec.maxDurationS;
   if (over() <= 0) return;
 
   // La décharge et l'affûtage dispensent du plancher du dossier, ici comme
@@ -495,8 +644,21 @@ function capToWeeklyCeiling(
         a.plannedLoad - b.plannedLoad ||
         a.date.localeCompare(b.date),
     );
-  for (const x of droppable) {
+  // Quand les séances conservées ne laissent toujours pas la place, le reste de
+  // ce que le planificateur a écrit tombe à son tour : la sortie longue, puis la
+  // qualité, la moins prioritaire d'abord.
+  const rank = { optional: 0, support: 1, key: 2 } as const;
+  const crowdedOut = sessions
+    .filter((x) => !isVolume(x) && x.type !== 'rest' && x.plannedDurationS > 0)
+    .sort(
+      (a, b) =>
+        Number(isWithLong(b)) - Number(isWithLong(a)) ||
+        rank[a.priority] - rank[b.priority] ||
+        a.plannedLoad - b.plannedLoad,
+    );
+  for (const x of [...droppable, ...(heldS > 0 ? crowdedOut : [])]) {
     if (over() <= 0) break;
+    const crowded = !isVolume(x);
     const rest = lib.restDay();
     x.type = 'rest';
     x.title = rest.title;
@@ -510,7 +672,10 @@ function capToWeeklyCeiling(
     x.directives = undefined;
     x.rationale =
       `Jour retiré par le plafond horaire : la semaine dépassait les ` +
-      `${formatHours(spec.maxDurationS)} déclarées, et le volume facile ne pouvait plus reculer.`;
+      `${formatHours(spec.maxDurationS)} déclarées, et ` +
+      (crowded
+        ? `les séances conservées, qui ne cèdent pas, ne laissaient plus la place.`
+        : `le volume facile ne pouvait plus reculer.`);
   }
 
   // La trace suit ce qui a cédé. Une séance sortie de sa plage sans que rien ne
@@ -539,6 +704,10 @@ function formatHours(seconds: number): string {
  * durée est prescrite : elle passe la première, on la borne dans la plage du
  * dossier, et c'est le volume facile qui absorbe le reste — ce que fait
  * n'importe quel entraîneur sérieux, et ce que le plan faisait à l'envers.
+ *
+ * La charge des séances conservées (`heldLoad`) est déjà dans la semaine :
+ * elle ne s'ajuste pas, et ce que le planificateur écrit se calibre sur ce
+ * qu'elle laisse.
  */
 function calibrateToTarget(
   entries: [number, SessionTemplate][],
@@ -547,10 +716,11 @@ function calibrateToTarget(
   reasons: Map<number, string>,
   set: DirectiveSet,
   model: PhysiologyModel,
+  heldLoad = 0,
 ): PlannedSession[] {
   const isLong = (s: SessionTemplate) => s.type === 'long_run' || s.type === 'long_trail';
   const isFiller = (s: SessionTemplate) => s.type === 'endurance';
-  const fixedLoad = entries
+  const fixedLoad = heldLoad + entries
     .filter(([, s]) => !isLong(s) && !isFiller(s))
     .reduce((a, [, s]) => a + s.plannedLoad, 0);
   const adjustableLoad = entries
@@ -704,7 +874,12 @@ function longFactor(
  * Applique à la semaine ce que le dossier prescrit et ce que l'ambition
  * privilégie, et en laisse la trace sur chaque séance concernée.
  */
-function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: WeekBuildInput): void {
+function honourDirectives(
+  sessions: PlannedSession[],
+  set: DirectiveSet,
+  input: WeekBuildInput,
+  held: readonly PlannedSession[] = [],
+): void {
   const longAmbition = isLongFormat(input.ambition);
   const spec = input.spec;
 
@@ -740,7 +915,7 @@ function honourDirectives(sessions: PlannedSession[], set: DirectiveSet, input: 
     if (traces.length > 0) s.directives = traces;
   }
 
-  honourWeeklyFrequency(sessions, set);
+  honourWeeklyFrequency(sessions, set, held);
 }
 
 /**
@@ -836,19 +1011,16 @@ function humanize(s: PlannedSession, model: PhysiologyModel): void {
   s.title = lib.retitleFromContent(s);
 }
 
-function pickRestDays(remaining: number[], qualityDays: number[], longDay: number | null, count: number): number[] {
+function pickRestDays(
+  remaining: number[],
+  hard: readonly number[],
+  afterLong: ReadonlySet<number>,
+  count: number,
+): number[] {
   if (count <= 0) return [];
   // On privilégie le jour le plus éloigné des séances exigeantes… sauf le
   // lendemain de la sortie longue, où le repos complet a le plus de valeur.
-  const scored = remaining.map((d) => {
-    const prev = (d + 6) % 7;
-    const dayAfterLong = longDay != null && prev === longDay;
-    const minDistance = Math.min(
-      ...[...qualityDays, ...(longDay != null ? [longDay] : [])].map((q) => circularDistance(d, q)),
-      7,
-    );
-    return { d, score: dayAfterLong ? 100 : -minDistance };
-  });
+  const scored = remaining.map((d) => ({ d, score: afterLong.has(d) ? 100 : -minDistance(d, hard) }));
   return scored.sort((a, b) => b.score - a.score).slice(0, count).map((x) => x.d);
 }
 
@@ -1087,8 +1259,14 @@ interface PlanAttempt {
   projectedTsb: number;
 }
 
-/** Construit les semaines pour une profondeur d'affûtage donnée. */
-function buildWeeks(input: BuildPlanInput, startDate: string, ctl: number, taperScale: number): TrainingWeek[] {
+/** Construit les semaines pour une profondeur d'affûtage donnée, autour de ce qui est conservé. */
+function buildWeeks(
+  input: BuildPlanInput,
+  startDate: string,
+  ctl: number,
+  taperScale: number,
+  fixed: readonly PlannedSession[],
+): TrainingWeek[] {
   const specs = buildPeriodization({
     startDate,
     race: input.race,
@@ -1116,6 +1294,7 @@ function buildWeeks(input: BuildPlanInput, startDate: string, ctl: number, taper
       directives: input.directives,
       ambition: input.ambition,
       intervalFormat: nextIntervalFormat(policy, intervals),
+      fixed,
     });
     if (week.sessions.some((s) => isIntervalSession(s.type))) intervals++;
     return week;
@@ -1224,9 +1403,15 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   const raceDate = input.race.date.slice(0, 10);
   const eve = addDays(raceDate, -1);
   const planStart = mondayOf(startDate);
+  const today = input.today ?? planStart;
+
+  // Ce que la reconstruction conserve est là avant qu'elle n'écrive : chaque
+  // semaine se construit autour, et la profondeur d'affûtage se résout sur le
+  // plan tel qu'il sera, conservées comprises.
+  const held = (input.previous ?? []).flatMap((w) => w.sessions).filter((s) => decisionOn(s, today));
 
   const attempt = (taperScale: number): PlanAttempt => {
-    const built = buildWeeks(input, startDate, effectiveCtl, taperScale);
+    const built = buildWeeks(input, startDate, effectiveCtl, taperScale, held);
     const loads = built.flatMap((w) => w.sessions.map((s) => ({ date: s.date, load: s.plannedLoad })));
     const points = projectFrom(seed, loads, planStart, eve);
     return {
@@ -1273,11 +1458,11 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   }
 
   // ── Ce qu'une reconstruction n'a pas le droit de réécrire ──────────────────
-  // Le planificateur vient d'écrire le plan qu'il aurait écrit sur une page
-  // blanche. Les décisions du plan en place reprennent maintenant leur place :
-  // jours passés, séances réalisées ou remplacées, séances retirées par une
-  // absence déclarée, séances ajustées à la main.
-  const carryOver = carryDecisions(input.previous ?? [], fresh, input.today ?? planStart);
+  // Les semaines se sont écrites autour des décisions du plan en place — jours
+  // passés, séances réalisées ou remplacées, retirées par une absence déclarée,
+  // ajustées à la main. Le report les remet telles qu'elles étaient, ramène
+  // celles d'avant le départ, et dit ce qui change autour.
+  const carryOver = carryDecisions(input.previous ?? [], fresh, today);
   const weeks = carryOver.weeks;
 
   // La durée d'une semaine se mesure sur ses séances : elle suit donc ce que la
@@ -1287,11 +1472,10 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   for (const w of weeks) w.plannedDurationS = writtenDurationS(w.sessions);
 
   // ── Ce que le plan écrit produit, mesuré sur le plan écrit ─────────────────
-  // La profondeur d'affûtage s'est résolue sur ce que le planificateur peut
-  // encore écrire — il ne rattrapera pas une cible en réécrivant une séance
-  // décidée. La mesure, elle, porte sur le plan tel qu'il sera enregistré :
-  // annoncer le TSB d'un plan qu'on n'enregistre pas propagerait une erreur
-  // silencieuse jusqu'au jour de la course.
+  // Le planificateur ne rattrape pas une cible en réécrivant une séance
+  // décidée. La mesure porte sur le plan tel qu'il sera enregistré : annoncer
+  // le TSB d'un plan qu'on n'enregistre pas propagerait une erreur silencieuse
+  // jusqu'au jour de la course.
   const written = weeks.flatMap((w) => w.sessions).filter((s) => s.date >= planStart);
   const points = projectFrom(seed, written.map((s) => ({ date: s.date, load: s.plannedLoad })), planStart, eve);
   const projected = points[points.length - 1]?.tsb ?? Math.round((seed.ctl - seed.atl) * 10) / 10;

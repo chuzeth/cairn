@@ -332,14 +332,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Reconstruit intégralement le plan d'entraînement jusqu'à une course cible, à partir de l'état de forme actuel. À utiliser lors d'un changement d'objectif, de date, d'ambition, ou après une interruption importante. Renvoie un résumé semaine par semaine, et les jours où le plan porte un ratio charge aiguë/chronique — métabolique ou mécanique — au-delà de son seuil. " +
       "Ce qui porte une décision est repris et non réécrit : jour passé, séance réalisée, remplacée, retirée par une absence déclarée, ou modifiée à la main. Le reste est remplacé — et c'est irréversible. " +
-      "Procédure : appelle d'abord avec `preview` pour obtenir ce qui serait conservé et ce qui serait remplacé, soumets-le à Pierre, et n'enregistre qu'après sa confirmation.",
+      "Sans `apply: true`, rien n'est enregistré : l'outil rend un aperçu — ce qui serait conservé et remplacé, et le plan qui serait écrit, semaine par semaine. " +
+      "Procédure : appelle-le sans `apply`, soumets l'aperçu à Pierre, et ne le rappelle avec `apply: true` qu'après sa confirmation. Une clé absente de ce schéma est refusée.",
     input_schema: obj(
       {
         race_id: str("Identifiant de la course cible."),
         start_date: str('Date de départ du plan, YYYY-MM-DD. Par défaut : le lundi de cette semaine.'),
         reason: str('Motif de la reconstruction, consigné dans le journal de révision du plan.'),
-        preview: bool(
-          "Si vrai, ne rien enregistrer : renvoyer seulement ce que la reconstruction conserverait et ce qu'elle remplacerait, pour le lui soumettre avant confirmation.",
+        apply: bool(
+          "Enregistrer la reconstruction. Seul `true` enregistre ; absent ou faux, l'outil rend l'aperçu et ne touche à rien.",
         ),
       },
       ['race_id', 'reason'],
@@ -447,6 +448,24 @@ const daysAgo = (n: number) => iso(new Date(Date.now() - n * dayMs));
 const isDay = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
 const midnight = (date: string) => new Date(`${date}T00:00:00Z`).getTime();
 const arg = <T>(input: Record<string, unknown>, key: string): T | undefined => input[key] as T | undefined;
+
+/**
+ * Refuse, en la nommant, une clé que le schéma de l'outil ne déclare pas.
+ *
+ * `additionalProperties: false` n'est qu'une consigne au modèle : rien ne la
+ * vérifiait à l'exécution, et une clé ignorée change le sens d'un appel sans
+ * que rien ne le dise.
+ */
+function refuseUnknownKeys(name: string, input: Record<string, unknown>): void {
+  const known = Object.keys(TOOL_DEFINITIONS.find((t) => t.name === name)?.input_schema.properties ?? {});
+  const unknown = Object.keys(input).filter((k) => !known.includes(k));
+  if (unknown.length === 0) return;
+  throw new Error(
+    `${unknown.length > 1 ? 'Clés inconnues' : 'Clé inconnue'} pour ${name} : ` +
+      `${unknown.map((k) => `« ${k} »`).join(', ')} — rien n'a été fait. Clés acceptées : ${known.join(', ')}.`,
+  );
+}
+
 /** Un TSB se lit signé : « 8,8 » et « −8,8 » ne décrivent pas le même athlète. */
 const signedTsb = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
 
@@ -1134,6 +1153,14 @@ export async function executeTool(
     }
 
     case 'rebuild_plan': {
+      // Une lecture ne doit pas devenir une écriture parce qu'une clé est mal
+      // nommée : `mode: "preview"` ignoré en silence a fait de six aperçus six
+      // reconstructions réelles. Enregistrer se demande, explicitement.
+      refuseUnknownKeys(name, input);
+      const apply = input.apply;
+      if (apply !== undefined && typeof apply !== 'boolean') {
+        throw new Error(`apply attend un booléen — reçu ${JSON.stringify(apply)}. Rien n'a été reconstruit.`);
+      }
       const raceId = arg<string>(input, 'race_id');
       const reason = arg<string>(input, 'reason') ?? 'Reconstruction demandée.';
       if (!raceId) throw new Error('race_id requis.');
@@ -1217,21 +1244,94 @@ export async function executeTool(
       // départ que les décisions passées ramènent avec elles.
       const runway = weeks.filter((w) => w.weekStart >= planStart).length;
       const movement = describeCarry(carryOver);
+      const assumed = assumedCtl(state.profile.constraints);
+      const ctlIsAssumed = start.ctl < assumed * 0.45;
 
-      // ── L'aperçu : ce que la reconstruction ferait, avant qu'elle ne le fasse
-      // L'action est irréversible ; elle ne s'exécute qu'une fois montrée.
-      if (arg<boolean>(input, 'preview')) {
+      const verdict =
+        `TSB projeté à la veille ${signedTsb(tsbCheck.projected)} pour une cible de ` +
+        `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}` +
+        (ratioCheck.exceedances.length
+          ? ` — ⚠ ratio de charge au-delà de son seuil : ${describeRatioExceedances(ratioCheck.exceedances)}`
+          : '') +
+        (volumeCheck.statement ? ` — ⚠ ${volumeCheck.statement}` : '');
+
+      // Le même contenu pour l'aperçu et pour l'enregistrement : ce que
+      // l'athlète voit avant de confirmer est le plan qui sera écrit.
+      const content = {
+        course: race.name,
+        date_course: race.date,
+        semaines: runway,
+        ...carryContent(carryOver),
+        // La cible et sa vérification vont ensemble : une cible seule ne dit
+        // pas si le plan l'atteint.
+        tsb_cible_veille: tsbCheck.target,
+        tsb_projete_veille: tsbCheck.projected,
+        date_veille: tsbCheck.date,
+        ecart_a_la_cible: tsbCheck.gap,
+        cible_atteinte: tsbCheck.onTarget,
+        profondeur_affutage: tsbCheck.taperScale,
+        cible_manquee_parce_que: tsbCheck.shortfall,
+        ratios_de_charge: {
+          ...ratioContent(ratioCheck.exceedances),
+          du: ratioCheck.from,
+          au: ratioCheck.to,
+          jours_de_charge_connus_avant_le_plan: ratioCheck.historyDays,
+        },
+        // Le plafond horaire est tenu par construction ; ce qui se dit ici,
+        // c'est la place qu'il reste et ce qu'elle coûte.
+        volume_hebdomadaire: {
+          plafond_h: Math.round((volumeCheck.ceilingS / 3600) * 10) / 10,
+          semaine_la_plus_lourde_h: Math.round((volumeCheck.peakS / 3600) * 10) / 10,
+          semaines_sous_utilisees: volumeCheck.underused.map((u) => ({
+            semaine: u.weekStart,
+            volume_h: Math.round((u.writtenS / 3600) * 10) / 10,
+            inutilise_h: Math.round((u.unusedS / 3600) * 10) / 10,
+          })),
+          durabilite_facteur_limitant_mesure: volumeCheck.durabilityLimiting,
+          a_dire: volumeCheck.statement,
+        },
+        // Sur un format à boucle répétée, ce n'est pas un temps prédit mais la
+        // durée que l'ambition enregistrée représente : la cloche la fixe.
+        temps_predit: formatClock(estimatedRaceDurationS),
+        duree_fixee_par_la_cloche: isLapCourse(race.course),
+        charge_de_depart: Math.round(start.ctl),
+        charge_de_depart_estimee: ctlIsAssumed,
+        // Ce que la forme est devenue entre aujourd'hui et le départ du plan.
+        charge_de_depart_reportee_depuis: {
+          date_aujourdhui: state.today.date,
+          ctl_aujourdhui: state.today.ctl,
+          atl_aujourdhui: state.today.atl,
+          premier_jour_du_plan: planStart,
+          jours_intercalaires: start.gapDays,
+          charge_prevue_dans_lintervalle: start.gapLoad,
+          ctl_au_depart: Math.round(start.ctl * 10) / 10,
+          atl_au_depart: Math.round(start.atl * 10) / 10,
+        },
+        directives_honorees: directivesFor(state.profile).map((d) => ({
+          id: d.id,
+          nature: d.kind,
+          extrait: d.origin.quote,
+          source: d.origin.source,
+          date_document: d.origin.date,
+          part_du_planificateur: d.derived ?? null,
+        })),
+        ambition: state.profile.ambition ?? null,
+        apercu: weeks.map(summarizeWeek),
+      };
+
+      // ── L'aperçu, par défaut : l'action est irréversible, elle ne s'exécute
+      // que sur demande explicite, une fois montrée.
+      if (apply !== true) {
         return {
-          summary: `Aperçu — reconstruction de ${runway} semaines jusqu'à « ${race.name} » : ${movement}`,
+          summary:
+            `Aperçu, rien n'est enregistré — reconstruction de ${runway} semaines jusqu'à ` +
+            `« ${race.name} » : ${movement} — ${verdict}`,
           content: {
             enregistre: false,
-            course: race.name,
-            date_course: race.date,
-            semaines: runway,
-            ...carryContent(carryOver),
+            ...content,
             a_faire:
-              'Soumets à Pierre ce qui serait conservé et ce qui serait remplacé. ' +
-              "S'il confirme, rappelle cet outil sans preview. Sinon, ajuste séance par séance " +
+              'Soumets à Pierre ce qui serait conservé, ce qui serait remplacé et le plan qui serait écrit. ' +
+              "S'il confirme, rappelle cet outil avec `apply: true`. Sinon, ajuste séance par séance " +
               '(`modify_session`), qui ne détruit rien.',
           },
         };
@@ -1275,80 +1375,9 @@ export async function executeTool(
 
       await db.savePlan(plan, weeks);
 
-      const assumed = assumedCtl(state.profile.constraints);
-      const ctlIsAssumed = start.ctl < assumed * 0.45;
-
       return {
-        summary:
-          `Plan reconstruit : ${runway} semaines jusqu'à « ${race.name} » — ${movement} — ` +
-          `TSB projeté à la veille ${signedTsb(tsbCheck.projected)} pour une cible de ` +
-          `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}` +
-          (ratioCheck.exceedances.length
-            ? ` — ⚠ ratio de charge au-delà de son seuil : ${describeRatioExceedances(ratioCheck.exceedances)}`
-            : '') +
-          (volumeCheck.statement ? ` — ⚠ ${volumeCheck.statement}` : ''),
-        content: {
-          plan_id: plan.id,
-          course: race.name,
-          date_course: race.date,
-          semaines: runway,
-          ...carryContent(carryOver),
-          // La cible et sa vérification vont ensemble : une cible seule ne dit
-          // pas si le plan l'atteint.
-          tsb_cible_veille: tsbCheck.target,
-          tsb_projete_veille: tsbCheck.projected,
-          date_veille: tsbCheck.date,
-          ecart_a_la_cible: tsbCheck.gap,
-          cible_atteinte: tsbCheck.onTarget,
-          profondeur_affutage: tsbCheck.taperScale,
-          cible_manquee_parce_que: tsbCheck.shortfall,
-          ratios_de_charge: {
-            ...ratioContent(ratioCheck.exceedances),
-            du: ratioCheck.from,
-            au: ratioCheck.to,
-            jours_de_charge_connus_avant_le_plan: ratioCheck.historyDays,
-          },
-          // Le plafond horaire est tenu par construction ; ce qui se dit ici,
-          // c'est la place qu'il reste et ce qu'elle coûte.
-          volume_hebdomadaire: {
-            plafond_h: Math.round((volumeCheck.ceilingS / 3600) * 10) / 10,
-            semaine_la_plus_lourde_h: Math.round((volumeCheck.peakS / 3600) * 10) / 10,
-            semaines_sous_utilisees: volumeCheck.underused.map((u) => ({
-              semaine: u.weekStart,
-              volume_h: Math.round((u.writtenS / 3600) * 10) / 10,
-              inutilise_h: Math.round((u.unusedS / 3600) * 10) / 10,
-            })),
-            durabilite_facteur_limitant_mesure: volumeCheck.durabilityLimiting,
-            a_dire: volumeCheck.statement,
-          },
-          // Sur un format à boucle répétée, ce n'est pas un temps prédit mais la
-          // durée que l'ambition enregistrée représente : la cloche la fixe.
-          temps_predit: formatClock(estimatedRaceDurationS),
-          duree_fixee_par_la_cloche: isLapCourse(race.course),
-          charge_de_depart: Math.round(start.ctl),
-          charge_de_depart_estimee: ctlIsAssumed,
-          // Ce que la forme est devenue entre aujourd'hui et le départ du plan.
-          charge_de_depart_reportee_depuis: {
-            date_aujourdhui: state.today.date,
-            ctl_aujourdhui: state.today.ctl,
-            atl_aujourdhui: state.today.atl,
-            premier_jour_du_plan: planStart,
-            jours_intercalaires: start.gapDays,
-            charge_prevue_dans_lintervalle: start.gapLoad,
-            ctl_au_depart: Math.round(start.ctl * 10) / 10,
-            atl_au_depart: Math.round(start.atl * 10) / 10,
-          },
-          directives_honorees: directivesFor(state.profile).map((d) => ({
-            id: d.id,
-            nature: d.kind,
-            extrait: d.origin.quote,
-            source: d.origin.source,
-            date_document: d.origin.date,
-            part_du_planificateur: d.derived ?? null,
-          })),
-          ambition: state.profile.ambition ?? null,
-          apercu: weeks.map(summarizeWeek),
-        },
+        summary: `Plan reconstruit : ${runway} semaines jusqu'à « ${race.name} » — ${movement} — ${verdict}`,
+        content: { enregistre: true, plan_id: plan.id, ...content },
       };
     }
 

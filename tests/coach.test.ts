@@ -1519,6 +1519,31 @@ describe('Le plafond horaire est une contrainte dure', () => {
     expect(roomy).toHaveLength(0);
   });
 
+  it('tient aussi quand des séances conservées remplissent la semaine', () => {
+    // Sept heures et demie conservées dans une semaine de construction : les
+    // conservées ne cèdent pas, ce sont les séances du planificateur qui
+    // tombent — la qualité en tout dernier, mais elle tombe.
+    const spec = buildPeriodization({
+      startDate: '2026-09-01', race: RACE, estimatedRaceDurationS: 3 * 3600, currentCtl: 45,
+      constraints: PIERRE.constraints, raceElevationGainM: 1200,
+    }).find((s) => s.phase === 'build' && !s.isDeload)!;
+    const held = (offset: number, type: PlannedSession['type'], hours: number): PlannedSession => ({
+      id: `garde-${offset}`, athleteId: 'pierre', date: lib.addDays(spec.weekStart, offset), type,
+      title: `Conservée ${hours} h`, intent: '', blocks: [{ label: 'Course', zone: 'Z2', durationS: hours * 3600 }],
+      plannedLoad: hours * 50, plannedMechanicalLoad: 10, plannedDurationS: hours * 3600, priority: 'key',
+      status: 'planned', decision: { at: '2026-09-01T08:00:00.000Z', by: 'coach', summary: 'Décidée à la main.' },
+    });
+    const fixed = [held(0, 'endurance', 3), held(6, 'long_trail', 4.5)];
+    const week = buildWeek({
+      spec, model, constraints: PIERRE.constraints, athleteId: 'pierre', race: RACE, directives,
+      ambition: PIERRE.ambition, fixed,
+    });
+
+    expect(week.plannedDurationS).toBeLessThanOrEqual(9 * 3600);
+    for (const kept of fixed) expect(week.sessions.find((s) => s.date === kept.date)).toEqual(kept);
+    expect(week.sessions.filter((s) => s.type === 'long_trail')).toHaveLength(1);
+  });
+
   it('ne rabote jamais une séance de qualité pour tenir sous le plafond', () => {
     const quality = plan(6).weeks.flatMap((w) => w.sessions).filter((x) => x.priority === 'key');
     // Une semaine qui déborde n'est pas une semaine trop intense : le plafond

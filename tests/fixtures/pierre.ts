@@ -1,4 +1,4 @@
-import { LAB_TEST_2025_07_24, type PhysiologyModel, type PlannedSession } from '@cairn/core';
+import { LAB_TEST_2025_07_24, type PhysiologyModel, type PlannedSession, type SessionBlock } from '@cairn/core';
 import { modelFromLabOnly } from '@cairn/physiology';
 
 const LAB_ONLY = modelFromLabOnly(LAB_TEST_2025_07_24, '2026-09-12');
@@ -48,3 +48,69 @@ export const STORED_RANDO_0310: PlannedSession = {
   ],
   plannedLoad: 136, plannedMechanicalLoad: 67, plannedDurationS: 10800, plannedElevationGainM: 1384,
 };
+
+/**
+ * Les trois séances que le plan en place conservait le 21/09/2026, telles
+ * qu'enregistrées — consignes d'exécution et motifs abrégés : le test maximal
+ * du mardi, et les deux rando-courses ramenées sous le seuil mécanique par le
+ * coach. C'est la configuration où une reconstruction écrivait 11,9 h, une
+ * seconde rando-course la veille de celle du 27/09, et un footing prolongé la
+ * veille du test.
+ */
+const Z2: Pick<SessionBlock, 'zone' | 'hrRange' | 'speedRangeMs' | 'paceRange'> = {
+  zone: 'Z2', hrRange: [141, 155], speedRangeMs: [2.45672, 2.996], paceRange: ['5:34', '6:47'],
+};
+const Z1: Pick<SessionBlock, 'zone' | 'hrRange' | 'speedRangeMs' | 'paceRange'> = {
+  zone: 'Z1', hrRange: [0, 141], speedRangeMs: [0, 2.45672], paceRange: ['6:47', '—'],
+};
+
+export const DECIDED_ON_2026_09_21: PlannedSession[] = [
+  {
+    id: 'ses_71f8in6f1gy', athleteId: 'pierre', date: '2026-09-22', type: 'threshold',
+    title: 'Contre-la-montre 20 min — test maximal', intent: '', priority: 'key', status: 'planned',
+    blocks: [
+      { label: 'Échauffement progressif', ...Z2, durationS: 1200, cadenceTargetSpm: 172 },
+      { label: 'Gammes et mises en action', ...Z2, durationS: 300 },
+      {
+        label: 'Contre-la-montre 20 min', zone: 'Z5', durationS: 1200, hrRange: [171, 185],
+        speedRangeMs: [3.84, 3.99], paceRange: ['4:11', '4:20'], cadenceTargetSpm: 175,
+      },
+      { label: 'Retour au calme', ...Z1, durationS: 900 },
+    ],
+    plannedLoad: 59, plannedMechanicalLoad: 4, plannedDurationS: 3600, plannedDistanceM: 9893,
+    plannedElevationGainM: 0,
+    decision: { at: '2026-09-18T17:46:03.751Z', by: 'coach', summary: 'Je reprends la décision du 18/09 matin…' },
+  },
+  {
+    id: 'ses_il7lrctf1gz', athleteId: 'pierre', date: '2026-09-27', type: 'long_trail',
+    title: 'Rando-course 3 h · 680 m D+', intent: '', priority: 'key', status: 'planned',
+    blocks: [
+      { label: 'Approche en endurance', ...Z2, durationS: 2400 },
+      { label: 'Montées — marche active ou course selon la pente', ...Z2, durationS: 3720, elevationGainM: 680 },
+      { label: 'Descentes — travail technique', ...Z2, durationS: 3360, elevationLossM: 680 },
+      { label: 'Retour au calme', ...Z1, durationS: 1320 },
+    ],
+    plannedLoad: 138, plannedMechanicalLoad: 39, plannedDurationS: 10800, plannedDistanceM: 27467,
+    plannedElevationGainM: 680,
+    decision: {
+      at: '2026-09-18T17:47:59.066Z', by: 'coach',
+      summary: 'Second pas sur la même décision : la première coupe a ramené le ratio mécanique du 27/09 de 1,76 à 1,65…',
+    },
+  },
+  {
+    id: 'ses_gm3qpe5f1h4', athleteId: 'pierre', date: '2026-10-03', type: 'long_trail',
+    title: 'Rando-course 3 h · 900 m D+', intent: '', priority: 'key', status: 'planned',
+    blocks: [
+      { label: 'Approche en endurance', ...Z2, durationS: 1500 },
+      { label: 'Montées — marche active ou course selon la pente', ...Z2, durationS: 5040, elevationGainM: 900 },
+      { label: 'Descentes — allure de course', ...Z2, durationS: 3120, elevationLossM: 900 },
+      { label: 'Retour au calme', ...Z1, durationS: 1140 },
+    ],
+    plannedLoad: 140, plannedMechanicalLoad: 48, plannedDurationS: 10800, plannedDistanceM: 27737,
+    plannedElevationGainM: 900,
+    decision: {
+      at: '2026-09-18T17:48:49.295Z', by: 'coach',
+      summary: "Correction de ce que j'ai écrit au pas précédent : j'y annonçais que le 03/10 pouvait rester à 1 014 m…",
+    },
+  },
+];

@@ -3,7 +3,7 @@ import {
   PIERRE,
   type DeclaredAbsence, type PlannedSession, type RaceGoal, type TrainingPlan, type TrainingWeek,
 } from '@cairn/core';
-import { PIERRE_MODEL } from './fixtures/pierre.js';
+import { DECIDED_ON_2026_09_21, PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
  * Une reconstruction ne détruit pas ce qui a été décidé.
@@ -43,6 +43,7 @@ const store = vi.hoisted(() => ({
   plan: null as { plan: TrainingPlan; weeks: TrainingWeek[] } | null,
   saved: null as { plan: TrainingPlan; weeks: TrainingWeek[] } | null,
   saves: 0,
+  absences: [] as DeclaredAbsence[],
 }));
 
 const sessionsOf = () => (store.plan?.weeks ?? []).flatMap((w) => w.sessions);
@@ -55,7 +56,7 @@ vi.mock('@cairn/db', () => ({
   getActivePlan: async () => store.plan,
   listPlannedSessions: async (_a: string, from: string, to: string) =>
     sessionsOf().filter((s) => s.date >= from && s.date <= to),
-  listAbsences: async () => [ABSENCE],
+  listAbsences: async () => store.absences,
   listActivities: async () => [],
   listCheckIns: async () => [],
   getDailyLoads: async () => [],
@@ -168,8 +169,12 @@ const plan = (weeks: TrainingWeek[]): { plan: TrainingPlan; weeks: TrainingWeek[
   weeks,
 });
 
-const rebuild = (extra: Record<string, unknown> = {}, origin?: 'athlete' | 'coach' | 'rules' | 'developer') =>
+type Origin = 'athlete' | 'coach' | 'rules' | 'developer';
+/** L'appel tel que le bouton et le coach le font : sans `apply`, c'est un aperçu. */
+const rebuild = (extra: Record<string, unknown> = {}, origin?: Origin) =>
   executeTool('pierre', 'rebuild_plan', { race_id: RACE.id, reason: 'Changement de cible.', ...extra }, origin);
+/** La reconstruction enregistrée, qui ne se fait que demandée. */
+const write = (extra: Record<string, unknown> = {}, origin?: Origin) => rebuild({ apply: true, ...extra }, origin);
 
 const saved = () => (store.saved?.weeks ?? []).flatMap((w) => w.sessions);
 
@@ -179,13 +184,14 @@ beforeEach(() => {
   store.plan = plan(PREVIOUS.map((w) => ({ ...w, sessions: w.sessions.map((s) => ({ ...s })) })));
   store.saved = null;
   store.saves = 0;
+  store.absences = [ABSENCE];
 });
 
 afterAll(() => vi.useRealTimers());
 
 describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
   it('reprend les séances passées, réalisées, retirées et modifiées à la main', async () => {
-    await rebuild();
+    await write();
 
     const written = saved();
     for (const expected of DECIDED) {
@@ -197,7 +203,7 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
   });
 
   it('reprend la séance décidée à l\'identique, contenu et charge compris', async () => {
-    await rebuild();
+    await write();
 
     const rando = saved().find((s) => s.id === 'p4')!;
     const before = PREVIOUS[1]!.sessions.find((s) => s.id === 'p4')!;
@@ -208,7 +214,7 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
   });
 
   it('garde le statut et le lien qui fondent la décision', async () => {
-    await rebuild();
+    await write();
 
     const written = saved();
     expect(written.find((s) => s.id === 'p2')?.status).toBe('replaced');
@@ -218,14 +224,14 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
   });
 
   it('ne laisse pas deux séances le même jour', async () => {
-    await rebuild();
+    await write();
 
     const dates = saved().map((s) => s.date);
     expect(dates.length).toBe(new Set(dates).size);
   });
 
   it('réécrit bien tout le reste — la préservation ne gèle pas le plan', async () => {
-    await rebuild();
+    await write();
 
     const untouched = saved().filter((s) => !DECIDED.some((d) => d.id === s.id));
     expect(untouched.length).toBeGreaterThan(20);
@@ -235,17 +241,17 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
 
 describe('Ce que la reconstruction va changer se voit avant qu\'elle ne s\'exécute', () => {
   it('l\'aperçu n\'enregistre rien', async () => {
-    const { content } = await rebuild({ preview: true });
+    const { content } = await rebuild();
 
     expect(store.saves).toBe(0);
     expect((content as { enregistre: boolean }).enregistre).toBe(false);
   });
 
   it('l\'aperçu annonce exactement ce que la reconstruction conservera', async () => {
-    const { content } = await rebuild({ preview: true });
+    const { content } = await rebuild();
     const announced = (content as { seances_conservees: { date: string }[] }).seances_conservees;
 
-    await rebuild();
+    await write();
     const kept = saved().filter((s) => DECIDED.some((d) => d.id === s.id));
 
     expect(announced.map((k) => k.date).sort()).toEqual(kept.map((s) => s.date).sort());
@@ -253,7 +259,7 @@ describe('Ce que la reconstruction va changer se voit avant qu\'elle ne s\'exéc
   });
 
   it('l\'aperçu dit ce qui sera remplacé, et ce qui y change', async () => {
-    const { content, summary } = await rebuild({ preview: true });
+    const { content, summary } = await rebuild();
     const swapped = (content as {
       seances_remplacees: { date: string; avant: string; apres: string; ce_qui_change: string[] }[];
     }).seances_remplacees;
@@ -271,7 +277,7 @@ describe('Ce que la reconstruction va changer se voit avant qu\'elle ne s\'exéc
   });
 
   it('chaque séance conservée dit ce qu\'elle porte', async () => {
-    const { content } = await rebuild({ preview: true });
+    const { content } = await rebuild();
     const kept = (content as { seances_conservees: { date: string; ce_qu_elle_porte: string }[] })
       .seances_conservees;
 
@@ -287,23 +293,23 @@ describe('Le journal dit d\'où vient la reconstruction', () => {
   const lastRevision = () => store.saved!.plan.revisionLog[store.saved!.plan.revisionLog.length - 1]!;
 
   it('distingue l\'athlète d\'un appel direct à l\'API', async () => {
-    await rebuild({}, 'athlete');
+    await write({}, 'athlete');
     expect(lastRevision().origin).toBe('athlete');
     expect(lastRevision().summary).toContain("par l'athlète");
 
     store.saved = null;
-    await rebuild({}, 'developer');
+    await write({}, 'developer');
     expect(lastRevision().origin).toBe('developer');
     expect(lastRevision().summary).toContain('appel direct');
   });
 
   it('vient du coach quand rien ne dit le contraire', async () => {
-    await rebuild();
+    await write();
     expect(lastRevision().origin).toBe('coach');
   });
 
   it('inscrit le mouvement, jour par jour, dans le journal', async () => {
-    await rebuild();
+    await write();
     const changes = lastRevision().changes;
 
     expect(changes.length).toBeGreaterThan(0);
@@ -312,7 +318,7 @@ describe('Le journal dit d\'où vient la reconstruction', () => {
   });
 
   it('reporte le journal du plan précédent', async () => {
-    await rebuild();
+    await write();
     expect(store.saved!.plan.revisionLog[0]?.summary).toBe('Plan initial.');
   });
 });
@@ -320,10 +326,117 @@ describe('Le journal dit d\'où vient la reconstruction', () => {
 describe('Un premier plan n\'a rien à conserver', () => {
   it('se construit sur une page blanche', async () => {
     store.plan = null;
-    const { content } = await rebuild({ preview: true });
+    const { content } = await rebuild();
 
     expect((content as { seances_conservees: unknown[] }).seances_conservees).toHaveLength(0);
     expect((content as { seances_remplacees: unknown[] }).seances_remplacees).toHaveLength(0);
     expect((content as { seances_ajoutees: unknown[] }).seances_ajoutees.length).toBeGreaterThan(20);
+  });
+});
+
+describe('Une reconstruction ne s\'enregistre que demandée', () => {
+  it('rend un aperçu quand rien ne dit d\'enregistrer', async () => {
+    const { content, summary } = await rebuild();
+
+    expect(store.saves).toBe(0);
+    expect((content as { enregistre: boolean }).enregistre).toBe(false);
+    expect(summary).toContain("rien n'est enregistré");
+  });
+
+  it('refuse une clé que le schéma ne déclare pas, la nomme, et n\'écrit rien', async () => {
+    // L'appel qui a réécrit le plan six fois : un aperçu demandé sous un autre nom.
+    await expect(rebuild({ mode: 'preview' })).rejects.toThrow(/« mode »/);
+    // L'ancien drapeau aussi : accepté, il laisserait croire qu'il protège encore.
+    await expect(write({ preview: true })).rejects.toThrow(/« preview »/);
+    expect(store.saves).toBe(0);
+  });
+
+  it('n\'enregistre que sur `apply: true`', async () => {
+    await expect(rebuild({ apply: 'true' })).rejects.toThrow(/booléen/);
+    await rebuild({ apply: false });
+    expect(store.saves).toBe(0);
+
+    const { content } = await write();
+    expect(store.saves).toBe(1);
+    expect((content as { enregistre: boolean }).enregistre).toBe(true);
+  });
+
+  it('montre dans l\'aperçu le plan qu\'il enregistrerait', async () => {
+    const weeksOf = (r: { content: unknown }) => (r.content as { apercu: string[] }).apercu;
+    const preview = await rebuild();
+    const applied = await write();
+
+    expect(weeksOf(preview).length).toBeGreaterThan(0);
+    expect(weeksOf(preview)).toEqual(weeksOf(applied));
+  });
+});
+
+/**
+ * La configuration réelle du 21/09 : le test maximal du mardi, et les deux
+ * rando-courses que le coach avait ramenées sous le seuil mécanique. Le
+ * planificateur écrivait ses semaines sans les voir — 11,9 h et 10,4 h pour un
+ * plafond de 9, une seconde rando-course la veille de chacune, un footing
+ * prolongé la veille du test.
+ */
+describe('Une séance conservée est un point fixe de la semaine', () => {
+  const REBUILT_ON = '2026-09-21';
+  const QUALITY_OR_LONG = [
+    'tempo', 'threshold', 'vo2max', 'hill_repeats', 'downhill', 'fartlek', 'race_pace', 'long_run', 'long_trail',
+  ];
+  const week = (weekStart: string, sessions: PlannedSession[]): TrainingWeek => ({
+    weekStart, index: 0, phase: 'build', targetLoad: 300, plannedDurationS: 0, targetElevationGainM: 900,
+    intensityDistribution: { low: 0.75, moderate: 0.1, high: 0.15 }, isDeload: false, focus: '', sessions,
+  });
+
+  beforeEach(() => {
+    vi.setSystemTime(new Date(`${REBUILT_ON}T07:00:00.000Z`));
+    store.absences = [];
+    const [test, rando27, rando03] = DECIDED_ON_2026_09_21.map((s) => structuredClone(s));
+    store.plan = plan([week('2026-09-21', [test!, rando27!]), week('2026-09-28', [rando03!])]);
+  });
+
+  const written = async () => {
+    await write();
+    return store.saved!.weeks.filter((w) => w.weekStart >= REBUILT_ON);
+  };
+  const byDate = (weeks: TrainingWeek[]) => new Map(weeks.flatMap((w) => w.sessions).map((s) => [s.date, s]));
+  const shift = (date: string, days: number) =>
+    new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+  it('tient le plafond sur la semaine entière, conservées comprises', async () => {
+    for (const w of await written()) {
+      const s = w.sessions.filter((x) => x.type !== 'race').reduce((a, x) => a + x.plannedDurationS, 0);
+      expect(s, w.weekStart).toBeLessThanOrEqual(PIERRE.constraints.maxWeeklyHours * 3600);
+    }
+  });
+
+  it('n\'écrit pas de seconde rando-course à côté de celle qu\'elle conserve', async () => {
+    for (const w of await written()) {
+      expect(w.sessions.filter((s) => s.type === 'long_trail').length, w.weekStart).toBeLessThanOrEqual(1);
+    }
+    const days = byDate(store.saved!.weeks);
+    expect(days.get('2026-09-27')?.id).toBe('ses_il7lrctf1gz');
+    expect(days.get('2026-10-03')?.id).toBe('ses_gm3qpe5f1h4');
+  });
+
+  it('laisse la veille du test maximal au repos ou en récupération', async () => {
+    const eve = byDate(await written()).get('2026-09-21');
+    expect(['rest', 'recovery']).toContain(eve?.type ?? 'rest');
+  });
+
+  it('ne pose ni qualité ni sortie longue la veille ou le lendemain d\'une conservée', async () => {
+    const days = byDate(await written());
+    for (const kept of DECIDED_ON_2026_09_21) {
+      for (const date of [shift(kept.date, -1), shift(kept.date, 1)]) {
+        const s = days.get(date);
+        if (!s || s.decision) continue;
+        expect(QUALITY_OR_LONG, `${date} ${s.title}`).not.toContain(s.type);
+      }
+    }
+  });
+
+  it('reprend les conservées telles qu\'elles étaient', async () => {
+    const days = byDate(await written());
+    for (const kept of DECIDED_ON_2026_09_21) expect(days.get(kept.date)).toEqual(kept);
   });
 });

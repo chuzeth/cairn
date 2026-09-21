@@ -106,13 +106,14 @@ export default function RacesPage() {
     }
   };
 
-  // Le bouton ne reconstruit pas : il demande ce que la reconstruction ferait.
+  // Le bouton ne reconstruit pas : il demande ce que la reconstruction ferait —
+  // sans `apply`, l'API ne rend qu'un aperçu.
   const askPlan = async (raceId: string, name: string) => {
     setBuilding(raceId);
     setNotice(null);
     setPreview(null);
     try {
-      const data = await post<RebuildPreview>('/api/plan/rebuild', { race_id: raceId, preview: true });
+      const data = await post<RebuildPreview>('/api/plan/rebuild', { race_id: raceId });
       setPreview({ raceId, name, data });
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -129,7 +130,7 @@ export default function RacesPage() {
     try {
       const result = await post<{ semaines: number; temps_predit: string; mouvement: string }>(
         '/api/plan/rebuild',
-        { race_id: raceId, reason: `Plan reconstruit depuis la page Objectifs pour « ${name} ».` },
+        { race_id: raceId, reason: `Plan reconstruit depuis la page Objectifs pour « ${name} ».`, apply: true },
       );
       setNotice(
         `Plan reconstruit : ${num(result.semaines)} semaines jusqu'à « ${name} » — ${result.mouvement}. ` +

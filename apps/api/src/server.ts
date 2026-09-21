@@ -439,10 +439,11 @@ export async function buildServer() {
     }
   });
 
-  // `preview` ne touche à rien : il renvoie ce que la reconstruction
-  // conserverait et ce qu'elle remplacerait. L'application s'en sert pour
-  // montrer le mouvement avant de le déclencher — l'action est irréversible.
-  app.post<{ Body: { race_id: string; reason?: string; start_date?: string; preview?: boolean } }>(
+  // Sans `apply: true`, rien n'est touché : la réponse est l'aperçu de ce que
+  // la reconstruction conserverait, remplacerait et écrirait. L'application
+  // le montre avant de confirmer — l'action est irréversible. Une clé que le
+  // schéma de l'outil ne déclare pas est refusée par l'outil lui-même.
+  app.post<{ Body: { race_id: string; reason?: string; start_date?: string; apply?: boolean } }>(
     '/api/plan/rebuild',
     async (req, reply) => {
       try {

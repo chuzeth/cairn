@@ -58,7 +58,7 @@ paquet : le serveur trouve la bonne base quel que soit le répertoire de lanceme
 | `get_plan` | Plan en cours, phases, séances et leur statut. |
 | `list_races` / `upsert_race` | Objectifs de course, profil de parcours, ambition. |
 | `predict_race` | Temps prédit, intervalle, plan d'allure, ravitaillement, facteurs limitants. |
-| `rebuild_plan` | Reconstruction complète de la préparation. |
+| `rebuild_plan` | Reconstruction complète de la préparation — un aperçu, sauf avec `apply: true`. |
 | `modify_session` | Déplacement, changement de statut, ajustement de charge d'une séance. |
 | `get_check_ins` | Relevés quotidiens déclarés. |
 | `update_availability` | Contraintes de disponibilité. |
