@@ -16,6 +16,7 @@
     "dev:api": "npm run dev -w @cairn/api",
     "dev:web": "npm run dev -w @cairn/web",
     "service": "node scripts/service.mjs",
+    "garmin": "tsx --env-file-if-exists=.env apps/api/src/garmin-cli.ts",
     "db:push": "npm run push -w @cairn/db",
     "db:seed": "npm run seed -w @cairn/db",
     "setup": "npm install && npm run db:push && npm run db:seed",

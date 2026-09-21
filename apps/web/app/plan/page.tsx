@@ -8,7 +8,7 @@ import {
 import {
   circuitText, CRITERION_LABELS, originLabel, provenanceText, TYPE_COLORS, TYPE_LABELS,
 } from '@/lib/sessions';
-import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
+import { AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading } from '@/components/ui';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -16,6 +16,9 @@ import { AbsenceNotice, Badge, Card, ErrorBox, Loading } from '@/components/ui';
  * plan en fait ne l'est pas.
  */
 const signed = (v: number) => `${v > 0 ? '+' : ''}${num(v, Number.isInteger(v) ? 0 : 1)}`;
+
+/** Les tons de l'état Garmin, dans ceux que la grille connaît déjà. */
+const GARMIN_TONE = { good: 'done', warn: 'off', mute: 'mute' } as const;
 
 /** Le jour de la semaine : une lettre dans la grille, trois dans la liste. */
 const DOW_SHORT = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -107,6 +110,8 @@ export default function PlanPage() {
         <AbsenceNotice key={a.id} absence={a} today={today} />
       ))}
 
+      <GarminProblems overview={data.garmin} className="garmin-note" />
+
       <div className="stack">
         {weeks.map(([weekStart, sessions]) => {
           // Une séance retirée ne pèse plus rien : la compter dans le total de la
@@ -163,6 +168,11 @@ export default function PlanPage() {
                               {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait
                                   annoncée. Le ton neutre est le fond de l'affaire. */}
                               {s.status === 'withdrawn' && <span className="plan-status" data-tone="mute">retirée</span>}
+                              {s.garmin && (
+                                <div className="plan-status plan-garmin" data-tone={GARMIN_TONE[s.garmin.tone]} title={s.garmin.label}>
+                                  {s.garmin.short}
+                                </div>
+                              )}
                             </div>
                           </button>
                         ))}
@@ -188,6 +198,7 @@ export default function PlanPage() {
                     </div>
                   </div>
                   <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
+                  <GarminLine status={s.garmin} />
 
                   {s.blocks.some((b) => b.circuit) && (
                     <div className="tiny faint" style={{ marginTop: 6 }}>

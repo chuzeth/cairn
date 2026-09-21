@@ -3,7 +3,9 @@ import type {
   CoachInsight, DailyCheckIn, DeclaredAbsence, LabTest, PhysiologyModel, PlannedSession,
   RaceGoal, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
+import type { GarminSyncState, LedgerEntry } from '@cairn/garmin';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm';
+import { getTableConfig, type SQLiteColumn, type SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { getDb, packStreams, unpackStreams } from './client.js';
 import * as t from './schema.js';
 
@@ -946,4 +948,123 @@ export async function pendingWebhookEvents(limit = 25) {
     .where(isNull(t.webhookEvents.processedAt))
     .orderBy(asc(t.webhookEvents.receivedAt))
     .limit(limit);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Garmin
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Crée les tables Garmin si elles manquent.
+ *
+ * Le service ne passe pas `db:push` : une table ajoutée au schéma n'existerait
+ * pas sur la base réelle, et la première lecture ferait tomber /api/plan. Les
+ * instructions sont écrites depuis la définition Drizzle elle-même — une seule
+ * description de la table, pas deux qui divergeraient.
+ */
+export async function ensureGarminTables(): Promise<void> {
+  const db = getDb();
+  for (const table of [t.garminWorkouts, t.garminSync]) {
+    for (const statement of createStatements(table)) await db.run(sql.raw(statement));
+  }
+}
+
+/** Les tables Garmin existent-elles ? Une commande qui ne fait que lire n'a pas à les créer. */
+export async function hasGarminTables(): Promise<boolean> {
+  const rows = await getDb().all<{ name: string }>(
+    sql`select name from sqlite_master where type = 'table' and name in ('garmin_workouts', 'garmin_sync')`,
+  );
+  return rows.length === 2;
+}
+
+/** `CREATE TABLE IF NOT EXISTS` et ses index, lus sur une table Drizzle sans valeur par défaut. */
+export function createStatements(table: SQLiteTable): string[] {
+  const c = getTableConfig(table);
+  const columns = c.columns.map((col) => {
+    // Une clef entière est l'alias du rowid : Drizzle la dit « par défaut », SQLite la fournit.
+    if (col.hasDefault && !col.primary) {
+      throw new Error(`${c.name}.${col.name} : une valeur par défaut ne se recopie pas ici.`);
+    }
+    return `"${col.name}" ${col.getSQLType()}${col.primary ? ' PRIMARY KEY' : ''}${col.notNull ? ' NOT NULL' : ''}`;
+  });
+  return [
+    `CREATE TABLE IF NOT EXISTS "${c.name}" (${columns.join(', ')})`,
+    ...c.indexes.map((i) => {
+      const on = i.config.columns.map((col) => `"${(col as SQLiteColumn).name}"`).join(', ');
+      return `CREATE ${i.config.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS "${i.config.name}" ON "${c.name}" (${on})`;
+    }),
+  ];
+}
+
+function rowToLedger(row: typeof t.garminWorkouts.$inferSelect): LedgerEntry {
+  return {
+    workoutId: row.workoutId,
+    scheduleId: row.scheduleId ?? null,
+    sessionId: row.sessionId,
+    date: row.date,
+    fingerprint: row.fingerprint,
+    name: row.name,
+    state: row.state as LedgerEntry['state'],
+    discrepancies: (row.discrepancies as string[] | null) ?? null,
+    sentAt: row.sentAt ?? null,
+    verifiedAt: row.verifiedAt ?? null,
+    deletedAt: row.deletedAt ?? null,
+  };
+}
+
+/** Les séances que Cairn a créées sur Garmin et qui y sont encore — ou toutes, historique compris. */
+export async function listGarminWorkouts(
+  athleteId: string,
+  opts: { includeDeleted?: boolean } = {},
+): Promise<LedgerEntry[]> {
+  const filters = [eq(t.garminWorkouts.athleteId, athleteId)];
+  if (!opts.includeDeleted) filters.push(ne(t.garminWorkouts.state, 'deleted'));
+  const rows = await getDb()
+    .select()
+    .from(t.garminWorkouts)
+    .where(and(...filters))
+    .orderBy(asc(t.garminWorkouts.date), asc(t.garminWorkouts.createdAt));
+  return rows.map(rowToLedger);
+}
+
+export async function insertGarminWorkout(athleteId: string, entry: LedgerEntry): Promise<void> {
+  const at = new Date().toISOString();
+  await getDb().insert(t.garminWorkouts).values({ ...entry, athleteId, createdAt: at, updatedAt: at });
+}
+
+export async function updateGarminWorkout(workoutId: number, patch: Partial<LedgerEntry>): Promise<void> {
+  const { workoutId: _ignored, ...rest } = patch;
+  await getDb()
+    .update(t.garminWorkouts)
+    .set({ ...rest, updatedAt: new Date().toISOString() })
+    .where(eq(t.garminWorkouts.workoutId, workoutId));
+}
+
+export interface GarminSyncRow extends GarminSyncState {
+  signature: string | null;
+  failures: number;
+}
+
+export async function getGarminSync(athleteId: string): Promise<GarminSyncRow | null> {
+  const [row] = await getDb().select().from(t.garminSync).where(eq(t.garminSync.athleteId, athleteId));
+  if (!row) return null;
+  return {
+    outcome: (row.outcome as GarminSyncRow['outcome']) ?? null,
+    message: row.message ?? null,
+    lastRunAt: row.lastRunAt ?? null,
+    lastSuccessAt: row.lastSuccessAt ?? null,
+    signature: row.signature ?? null,
+    failures: row.failures,
+    watchName: row.watchName ?? null,
+    watchSyncedAt: row.watchSyncedAt ?? null,
+    rejections: (row.rejections as GarminSyncRow['rejections'] | null) ?? [],
+  };
+}
+
+export async function saveGarminSync(athleteId: string, patch: Partial<GarminSyncRow>): Promise<void> {
+  const values = { failures: 0, ...patch, athleteId };
+  await getDb()
+    .insert(t.garminSync)
+    .values(values)
+    .onConflictDoUpdate({ target: t.garminSync.athleteId, set: patch });
 }

@@ -108,6 +108,30 @@ blessure. Ils sont produits par des règles explicites et auditables
 de langage. Claude explique, propose, et agit via des outils ; il ne décide jamais
 seul de la charge.
 
+### La séance sur la montre
+
+Les séances des sept prochains jours partent sur le calendrier Garmin Connect,
+et de là sur la montre, sans saisie. Un réconciliateur, pas un envoyeur : il
+relit le calendrier, le compare au plan, et ne touche qu'aux séances que Cairn a
+créées — celles de son registre. Une séance allégée ou décalée remplace sa
+version, une séance retirée est supprimée, le passé n'est jamais modifié. Chaque
+séance créée est relue et comparée étape par étape à sa prescription, en bpm, en
+secondes par kilomètre et en secondes ; l'écran du matin et le plan disent
+« vérifiée » (sur ta montre, ou sur Garmin Connect tant que la montre ne s'est
+pas synchronisée), « écart » et lequel, « en attente » ou « Garmin injoignable ».
+Une cible de montre est une alarme, en bpm, jamais en zone Garmin : plancher et
+plafond seulement sur le travail des séances de qualité à plat, plafond seul sur
+l'échauffement, les récupérations, l'endurance et les montées, aucune sur un
+effort maximal, une descente, des gammes ou du renforcement — la plus restrictive
+l'emporte. Le reste de la prescription est écrit dans la note de l'étape.
+
+La connexion passe par [python-garminconnect](https://github.com/cyberjunky/python-garminconnect),
+lancé par [uv](https://docs.astral.sh/uv/) : `npm run garmin -- login` demande
+e-mail, mot de passe et code MFA dans le Terminal, et ne garde que les jetons de
+session, en 600, dans `~/Library/Application Support/Cairn/garmin/`. Quand Garmin
+change sa connexion, c'est la version épinglée dans `packages/garmin/login.py`
+qu'on monte.
+
 ---
 
 ## Architecture
@@ -120,6 +144,7 @@ packages/
   strava/       OAuth, client avec gestion du quota, webhooks, normalisation
   coach/        bibliothèque de séances, périodisation, planificateur,
                 règles d'adaptation, outils Claude, agent conversationnel
+  garmin/       séance ↔ Garmin (codec pur), réconciliateur, client Garmin Connect
   mcp/          serveur Model Context Protocol
 apps/
   api/          Fastify — REST, webhooks, chat en streaming SSE
@@ -177,6 +202,10 @@ Le serveur MCP expose exactement les mêmes outils et les mêmes données. Voir
 | `npm run sync -w @cairn/api sync 60` | importe 60 activités Strava |
 | `npm run sync -w @cairn/api reanalyze` | ré-analyse l'historique avec le moteur courant |
 | `npm run sync -w @cairn/api webhook` | crée la souscription webhook |
+| `npm run garmin -- login` | relie Garmin Connect : e-mail, mot de passe, code MFA ; seuls les jetons sont gardés |
+| `npm run garmin -- status` | état de la liaison et des séances des sept jours, sans appeler Garmin |
+| `npm run garmin -- test` | aller-retour sur la séance jetable « Cairn — test de liaison », calendrier intact |
+| `npm run garmin -- preview` | ce que le réconciliateur ferait maintenant, en lecture seule |
 
 ---
 

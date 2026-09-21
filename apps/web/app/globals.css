@@ -269,6 +269,16 @@ button { font-family: inherit; font-size: inherit; }
 .plan-status[data-tone="mute"] { color: var(--text-faint); }
 .plan-done-link { font-size: 11.5px; color: var(--metabolic); }
 
+/* L'état Garmin d'une séance : la couleur dit s'il y a quelque chose à faire. */
+.garmin-line { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-faint); }
+.garmin-line[data-tone="good"] { color: var(--good); }
+.garmin-line[data-tone="warn"] { color: var(--warn); }
+.garmin-detail { color: var(--text-faint); }
+.garmin-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-faint); }
+.garmin-note[data-warn] { color: var(--warn); }
+/* Dans la grille, l'état Garmin peut passer à la ligne : coupé, il ne dirait plus rien. */
+.plan-status.plan-garmin { white-space: normal; line-height: 1.25; }
+
 @media (max-width: 760px) {
   .plan-week { grid-template-columns: 1fr; gap: 0; }
   /* Un jour par ligne, séparés d'un filet plutôt que de sept cadres empilés. */

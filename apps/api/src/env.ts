@@ -1,3 +1,4 @@
+import { DEFAULT_GARMIN_CHECK_MS } from './garmin.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './poller.js';
 
 /** Configuration d'exécution, lue une fois et validée au démarrage. */
@@ -16,6 +17,11 @@ export const env = {
   athleteId: process.env.CAIRN_ATHLETE_ID ?? 'pierre',
   /** Cadence de la relève Strava, en millisecondes. `0` la désactive. */
   pollIntervalMs: pollIntervalMs(),
+  /**
+   * Relecture périodique du calendrier Garmin, en millisecondes. `0` coupe la
+   * liaison Garmin de ce processus — c'est ce que fait `npm run dev`.
+   */
+  garminCheckMs: minutes('CAIRN_GARMIN_CHECK_MIN', DEFAULT_GARMIN_CHECK_MS),
 };
 
 /**
@@ -24,11 +30,15 @@ export const env = {
  * absence de valeur : mieux vaut la cadence par défaut qu'une relève muette.
  */
 function pollIntervalMs(): number {
-  const raw = process.env.CAIRN_POLL_INTERVAL_MIN;
-  if (raw == null || raw.trim() === '') return DEFAULT_POLL_INTERVAL_MS;
-  const minutes = Number(raw);
-  if (!Number.isFinite(minutes) || minutes < 0) return DEFAULT_POLL_INTERVAL_MS;
-  return Math.round(minutes * 60_000);
+  return minutes('CAIRN_POLL_INTERVAL_MIN', DEFAULT_POLL_INTERVAL_MS);
+}
+
+function minutes(name: string, fallbackMs: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === '') return fallbackMs;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return fallbackMs;
+  return Math.round(value * 60_000);
 }
 
 /**

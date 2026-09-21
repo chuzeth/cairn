@@ -12,7 +12,9 @@ import {
   CRITERION_LABELS, circuitText, originLabel, provenanceText, sessionHeadline, slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
-import { ABSENCE_KIND_LABEL, MISSING_LABEL, ReadinessBasis, Stale, unweighed, Waiting } from '@/components/ui';
+import {
+  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, MISSING_LABEL, ReadinessBasis, Stale, unweighed, Waiting,
+} from '@/components/ui';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -124,6 +126,7 @@ export function Morning({
           <h2 className="m-title m-title-next">{sessionHeadline(openNext)}</h2>
           <p className="m-sub">{subline(openNext)}</p>
           <Trace session={openNext} />
+          <GarminLine status={openNext.garmin} />
         </section>
       )}
 
@@ -146,12 +149,19 @@ export function Morning({
       ))}
 
       {next && !openNext && (
-        <p className="m-after">
-          {isTomorrow(next.date, today) ? 'Demain' : 'Ensuite'}, {frDate(next.date, { weekday: true, long: true })}
-          {' : '}{sessionHeadline(next).toLocaleLowerCase('fr')}
-          {next.plannedDurationS > 0 && <>, {prime(next.plannedDurationS)}</>}.
-        </p>
+        <>
+          <p className="m-after">
+            {isTomorrow(next.date, today) ? 'Demain' : 'Ensuite'}, {frDate(next.date, { weekday: true, long: true })}
+            {' : '}{sessionHeadline(next).toLocaleLowerCase('fr')}
+            {next.plannedDurationS > 0 && <>, {prime(next.plannedDurationS)}</>}.
+          </p>
+          <GarminLine status={next.garmin} />
+        </>
       )}
+
+      {/* La liaison elle-même : reconnexion nécessaire, Garmin injoignable, ou
+          une séance que le plan a retirée et que la montre porte encore. */}
+      <GarminProblems overview={plan.garmin} className="m-after" />
 
       {!stravaConnected && (
         <p className="m-after">
@@ -255,6 +265,10 @@ function Session({ session }: { session: SessionRow }) {
           </div>
         ))}
       </div>
+
+      {/* Ce que la montre porte de cette séance, relu sur Garmin : jamais
+          « envoyée » sans relecture. */}
+      <GarminLine status={session.garmin} />
 
       <div className="m-session-foot">
         <span className="m-faint">

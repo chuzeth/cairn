@@ -455,7 +455,32 @@ export interface InsightRow {
   severity: 'info' | 'good' | 'watch' | 'warn';
 }
 
+/**
+ * Ce que Garmin porte d'une séance des sept prochains jours, relu — jamais
+ * « envoyée » sans relecture. Les phrases viennent de l'API : le plan et
+ * l'écran du matin disent la même chose avec les mêmes mots.
+ */
+export interface GarminStatus {
+  state: 'verified' | 'mismatch' | 'pending' | 'unreachable' | 'reauth' | 'not_sent';
+  label: string;
+  short: string;
+  detail?: string;
+  tone: 'good' | 'warn' | 'mute';
+}
+
+export interface GarminOverview {
+  connection: 'ok' | 'reauth' | 'unreachable' | 'error' | 'disconnected';
+  /** Ce qui ne va pas avec la liaison elle-même ; `null` quand elle va bien. */
+  problem: string | null;
+  lastSuccessAt: string | null;
+  watch: { name: string; syncedAt: string } | null;
+  /** Séances de Cairn encore sur Garmin que le plan ne prévoit plus. */
+  stale: { date: string; name: string }[];
+}
+
 export interface PlanResponse {
+  /** `null` : la liaison Garmin n'a pas pu être lue, et l'écran n'affirme rien. */
+  garmin?: GarminOverview | null;
   plan: {
     id: string;
     goalRaceId: string;
@@ -517,4 +542,6 @@ export interface SessionRow {
   completedActivityId?: string;
   /** Absence déclarée qui a retiré la séance, quand le statut vaut `withdrawn`. */
   absenceId?: string;
+  /** L'état de la séance sur Garmin, pour les sept prochains jours seulement. */
+  garmin?: GarminStatus | null;
 }

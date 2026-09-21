@@ -15,6 +15,7 @@ import {
   formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
 } from '@cairn/physiology';
 import { env, missingConfig } from './env.js';
+import { garminLoopStatus, garminPlanView } from './garmin.js';
 import { activityPollerStatus } from './poller.js';
 import { lastDeploy, runningVersion } from './release.js';
 import { backfill, ingestActivity, processPendingWebhooks, stravaClientFor } from './sync.js';
@@ -90,6 +91,11 @@ export async function buildServer() {
       // qui les déclenche tourne encore. Sans le second, une relève morte
       // ressemble à une relève sans rien à faire.
       poll: activityPollerStatus(),
+      // La liaison Garmin : si la boucle tourne ici, et ce que dit son dernier passage.
+      garmin: {
+        loop: garminLoopStatus(),
+        ...(await garminPlanView(A).then((v) => v.overview).catch(() => null)),
+      },
       hasActivities: activityCount > 0,
       // La version qui répond, à laquelle l'app se compare ; et la dernière
       // mise à jour tentée, qu'elle affiche quand elle a été refusée.
@@ -421,11 +427,21 @@ export async function buildServer() {
     const absences = await db.listAbsences(A, { from, to });
     const profile = await db.getAthlete(A);
     const dossier = profile ? directivesFor(profile) : [];
+    // L'état Garmin de chaque séance des sept jours. Une liaison illisible ne
+    // doit pas coûter le plan : sans elle, l'écran n'affirme simplement rien.
+    const garmin = await garminPlanView(A).catch((e) => {
+      req.log.warn({ err: e }, 'état Garmin illisible');
+      return null;
+    });
     return {
       plan: plan?.plan ?? null,
       weekSummaries: plan?.weeks.map(summarizeWeek) ?? [],
       // Ce qu'une directive produit se lit sur le contenu actuel de la séance.
-      sessions: sessions.map((s) => (s.directives ? { ...s, directives: describeDirectives(s, dossier) } : s)),
+      sessions: sessions.map((s) => ({
+        ...(s.directives ? { ...s, directives: describeDirectives(s, dossier) } : s),
+        garmin: garmin?.bySession[s.id] ?? null,
+      })),
+      garmin: garmin?.overview ?? null,
       absences,
       completedByDate: Object.fromEntries(
         activities.map((a) => [a.startDateLocal.slice(0, 10), { id: a.id, name: a.name }]),

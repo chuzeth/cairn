@@ -1,7 +1,9 @@
 'use client';
 import type { ReactNode } from 'react';
 import { frDate, frStamp, num } from '@/lib/api';
-import type { DeclaredAbsence, Readiness, ReadinessComponent, ReadinessSource } from '@/lib/api';
+import type {
+  DeclaredAbsence, GarminOverview, GarminStatus, Readiness, ReadinessComponent, ReadinessSource,
+} from '@/lib/api';
 import { useOutbox } from '@/lib/offline';
 
 export function Card({
@@ -321,5 +323,41 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
         );
       })}
     </div>
+  );
+}
+
+/**
+ * L'état d'une séance sur Garmin, en une ligne : vérifiée, écart et lequel, en
+ * attente, injoignable. Rien quand l'API n'en dit rien — hors des sept jours,
+ * ou liaison jamais établie : l'écran n'affirme que ce qui a été relu.
+ */
+export function GarminLine({ status }: { status?: GarminStatus | null }) {
+  if (!status) return null;
+  return (
+    <p className="garmin-line" data-tone={status.tone}>
+      {status.label}
+      {status.detail && <span className="garmin-detail"> — {status.detail}</span>}
+    </p>
+  );
+}
+
+/**
+ * Ce qui ne va pas avec la liaison elle-même, et ce que Garmin porte encore
+ * que le plan ne prévoit plus. Silencieux quand tout est en ordre.
+ */
+export function GarminProblems({ overview, className }: { overview?: GarminOverview | null; className: string }) {
+  if (!overview) return null;
+  const { problem, stale } = overview;
+  if (!problem && stale.length === 0) return null;
+  return (
+    <>
+      {problem && <p className={className} data-warn>{problem}</p>}
+      {stale.length > 0 && (
+        <p className={className} data-warn>
+          Encore sur Garmin alors que le plan ne les prévoit plus :{' '}
+          {stale.map((s) => `${s.name} (${frDate(s.date, { weekday: true })})`).join(', ')}. Leur retrait est en attente.
+        </p>
+      )}
+    </>
   );
 }

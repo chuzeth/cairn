@@ -1,10 +1,12 @@
 import { buildServer } from './server.js';
 import { env, missingConfig } from './env.js';
+import { startGarminLoop, stopGarminLoop } from './garmin.js';
 import { startActivityPoller, stopActivityPoller } from './poller.js';
 import { backfill } from './sync.js';
-import { closeDb } from '@cairn/db';
+import { closeDb, ensureGarminTables } from '@cairn/db';
 
 async function main() {
+  await ensureGarminTables();
   const app = await buildServer();
 
   const missing = missingConfig();
@@ -36,7 +38,21 @@ async function main() {
       : `Relève Strava désactivée (CAIRN_POLL_INTERVAL_MIN=0) : les nouvelles séances n'entreront que sur /api/sync.`,
   );
 
+  // La liaison Garmin : l'état voulu relu chaque minute dans la base, Garmin
+  // appelé seulement quand il a changé ou que la relecture horaire est due.
+  const garmin = startGarminLoop({
+    athleteId: env.athleteId,
+    checkEveryMs: env.garminCheckMs,
+    log: (level, message) => app.log[level](message),
+  });
+  app.log.info(
+    garmin.enabled
+      ? `Liaison Garmin : relecture du calendrier toutes les ${Math.round(env.garminCheckMs / 60_000)} min, et à chaque changement du plan.`
+      : `Liaison Garmin coupée dans ce processus (CAIRN_GARMIN_CHECK_MIN=0).`,
+  );
+
   const shutdown = async () => {
+    stopGarminLoop();
     stopActivityPoller();
     await app.close();
     closeDb();

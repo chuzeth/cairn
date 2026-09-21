@@ -29,7 +29,9 @@
       "@cairn/strava": ["packages/strava/src/index.ts"],
       "@cairn/strava/*": ["packages/strava/src/*"],
       "@cairn/coach": ["packages/coach/src/index.ts"],
-      "@cairn/coach/*": ["packages/coach/src/*"]
+      "@cairn/coach/*": ["packages/coach/src/*"],
+      "@cairn/garmin": ["packages/garmin/src/index.ts"],
+      "@cairn/garmin/*": ["packages/garmin/src/*"]
     }
   }
 }

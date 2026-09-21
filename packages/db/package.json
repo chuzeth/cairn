@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@cairn/core": "*",
+    "@cairn/garmin": "*",
     "@libsql/client": "^0.17.4",
     "drizzle-orm": "^0.45.2",
     "@cairn/physiology": "*"

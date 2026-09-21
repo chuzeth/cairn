@@ -18,6 +18,7 @@ export default defineConfig({
       '@cairn/coach': r('./packages/coach/src/index.ts'),
       '@cairn/strava': r('./packages/strava/src/index.ts'),
       '@cairn/db': r('./packages/db/src/index.ts'),
+      '@cairn/garmin': r('./packages/garmin/src/index.ts'),
     },
   },
 });

@@ -350,6 +350,62 @@ export const webhookEvents = sqliteTable(
   (t) => ({ byProcessed: index('webhooks_processed_idx').on(t.processedAt) }),
 );
 
+/**
+ * Les séances que Cairn a créées sur Garmin Connect.
+ *
+ * C'est ce registre, et lui seul, qui dit ce qui appartient à Cairn sur le
+ * calendrier Garmin : une séance absente d'ici n'est jamais modifiée ni
+ * supprimée, quel que soit son nom. Une ligne par séance Garmin, identifiée par
+ * son numéro chez Garmin ; une séance retirée garde sa ligne, marquée
+ * `deleted`.
+ *
+ * Pas de clef étrangère ni de valeur par défaut calculée : la table décrit un
+ * état extérieur qui ne disparaît pas avec l'athlète, et elle est créée au
+ * démarrage par `ensureGarminTables` à partir de cette définition même.
+ */
+export const garminWorkouts = sqliteTable(
+  'garmin_workouts',
+  {
+    workoutId: integer('workout_id').primaryKey(),
+    athleteId: text('athlete_id').notNull(),
+    /** Séance du plan au moment de l'envoi — une reconstruction peut en changer l'identifiant. */
+    sessionId: text('session_id').notNull(),
+    date: text('date').notNull(),
+    /** Empreinte du contenu envoyé (`fingerprintOf`) : c'est elle qu'on compare au plan. */
+    fingerprint: text('fingerprint').notNull(),
+    name: text('name').notNull(),
+    scheduleId: integer('schedule_id'),
+    /** sending | verified | mismatch | deleted */
+    state: text('state').notNull(),
+    /** Écarts relevés à la relecture, en toutes lettres. */
+    discrepancies: text('discrepancies', { mode: 'json' }),
+    sentAt: text('sent_at'),
+    verifiedAt: text('verified_at'),
+    deletedAt: text('deleted_at'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (t) => ({ byAthleteDate: index('garmin_workouts_athlete_date_idx').on(t.athleteId, t.date) }),
+);
+
+/** L'issue du dernier passage du réconciliateur Garmin, une ligne par athlète. */
+export const garminSync = sqliteTable('garmin_sync', {
+  athleteId: text('athlete_id').primaryKey(),
+  /** ok | unreachable | reauth | error */
+  outcome: text('outcome'),
+  message: text('message'),
+  lastRunAt: text('last_run_at'),
+  lastSuccessAt: text('last_success_at'),
+  /** Résumé de l'état voulu au dernier passage abouti : il change dès que le plan change. */
+  signature: text('signature'),
+  /** Échecs consécutifs — ils espacent les nouvelles tentatives. */
+  failures: integer('failures').notNull(),
+  watchName: text('watch_name'),
+  watchSyncedAt: text('watch_synced_at'),
+  /** Séances refusées par Garmin au dernier passage, et ce qu'il en a dit. */
+  rejections: text('rejections', { mode: 'json' }),
+});
+
 export type AthleteRow = typeof athletes.$inferSelect;
 export type ActivityRow = typeof activities.$inferSelect;
 export type PlannedSessionRow = typeof plannedSessions.$inferSelect;
