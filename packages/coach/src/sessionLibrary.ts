@@ -2,15 +2,15 @@ import type {
   ParameterProvenance, PhysiologyModel, PlannedSession, SessionBlock, SessionSuccessCriterion, SessionType,
   StrengthCircuit, StrengthExercise, ZoneKey,
 } from '@cairn/core';
-import { PROVENANCE_FR, describeMovement, sessionDuration, weakestProvenance } from '@cairn/core';
+import { PROVENANCE_FR, annexOf, describeMovement, sessionDuration, weakestProvenance } from '@cairn/core';
 import {
-  ECCENTRIC_MOVEMENTS, buildZones, eccentricStrengthLoad, formatPace, gradeAdjustedSpeed,
+  CS_FIT_MIN_S, ECCENTRIC_MOVEMENTS, FLAT_RUNNING_COST, buildZones, eccentricStrengthLoad, formatPace, gradeAdjustedSpeed,
   hrProvenanceOf, msToKmh, prescribedMechanicalLoad, speedForMetabolicPower, speedProvenanceOf, vam,
+  walkingGrade,
 } from '@cairn/physiology';
-import {
-  PRESCRIPTION_MARGIN, describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit,
-} from './plausibility.js';
+import { describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit } from './plausibility.js';
 import { checkReserve, describeReserve, describeShortfall } from './reserve.js';
+import { climbFor, describeClimbChoice, type TerrainHint } from './terrain.js';
 
 /**
  * Bibliothèque de séances.
@@ -26,27 +26,6 @@ import { checkReserve, describeReserve, describeShortfall } from './reserve.js';
  * résistance dure, rando-course en montagne, et un seul fractionné par semaine
  * en alternant court et moyen.
  */
-
-/**
- * Deux modèles du même athlète qui décrivent le même fait sans s'accorder.
- *
- * Une séance ne peut en suivre qu'un, mais elle ne tranche pas en silence : un
- * minimum pris sans rien dire fait passer une contradiction pour une précaution,
- * et plus personne ne cherche lequel des deux se trompe.
- */
-export interface ModelDivergence {
-  /** Durée sur laquelle les deux lectures portent, s. */
-  durationS: number;
-  /** Vitesse ascensionnelle que permet la puissance métabolique de Z2, m/h. */
-  modelledMh: number;
-  /** Meilleure vitesse ascensionnelle tenue sur cette durée, m/h. */
-  observedMh: number;
-  observedProvenance: ParameterProvenance;
-  /** Écart du modèle à l'observation, %. */
-  gapPct: number;
-  /** La contradiction en clair, et ce que la séance en fait. */
-  statement: string;
-}
 
 export interface SessionTemplate {
   key: string;
@@ -78,8 +57,6 @@ export interface SessionTemplate {
    * l'athlète, en clair. Absent quand rien n'a cédé.
    */
   amendments?: string[];
-  /** Les modèles de l'athlète qui se contredisent sur ce que la séance prescrit. Absent quand ils s'accordent. */
-  divergences?: ModelDivergence[];
   /**
    * Reconstruit la séance à une autre étendue — durée et dénivelé demandés
    * multipliés par `factor`.
@@ -396,10 +373,11 @@ export function circuitDurationS(c: StrengthCircuit): number {
   }, 0);
   const round = work + Math.max(0, c.exercises.length - 1) * CIRCUIT_TRANSITION_S;
   const total = c.rounds * round + Math.max(0, c.rounds - 1) * CIRCUIT_REST_S;
-  // À la minute supérieure : « 27'27" de circuit force » est un temps de
-  // passage, pas une consigne. Vers le haut, parce que les tours sont ce qu'on
-  // a prescrit et qu'il faut le temps de les faire.
-  return Math.ceil(total / BLOCK_GRID_S) * BLOCK_GRID_S;
+  // Aux cinq minutes supérieures : « 27'27" de circuit force » est un temps de
+  // passage, et « 28 min » un reste — ni l'un ni l'autre n'est une consigne.
+  // Vers le haut, parce que les tours sont ce qu'on a prescrit et qu'il faut le
+  // temps de les faire.
+  return Math.ceil(total / ROUND_S) * ROUND_S;
 }
 
 /**
@@ -625,11 +603,18 @@ function shedNote(before: readonly SessionBlock[], fit: VerticalFit): string {
  *
  * Une durée de séance est une consigne qu'on exécute montre au poignet, pas le
  * quotient d'un budget de charge : « 1 h 01'57" » n'est pas une prescription,
- * c'est la trace d'une division. Le corps de séance se prescrit au quart
- * d'heure, ses blocs à la minute ronde ; la charge se mesure ensuite sur ce qui
- * est écrit, et quand elle s'écarte de la cible, c'est la cible qui plie.
+ * c'est la trace d'une division. Pour un coureur, une durée ronde est un
+ * multiple de cinq minutes — pas une minute entière : des blocs de 23, 26 ou
+ * 22 min se lisaient comme ce qu'ils étaient, des restes. Échauffement, corps
+ * de sortie, retour au calme et blocs annexes s'y posent, et la séance entière
+ * aussi ; les répétitions gardent la durée que le dossier prescrit. La charge
+ * se mesure ensuite sur ce qui est écrit, et quand elle s'écarte de la cible,
+ * c'est la cible qui plie.
  */
-export const SESSION_GRID_S = 15 * 60;
+export const ROUND_S = 5 * 60;
+/** En deçà d'un quart d'heure, une séance n'a plus de forme : on la retire plutôt que de la raboter. */
+export const SESSION_FLOOR_S = 15 * 60;
+/** Ce qui ne tombe pas sur la maille ronde — gammes, pauses, récupérations — se prescrit à la minute. */
 export const BLOCK_GRID_S = 60;
 
 /** En deçà, le dénivelé d'une séance ne dit rien de ce qu'elle demande. */
@@ -641,19 +626,14 @@ const onGrid = (s: number, grid: number) => Math.max(grid, Math.round(s / grid) 
  * La durée demandée à une séance, ramenée à ce qui se prescrit.
  *
  * L'appelant demande ce que la charge de la semaine laisse — 101,95 minutes ; la
- * séance répond au quart d'heure. C'est l'inversion, prise à l'entrée plutôt
+ * séance répond en minutes rondes. C'est l'inversion, prise à l'entrée plutôt
  * qu'en sortie : ce qui est construit l'est déjà sur des nombres humains, et
- * tous les chiffres qu'on en déduit ensuite — durée d'une montée, vitesse
- * ascensionnelle, contradiction entre deux modèles — portent sur la séance
- * qu'on prescrira, pas sur un gabarit intermédiaire.
+ * tous les chiffres qu'on en déduit ensuite — durée d'une montée, dénivelé
+ * tenable — portent sur la séance qu'on prescrira, pas sur un gabarit
+ * intermédiaire.
  */
 export const prescribableMinutes = (min: number): number =>
-  Math.max(SESSION_GRID_S / 60, Math.round(min / (SESSION_GRID_S / 60)) * (SESSION_GRID_S / 60));
-
-/** Une durée en secondes, ramenée à la minute supérieure. */
-const upToMinute = (s: number) => Math.ceil(s / BLOCK_GRID_S) * BLOCK_GRID_S;
-/** Une durée en secondes, ramenée à la minute la plus proche. */
-const toMinute = (s: number) => Math.round(s / BLOCK_GRID_S) * BLOCK_GRID_S;
+  Math.max(SESSION_FLOOR_S / 60, Math.round(min / (ROUND_S / 60)) * (ROUND_S / 60));
 
 /**
  * Un bloc dont la durée se négocie.
@@ -665,6 +645,22 @@ const toMinute = (s: number) => Math.round(s / BLOCK_GRID_S) * BLOCK_GRID_S;
  */
 const isFlexible = (b: SessionBlock): boolean =>
   !isPrescribed(b) && !isWork(b) && (b.repeat ?? 1) <= 1 && (b.durationS ?? 0) > 0;
+
+/**
+ * Un bloc de liaison : gammes, lignes droites, pause entre deux séries.
+ *
+ * Il n'a pas de durée à lui — deux passages de gammes prennent quatre minutes
+ * ou six —, et c'est ce qui en fait le seul bloc capable de rendre la séance
+ * ronde quand ses répétitions ne le sont pas : huit fois 30"-30" font huit
+ * minutes, et ni l'échauffement ni le retour au calme ne doivent pour autant
+ * tomber à treize. Le modèle de séance n'a pas de champ pour le dire, seulement
+ * le nom du bloc : c'est lui qu'on lit, comme la montre le lit.
+ */
+const LINK = /(?<!\p{L})(gammes|éducatifs|lignes droites|accélérations?|mises? en action|pause entre)(?!\p{L})/iu;
+const isLink = (b: SessionBlock): boolean => isFlexible(b) && LINK.test(b.label);
+/** Ce qu'un bloc de liaison peut céder ou prendre : deux minutes et demie, de quoi couvrir toute la maille. */
+const LINK_SLACK_S = ROUND_S / 2;
+const LINK_MIN_S = 2 * BLOCK_GRID_S;
 
 /**
  * Un bloc de travail : celui qu'une récupération suit.
@@ -681,40 +677,49 @@ const isWork = (b: SessionBlock): boolean =>
 /**
  * Ramène un contenu sur la maille humaine.
  *
- * Chaque bloc libre passe à la minute, puis l'écart qui sépare **ce qui se
- * court** du quart d'heure le plus proche est versé au plus long d'entre eux —
- * jamais au travail, qui vaut par sa durée.
+ * Chaque bloc libre passe aux cinq minutes, et l'écart que ces arrondis font sur
+ * leur somme est versé au plus long des blocs faciles — échauffement, corps de
+ * sortie, retour au calme —, jamais à un bloc dont le titre annonce la durée :
+ * « Allure spécifique 40 min » au-dessus d'un bloc de 43 est la contradiction
+ * qu'on ferme. Le travail n'y entre pas : il vaut par sa durée.
  *
- * Le quart d'heure porte sur le corps de séance et non sur le total : les blocs
- * que le dossier prescrit — tours d'un circuit, souplesse, respiration — ont
- * leur propre durée, et la leur faire tirer le footing d'à côté reviendrait à
- * rallonger de quatre minutes une séance qu'on vient d'alléger de moitié. Sous
- * un quart d'heure, le corps garde ses minutes : arrondir huit minutes à quinze
- * ne serait plus un arrondi.
+ * Puis la séance entière retombe sur la maille. Quand ses répétitions ne sont
+ * pas rondes — huit fois 30"-30" font huit minutes —, c'est le bloc de liaison
+ * qui prend ou rend ce qui manque, à la minute ; faute de liaison, la séance
+ * garde le reste plutôt que de le faire porter à un bloc qui doit être rond.
  */
 export function snapToHumanGrid(blocks: readonly SessionBlock[]): SessionBlock[] {
-  const out = blocks.map((b) =>
-    isFlexible(b) ? { ...b, durationS: onGrid(b.durationS as number, BLOCK_GRID_S) } : { ...b },
-  );
-  const flexible = out.map((b, i) => ({ b, i })).filter(({ b }) => isFlexible(b));
-  if (flexible.length === 0) return out;
+  const out = blocks.map((b) => ({ ...b }));
+  const indexed = out.map((b, i) => ({ b, i }));
+  const links = indexed.filter(({ b }) => isLink(b));
+  const round = indexed.filter(({ b }) => isFlexible(b) && !isLink(b));
 
-  const prescribedS = out
-    .filter(isPrescribed)
-    .reduce((a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0), 0);
-  const runS = totalDuration(out) - prescribedS;
-  const wantedRun = runS >= SESSION_GRID_S ? Math.round(runS / SESSION_GRID_S) * SESSION_GRID_S : runS;
+  for (const { b, i } of links) out[i] = { ...b, durationS: onGrid(b.durationS as number, BLOCK_GRID_S) };
 
-  // L'écart se verse sur un bloc facile — échauffement, retour au calme, corps
-  // de sortie —, jamais sur un bloc dont le titre annonce la durée : « Allure
-  // spécifique 40 min » au-dessus d'un bloc de 43 est la contradiction qu'on
-  // ferme. À défaut, le plus long ; il n'y a alors rien d'autre à faire céder.
-  const easy = flexible.filter(({ b }) => b.zone === 'Z1' || b.zone === 'Z2');
-  const longest = (easy.length > 0 ? easy : flexible).reduce((a, x) =>
-    (x.b.durationS as number) > (a.b.durationS as number) ? x : a,
-  );
-  const adjusted = (longest.b.durationS as number) + (wantedRun - runS);
-  out[longest.i] = { ...longest.b, durationS: Math.max(BLOCK_GRID_S, adjusted) };
+  if (round.length > 0) {
+    const asked = round.reduce((a, { b }) => a + (b.durationS as number), 0);
+    for (const { b, i } of round) out[i] = { ...b, durationS: onGrid(b.durationS as number, ROUND_S) };
+    const got = round.reduce((a, { i }) => a + (out[i]!.durationS as number), 0);
+    const easy = round.filter(({ b }) => b.zone === 'Z1' || b.zone === 'Z2');
+    const longest = (easy.length > 0 ? easy : round).reduce((a, x) =>
+      (out[x.i]!.durationS as number) > (out[a.i]!.durationS as number) ? x : a,
+    );
+    const gap = onGrid(asked, ROUND_S) - got;
+    out[longest.i] = {
+      ...out[longest.i]!,
+      durationS: Math.max(ROUND_S, (out[longest.i]!.durationS as number) + gap),
+    };
+  }
+
+  const off = totalDuration(out) % ROUND_S;
+  const link = links[0];
+  if (off !== 0 && link) {
+    const d = out[link.i]!.durationS as number;
+    out[link.i] = {
+      ...out[link.i]!,
+      durationS: off <= LINK_SLACK_S && d - off >= LINK_MIN_S ? d - off : d + (ROUND_S - off),
+    };
+  }
   return out;
 }
 
@@ -726,60 +731,41 @@ export function snapToHumanGrid(blocks: readonly SessionBlock[]): SessionBlock[]
  * Le titre d'une séance : ce qu'elle est, ce qu'elle dure, ce qu'elle monte ou
  * descend — dans cet ordre et toujours aux mêmes places.
  *
- * Le titre nommait le bloc principal pendant que la durée enregistrée comptait
- * tout : deux « Décrassage 40 min » de 58 et 48 minutes, et une descente
- * décrite par son dénivelé positif. Un titre dit la séance entière, et les
- * places fixes sont ce qui permet de le relire quand le contenu change.
+ * Le titre distingue ce qui se court de ce qui s'ajoute. « Endurance
+ * fondamentale — 35 min » pour quinze minutes de course et vingt de souplesse
+ * et de respiration disait une séance que personne n'allait courir ; « Footing
+ * 15 min + souplesse et respiration 20 min » dit celle qu'on fait. Une séance
+ * sans rien d'annexe garde sa durée entière après le tiret. Un titre dit la
+ * séance entière, et les places fixes sont ce qui permet de le relire quand le
+ * contenu change.
  */
-export function sessionTitle(
-  format: string,
-  durationS: number,
-  vert?: { m: number; sign: '+' | '−' },
-): string {
-  const head = `${format} — ${sessionDuration(durationS)}`;
-  return vert && vert.m > VERT_MENTION_FLOOR_M ? `${head} · ${vert.m} m D${vert.sign}` : head;
-}
-
-const DURATION_MENTION = / — [^·+]*?(?=( ·| \+)|$)/;
-const VERT_MENTION = / · \d+ m D[+−]/;
-
-/**
- * Réécrit la durée qu'un titre annonce, sans toucher au reste.
- *
- * Toute porte qui change ce que dure une séance passe par ici — calibration,
- * allègement, bloc annexe adossé par une fréquence hebdomadaire. Sinon le titre
- * continue d'annoncer la séance d'avant, à l'endroit précis où l'athlète la lit.
- */
-export function restateDuration(title: string, durationS: number): string {
-  const mention = ` — ${sessionDuration(durationS)}`;
-  if (DURATION_MENTION.test(title)) return title.replace(DURATION_MENTION, mention);
-  const suffix = title.search(/ [·+] /);
-  return suffix < 0 ? title + mention : title.slice(0, suffix) + mention + title.slice(suffix);
+export function sessionTitle(format: string, type: SessionType, blocks: readonly SessionBlock[]): string {
+  const vert = titleVertical(type, blocks);
+  const mention = vert.m > VERT_MENTION_FLOOR_M ? ` · ${vert.m} m D${vert.sign}` : '';
+  const total = totalDuration(blocks);
+  const annex = annexOf(blocks);
+  const run = total - (annex?.durationS ?? 0);
+  if (!annex || run <= 0) return `${format} — ${sessionDuration(total)}${mention}`;
+  return `${format} ${sessionDuration(run)} + ${annex.name} ${sessionDuration(annex.durationS)}${mention}`;
 }
 
 /**
- * Réécrit le dénivelé qu'un titre annonce, sans toucher au reste.
+ * Le format d'un titre : ce que la séance est, sans ce qu'elle mesure.
  *
- * Le signe compte : une séance de descente annonçait « 414 m D+ », qui est ce
- * que ses remontées de récupération cumulaient — le seul chiffre du titre ne
- * décrivait pas la séance.
+ * Il se relit sur toutes les écritures qu'un titre a connues — « Décrassage —
+ * 1 h 05 », « Footing 15 min + souplesse 10 min », et les anciennes :
+ * « Endurance fondamentale + renforcement — 1 h 08 », « Rando-course 3 h ·
+ * 680 m D+ ». Un format qui porte des nombres — « Seuil 5 × 5 min » — ne
+ * s'écrit qu'avant un tiret, et c'est le tiret qui le borne.
  */
-export function restateVert(title: string, vert: number, sign: '+' | '−' = '+'): string {
-  const mention = vert > VERT_MENTION_FLOOR_M ? ` · ${vert} m D${sign}` : '';
-  if (VERT_MENTION.test(title)) return title.replace(VERT_MENTION, mention);
-  return mention ? title + mention : title;
-}
-
-/**
- * Ajoute une mention au format d'un titre, devant la durée et le dénivelé.
- *
- * « Endurance fondamentale + renforcement — 1 h 30 · 120 m D+ » : la mention
- * appartient à ce qu'est la séance, pas à ce qu'elle mesure. Collée en fin de
- * titre, elle passait derrière le dénivelé et les deux se lisaient ensemble.
- */
-export function addFormatMention(title: string, mention: string): string {
-  const i = title.indexOf(' — ');
-  return i < 0 ? `${title} ${mention}` : `${title.slice(0, i)} ${mention}${title.slice(i)}`;
+export function formatOf(title: string): string {
+  const dash = title.indexOf(' — ');
+  const head = dash >= 0 ? title.slice(0, dash) : title;
+  const cut = dash >= 0 ? -1 : head.search(/ \d+(?:[.,]\d+)? ?(?:min|h)(?![\p{L}])/u);
+  return (cut >= 0 ? head.slice(0, cut) : head)
+    .replace(/ · .*$/, '')
+    .replace(/ \+ renforcement$/, '')
+    .trim();
 }
 
 /**
@@ -798,18 +784,39 @@ export function titleVertical(
 }
 
 /**
- * Relit le titre d'une séance sur son contenu : durée entière, dénivelé signé.
+ * Relit le titre d'une séance sur son contenu : ce qui se court, ce qui
+ * s'ajoute, le dénivelé signé.
  *
  * C'est le seul endroit qui rend un titre vérifiable — quiconque touche aux
- * blocs passe par là, et le titre suit sans que personne ait à y penser.
+ * blocs passe par là, et le titre suit sans que personne ait à y penser. Un
+ * jour de repos ou de course n'a pas de blocs à relire : son titre reste le sien.
  */
 export function retitleFromContent(s: {
   title: string;
   type: SessionType;
   blocks: readonly SessionBlock[];
 }): string {
-  const vert = titleVertical(s.type, s.blocks);
-  return restateVert(restateDuration(s.title, totalDuration(s.blocks)), vert.m, vert.sign);
+  if (s.blocks.length === 0 || s.type === 'rest' || s.type === 'race') return s.title;
+  return sessionTitle(restateFormatMinutes(formatOf(s.title), s.blocks), s.type, s.blocks);
+}
+
+/**
+ * Les minutes qu'un format annonce suivent le bloc qu'elles décrivent.
+ *
+ * « Allure spécifique 40 min » et « Tempo 25 min » nomment leur bloc continu :
+ * une calibration qui le ramène à 35 min laissait le titre en annoncer 40 au-
+ * dessus de lui. Un format de répétitions — « Seuil 5 × 5 min », « Pyramide
+ * 4-8-12-8-4 min » — n'est pas concerné : ses durées sont celles du dossier, et
+ * aucune transformation ne les touche.
+ */
+function restateFormatMinutes(format: string, blocks: readonly SessionBlock[]): string {
+  const m = /^(.*\p{L}) (\d+) min$/u.exec(format);
+  if (!m) return format;
+  const continuous = blocks.filter(
+    (b) => !isPrescribed(b) && !b.recovery && (b.repeat ?? 1) <= 1 && ['Z3', 'Z4', 'Z5'].includes(b.zone),
+  );
+  if (continuous.length !== 1) return format;
+  return `${m[1]} ${Math.round((continuous[0]!.durationS ?? 0) / 60)} min`;
 }
 
 /** Distance estimée depuis la vitesse moyenne pondérée des blocs. */
@@ -920,7 +927,7 @@ function finalize(
   ];
   return {
     ...base,
-    title: sessionTitle(base.title, durationS, titleVertical(base.type, blocks)),
+    title: sessionTitle(base.title, base.type, blocks),
     blocks,
     ...(amendments.length ? { amendments } : {}),
     elevationGainM,
@@ -1039,7 +1046,9 @@ export function endurance(model: PhysiologyModel, durationMin = 60, vertM = 0): 
   return finalize(c, {
     key: 'endurance',
     type: 'endurance',
-    title: 'Endurance fondamentale',
+    // Le nom que le coureur lui donne : c'est un footing. « Endurance
+    // fondamentale » nomme une zone, et se lisait comme un format.
+    title: 'Footing',
     intent: 'Construire le moteur aérobie : tu dois pouvoir parler par phrases complètes du début à la fin.',
     priority: 'support',
     phases: ['base', 'build', 'specific', 'peak', 'taper', 'transition'],
@@ -1123,152 +1132,195 @@ export function longFooting(model: PhysiologyModel, durationMin = 105, vertM = 1
   };
 }
 
-/** Rando-course : le format spécifique recommandé par le laboratoire pour les trails longs. */
-export function longTrail(model: PhysiologyModel, durationMin = 210, vertM = 1200): SessionTemplate {
+/**
+ * Rando-course : le format spécifique recommandé par le laboratoire pour les
+ * trails longs.
+ *
+ * Elle se prescrit comme elle se court : une durée, un dénivelé, et une règle
+ * de marche en côte. Elle était découpée en approche, montée, descente et
+ * retour — 40, 62, 56 et 22 minutes, un partage du modèle que personne ne peut
+ * courir, puisque sur un sentier on monte et on descend dix fois. Le terrain se
+ * juge d'un seul tenant : ce qu'il monte et ce qu'il descend doivent tenir dans
+ * sa durée d'après les courbes de l'athlète, marge comprise, et quand ils ne
+ * tiennent pas, c'est le dénivelé qui cède — et la séance le dit.
+ *
+ * La règle de marche vient du seuil de bascule que le modèle calcule déjà : à
+ * la puissance du haut de la Z2, la pente au-delà de laquelle courir ne va plus
+ * plus vite que marcher. Quand le terrain connaît une montée récurrente de
+ * l'athlète qui porte ce dénivelé, la séance la nomme et dit combien de
+ * passages le font.
+ */
+export function longTrail(
+  model: PhysiologyModel,
+  durationMin = 210,
+  vertM = 1200,
+  terrain?: TerrainHint,
+): SessionTemplate {
   const c = ctxOf(model);
-  // Le budget de terrain se calcule sur la durée qu'on prescrira, jamais sur
-  // celle qu'un facteur a produite : tout ce qui s'en déduit — temps de montée,
-  // vitesse ascensionnelle visée, contradiction entre les deux modèles — porte
-  // alors sur la séance que l'athlète lira.
   const minutes = prescribableMinutes(durationMin);
   const z2 = zoneOf(c, 'Z2');
-  const vertical = verticalOf(model);
-  // Vitesse ascensionnelle cible : celle que permet la puissance métabolique de Z2 haute.
-  // Z2 est toujours bornée en haut : son plafond est le SV1.
-  const climbPower = 3.6 * (z2.speedMaxMs as number) * 0.94;
-  const climbSpeed = speedForMetabolicPower(climbPower, 0.15);
-  const targetVam = Math.round(vam(climbSpeed, 0.15));
-
-  // Le temps d'une rando-course est un budget, et la boucle le partage : ce
-  // qu'elle monte, elle le redescend. La montée prend le temps de sa vitesse
-  // visée, sans jamais passer sous celui que la courbe de l'athlète accorde à
-  // ce dénivelé ; la descente, au moins le sien. Corriger l'un sans l'autre a
-  // déjà produit deux séances impossibles, chacune à un bout : 1 384 m montés en
-  // 55 min, puis 1 384 m descendus en 16. Quand les deux ne tiennent pas dans le
-  // temps de terrain, c'est le dénivelé qui cède — et la séance le dit.
-  //
-  // Ces temps sont ceux de l'instant où chaque segment commence, marge de
-  // prescription comprise : la montée part après l'approche, la descente après
-  // la montée et tout son D+. Jugée fraîche, la descente du 03/10 était
-  // prescrite à 1 703 m/h quand il n'en restait que 1 465 à ce moment-là.
-  const approachS = 25 * 60;
   const cooldownS = 20 * 60;
-  const mobileS = Math.max(0, minutes * 60 - approachS - cooldownS);
-  const keep = 1 - PRESCRIPTION_MARGIN;
-  const margin = `${Math.round(PRESCRIPTION_MARGIN * 100)} %`;
-  const climbing = vertical.climb.after({ elapsedS: approachS, gainM: 0, lossM: 0 });
-  const climbTime = (m: number) =>
-    upToMinute(Math.max((m / targetVam) * 3600, climbing.timeFor(m / keep).durationS));
-  const descentTime = (m: number) =>
-    upToMinute(
-      vertical.descent.after({ elapsedS: approachS + climbTime(m), gainM: m, lossM: 0 }).timeFor(m / keep).durationS,
-    );
-  const fits = (m: number) => climbTime(m) + descentTime(m) <= mobileS;
+  const terrainS = Math.max(ROUND_S, minutes * 60 - cooldownS);
+  const walkAt = walkingGrade(FLAT_RUNNING_COST * (z2.speedMaxMs as number));
+  const pct = Math.round(walkAt * 100);
 
+  const content = (gainM: number, notes?: string): SessionBlock[] => [
+    block(c, `Sur sentier, marche dès ${pct} % de pente`, 'Z2', terrainS, {
+      elevationGainM: gainM,
+      elevationLossM: gainM,
+      cadenceTargetSpm: 172,
+      ...(notes ? { notes } : {}),
+    }),
+    block(c, 'Retour au calme', 'Z1', cooldownS, {
+      notes: 'Vingt minutes très souples sur le plat : c\'est là que la clairance se fait.',
+    }),
+  ];
+
+  // Le dénivelé d'abord, les mots ensuite : la montée qu'on nomme et le nombre
+  // de passages portent sur ce que la séance prescrira, pas sur ce qu'on lui a
+  // demandé.
   const asked = Math.max(0, Math.round(vertM));
-  let gain = asked;
-  if (!fits(gain)) {
-    let lo = 0;
-    let hi = gain;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (fits(mid)) lo = mid;
-      else hi = mid - 1;
-    }
-    gain = lo;
-  }
-  const climb = resolveClimb({ durationS: climbTime(gain), elevationGainM: gain });
-  // Descente et retour roulant se partagent le reste dans la proportion qu'ils
-  // avaient — 35 et 20 points sur les 55 qui ne montaient pas —, la descente ne
-  // passant jamais sous son temps minimal. Un retour de quelques secondes n'est
-  // pas une consigne : sous la minute, il revient à la descente.
-  const remainingS = Math.max(0, mobileS - climb.durationS);
-  const shareS = Math.min(remainingS, Math.max(descentTime(gain), toMinute((remainingS * 0.35) / 0.55)));
-  const returnS = remainingS - shareS >= 60 ? remainingS - shareS : 0;
-  const descentS = remainingS - returnS;
+  const provisional = snapToHumanGrid(content(asked));
+  const fit = fitVertical(provisional, verticalOf(model), 'long_trail');
+  const gain = fit.share < 1 ? elevationGainOf(fit.blocks) : asked;
+  const amendments = fit.share < 1 ? [shedNote(provisional, fit)] : [];
+  const climb = climbFor(terrain, gain, walkAt);
 
-  const amendments: string[] = [];
-  if (gain < asked) {
-    amendments.push(
-      `Dénivelé ramené de ${asked} à ${gain} m : ${asked} m demandent ${sessionDuration(climbTime(asked))} de ` +
-        `montée et ${sessionDuration(descentTime(asked))} de descente d'après ce que tes courbes laissent à ce ` +
-        `moment de la séance, marge de ${margin} comprise — au-delà des ${sessionDuration(mobileS)} de terrain que ` +
-        `laisse une sortie de ${sessionDuration(minutes * 60)}.`,
-    );
-  }
-  if (gain > 0 && climb.vamTargetMh < targetVam) {
-    amendments.push(
-      `Vitesse ascensionnelle ramenée de ${targetVam} à ${climb.vamTargetMh} m/h : c'est ce que ta courbe de montée ` +
-        `laisse sur ${sessionDuration(climb.durationS)} après ${sessionDuration(approachS)} d'approche, marge de ` +
-        `${margin} comprise (${PROVENANCE_FR[climbing.at(climb.durationS).provenance]}).`,
-    );
-  }
-
-  // La cible métabolique et la courbe décrivent le même fait : ce que l'athlète
-  // monte en Z2 sur cette durée. Quand la première dépasse le meilleur effort
-  // jamais tenu, les deux modèles se contredisent — la séance n'en suit qu'un,
-  // et le dit.
-  const record = vertical.climb.at(climb.durationS);
-  // La cible vient de la puissance de Z2 — donc du SV1 —, éventuellement rabotée
-  // par ce que la courbe de montée laisse à cet instant de la séance. Elle ne
-  // vaut pas mieux que le plus faible des deux.
-  const climbProvenance = weakestProvenance(
-    provenanceOf(model, 'vt1.speedMs'),
-    climb.vamTargetMh < targetVam ? climbing.at(climb.durationS).provenance : null,
-  );
-  const divergences: ModelDivergence[] = [];
-  if (gain > 0 && targetVam > record.vamMh) {
-    const observedMh = Math.round(record.vamMh);
-    const gapPct = Math.round(((targetVam - record.vamMh) / record.vamMh) * 100);
-    const follows =
-      record.provenance === 'default'
-        ? 'La séance suit la plus prudente des deux ; aucune n\'est une mesure sur cette durée.'
-        : 'La séance suit la courbe en attendant : des deux, c\'est la seule mesure.';
-    divergences.push({
-      durationS: climb.durationS,
-      modelledMh: targetVam,
-      observedMh,
-      observedProvenance: record.provenance,
-      gapPct,
-      statement:
-        `Deux lectures de ta montée en Z2 divergent de ${gapPct} % sur ${sessionDuration(climb.durationS)} : ` +
-        `${targetVam} m/h d'après la puissance de ton SV1 sur une pente régulière de 15 %, ${observedMh} m/h au mieux ` +
-        `d'après ta courbe (${PROVENANCE_FR[record.provenance]}). Si ta meilleure montée sur cette durée a été courue ` +
-        `en Z2 ou plus fort, c'est la cible métabolique qui se trompe — elle ignore le relief d'un vrai sentier ; ` +
-        `sinon, c'est la courbe qui sous-estime ce que tu tiens. ${follows}`,
-    });
-  }
+  const rule =
+    `Cours tant que la pente reste sous ${pct} %, marche au-dessus : passé ce seuil, courir en Z2 ne va pas ` +
+    `plus vite que marcher, et coûte davantage (seuil calculé sur ta vitesse au SV1, de provenance ` +
+    `${PROVENANCE_FR[provenanceOf(model, 'vt1.speedMs')]}). En montée, mains sur les cuisses, buste droit ; ` +
+    `en descente, cadence haute et appuis courts.`;
 
   const session = finalize(c, {
     key: 'long_trail',
     type: 'long_trail',
     title: 'Rando-course',
     intent:
-      'Alterner marche et course selon la pente, plusieurs heures sans dérive : la seule séance qui prépare les quadriceps à la descente du jour J.',
+      'Tenir plusieurs heures en alternant marche et course selon la pente, sans dérive : la seule séance qui prépare les quadriceps à la descente du jour J.',
     priority: 'key',
     phases: ['base', 'build', 'specific'],
     ...(amendments.length ? { amendments } : {}),
-    ...(divergences.length ? { divergences } : {}),
-    blocks: [
-      block(c, 'Approche en endurance', 'Z2', approachS, { cadenceTargetSpm: 172 }),
-      climbBlock(c, 'Montées — marche active ou course selon la pente', 'Z2', climb, climbProvenance, {
-        notes:
-          `Cible ${climb.vamTargetMh} m D+/h. Au-delà de 15 % de pente, marche : mains sur les cuisses, buste droit, petits pas. Courir là serait 25 % plus coûteux pour la même vitesse.`,
-      }),
-      block(c, 'Descentes — travail technique', 'Z2', descentS, {
-        elevationLossM: climb.elevationGainM,
-        notes:
-          'Cadence haute, appuis courts et légers, regard 4-5 m devant, épaules relâchées. Cherche la fluidité, pas la vitesse pure : c\'est ici que se construit la tolérance excentrique.',
-        cadenceTargetSpm: 180,
-      }),
-      ...(returnS > 0 ? [block(c, 'Retour roulant', 'Z2', returnS, {})] : []),
-      block(c, 'Retour au calme', 'Z1', cooldownS, {}),
-    ],
+    blocks: content(gain, climb ? `${rule} ${describeClimbChoice(climb, gain)}` : rule),
   });
   return {
     ...session,
-    rebuild: (k: number) => longTrail(model, durationMin * k, Math.round(vertM * k)),
+    rebuild: (k: number) => longTrail(model, durationMin * k, Math.round(vertM * k), terrain),
   };
+}
+
+/**
+ * Test maximal : un contre-la-montre qui ancre la vitesse critique sur un
+ * effort mesuré.
+ *
+ * Ses consignes se lisent sur ses propres cibles — le bas de la fourchette
+ * d'allure, la FC qui en fait une preuve d'effort maximal —, jamais sur un
+ * chiffre du jour où il a été écrit : relu le matin du test, « ta meilleure
+ * moyenne de ce soir » parlait d'un soir que l'athlète n'avait pas couru.
+ */
+export function timeTrial(model: PhysiologyModel, minutes = 20): SessionTemplate {
+  const c = ctxOf(model);
+  const lo = model.criticalSpeedMs;
+  const hi = model.criticalSpeedMs * 1.04;
+  return finalize(
+    c,
+    {
+      key: 'time_trial',
+      type: 'threshold',
+      title: `Test maximal ${minutes} min`,
+      intent:
+        'Ancrer ta vitesse critique sur un effort maximal mesuré : toutes tes allures et la prédiction de course en dépendent.',
+      priority: 'key',
+      phases: ['base', 'build', 'specific'],
+      blocks: timeTrialPresentation(
+        [
+          block(c, 'Échauffement progressif', 'Z2', 20 * 60, { cadenceTargetSpm: 172 }),
+          block(c, 'Gammes et accélérations', 'Z2', 5 * 60, {}),
+          {
+            // Au-delà du plafond de Z4 : c'est la FC qui fait d'un effort une
+            // preuve maximale. La bande de Z5, elle, serait intenable vingt minutes.
+            ...block(c, `Contre-la-montre ${minutes} min`, 'Z5', minutes * 60, {
+              speedLo: lo,
+              speedHi: hi,
+              speedProvenance: provenanceOf(model, 'criticalSpeedMs'),
+              cadenceTargetSpm: 175,
+            }),
+            hrRange: [Math.round(model.vt2.hr), Math.round(model.hrMax * 0.97)] as [number, number],
+          },
+          block(c, 'Retour au calme', 'Z1', 15 * 60, {}),
+        ],
+        model,
+      ),
+    },
+    0,
+  );
+}
+
+/**
+ * Un test maximal, lu sur le contenu : un effort d'un seul tenant — ni répété,
+ * ni coupé de récupérations — prescrit au-delà du seuil 2, et assez long pour
+ * entrer dans l'ajustement de la vitesse critique. C'est la signature de la
+ * preuve d'effort maximal du modèle, lue sur ce qu'on demande à l'athlète.
+ */
+export function isMaximalTest(s: Pick<PlannedSession, 'blocks'>, model: PhysiologyModel): boolean {
+  return maximalEffortIndex(s.blocks, model) >= 0;
+}
+
+/** Le bloc qui porte l'effort maximal d'un test, ou −1. */
+function maximalEffortIndex(blocks: readonly SessionBlock[], model: PhysiologyModel): number {
+  return blocks.findIndex(
+    (b) =>
+      !isPrescribed(b) &&
+      (b.repeat ?? 1) <= 1 &&
+      !b.recovery &&
+      (b.durationS ?? 0) >= CS_FIT_MIN_S &&
+      (b.zone === 'Z5' || (b.hrRange != null && b.hrRange[0] >= model.vt2.hr)),
+  );
+}
+
+/**
+ * Les mots d'un test maximal, posés sur ses blocs : échauffement, gammes,
+ * effort, retour au calme. Rien d'autre que les libellés et les consignes ne
+ * change — durées et cibles sont celles du contenu, décidé ou non.
+ */
+export function timeTrialPresentation(blocks: readonly SessionBlock[], model: PhysiologyModel): SessionBlock[] {
+  const effort = maximalEffortIndex(blocks, model);
+  return blocks.map((b, i) => {
+    if (i === effort) {
+      const min = Math.round((b.durationS ?? 0) / 60);
+      const speed = b.speedRangeMs ? `, ${msToKmh(b.speedRangeMs[0]).toFixed(1).replace('.', ',')} km/h,` : '';
+      const hr = b.hrRange
+        ? ` La FC doit passer ${b.hrRange[0]} et finir vers ${b.hrRange[1]} : c'est ce qui fait du test une preuve d'effort maximal.`
+        : '';
+      return {
+        ...b,
+        label: `Contre-la-montre ${min} min`,
+        notes:
+          `Effort maximal régulier, sur le plat, départ lancé : pars sur le bas de la fourchette${speed} tiens, ` +
+          `et ne lâche que sur les trois dernières minutes.${hr} Un test couru fatigué mesure la fatigue : ` +
+          `si ta disponibilité est au rouge ce matin-là, ne le cours pas et parles-en au coach.`,
+      };
+    }
+    if (i < effort && isLink(b)) {
+      return {
+        ...b,
+        label: 'Gammes et accélérations',
+        notes: `${GAMMES_CUE} Puis 3 accélérations de 30 s à l'allure visée, récupération complète : elles calibrent la sensation, elles ne fatiguent pas.`,
+      };
+    }
+    if (i < effort && !isPrescribed(b)) {
+      return {
+        ...b,
+        label: 'Échauffement progressif',
+        notes:
+          'Sur piste ou plat roulant. Un test sur un échauffement court mesure ton échauffement, pas ta vitesse critique.',
+      };
+    }
+    if (i > effort && !isPrescribed(b)) {
+      return { ...b, label: 'Retour au calme', notes: 'Très souple : tu viens de vider ta réserve anaérobie, laisse la clairance se faire.' };
+    }
+    return { ...b };
+  });
 }
 
 export function tempo(model: PhysiologyModel, blockMin = 25): SessionTemplate {
@@ -1357,7 +1409,7 @@ function thresholdContent(model: PhysiologyModel, reps: number, repMin: number):
         speedLo: lo,
         speedHi: hi,
         speedProvenance,
-        // La récupération se prescrit à la minute ronde comme le reste : « récup
+        // La récupération se prescrit à la minute entière : « récup
         // 1'45" » est un quotient, pas une consigne.
         recovery: { durationS: recoveryMinutes(repMin) * 60, zone: 'Z1', active: true },
         cadenceTargetSpm: 178,
@@ -1542,6 +1594,9 @@ function hillRepeatsContent(
     phases: ['base', 'build', 'specific'],
     blocks: [
       block(c, 'Échauffement jusqu\'au pied de la côte', 'Z2', 20 * 60, {}),
+      // Les gammes au pied de la côte : c'est aussi le bloc qui rend la séance
+      // ronde, huit côtes de 90 s et leurs descentes faisant vingt-quatre minutes.
+      block(c, 'Gammes', 'Z2', 5 * 60, { notes: GAMMES_CUE }),
       // Le dénivelé de la séance *est* celui des répétitions : une côte qui
       // annonçait 208 m dont aucun bloc ne portait un mètre laissait le
       // chiffre d'en-tête vivre sa vie. Porté par la répétition, il suit le
@@ -1584,6 +1639,7 @@ export function downhillSession(model: PhysiologyModel, reps = 6, repMin = 3): S
     phases: ['build', 'specific'],
     blocks: [
       block(c, 'Échauffement', 'Z2', 20 * 60, {}),
+      block(c, 'Gammes', 'Z2', 5 * 60, { notes: GAMMES_CUE }),
       block(c, 'Descentes contrôlées', 'Z3', repMin * 60, {
         repeat: reps,
         // Ce qui se descend se remonte : la répétition descend, sa récupération
@@ -1660,7 +1716,7 @@ export function strength(model: PhysiologyModel, rounds = 3): SessionTemplate {
   // durée était un paramètre : elle annonçait quarante minutes quel que soit le
   // contenu, et le circuit gardait vingt minutes qu'il y ait un tour ou trois.
   const circuitS = circuitDurationS(circuit);
-  const activationS = 10 * 60;
+  const activationS = 5 * 60;
   const mobilityS = 10 * 60;
   return finalize(c, {
     key: 'strength',
@@ -1671,7 +1727,10 @@ export function strength(model: PhysiologyModel, rounds = 3): SessionTemplate {
     priority: 'support',
     phases: ['base', 'build', 'specific', 'transition', 'recovery'],
     blocks: [
+      // L'activation ne se court pas : elle ouvre le renforcement, et c'est à lui
+      // que le titre la compte.
       block(c, 'Activation', 'Z1', activationS, {
+        kind: 'activation',
         notes:
           'Cercles de hanches et de chevilles, 10 fentes marchées par jambe, 15 ponts fessiers ' +
           '(dos au sol, pieds à plat, monte le bassin jusqu\'à la ligne épaules-genoux).',

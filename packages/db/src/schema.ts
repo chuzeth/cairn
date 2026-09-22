@@ -243,6 +243,12 @@ export const plannedSessions = sqliteTable(
     successCriteria: text('success_criteria', { mode: 'json' }),
     /** Directives du dossier qui ont façonné la séance, avec leur extrait. */
     directives: text('directives', { mode: 'json' }),
+    /**
+     * SessionHistoryEntry[] — ce qui a façonné la séance au-delà de sa phrase de
+     * « pourquoi » : raisonnement du coach, ce que le planificateur a cédé.
+     * Ajoutée par `ensureSessionColumns`, le service ne passant pas `db:push`.
+     */
+    history: text('history', { mode: 'json' }),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },

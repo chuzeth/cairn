@@ -6,6 +6,7 @@
  * libellés divergentes, c'est la même séance appelée « Renforcement » d'un côté
  * et « Force » de l'autre — l'athlète croit lire deux séances.
  */
+import { annexOf } from '@cairn/core/annex';
 import { describeMovement } from '@cairn/core/movements';
 import { frDate, prime } from './api';
 import type { DirectiveOriginRow, SessionRow } from './api';
@@ -41,12 +42,34 @@ export function sessionHeadline(session: SessionRow): string {
     const shape = REPEAT_HEADLINE[session.type];
     return shape ? shape(n, d) : `${n} × ${d}`;
   }
-  const head = (session.title.split(' — ')[0] as string)
-    .split(' · ')[0]!
+  const head = formatOfTitle(session.title)
     .replace(/^[^\p{L}\d]+/u, '')
     .replace(/\s+\d+(?:[.,]\d+)?\s*(?:min|h|s)$/i, '')
     .trim();
   return head.length > 0 && head.length <= 30 ? head : TYPE_LABELS[session.type] ?? session.type;
+}
+
+/**
+ * Le format d'un titre, sans ce qu'il mesure : « Footing » dans « Footing
+ * 20 min + souplesse et respiration 20 min », « Test maximal 20 min » dans
+ * « Test maximal 20 min — 1 h ». Un format qui porte des nombres ne s'écrit
+ * qu'avant un tiret, et c'est le tiret qui le borne.
+ */
+export function formatOfTitle(title: string): string {
+  const dash = title.indexOf(' — ');
+  const head = dash >= 0 ? title.slice(0, dash) : title;
+  const cut = dash >= 0 ? -1 : head.search(/ \d+(?:[.,]\d+)? ?(?:min|h)(?![\p{L}])/u);
+  return (cut >= 0 ? head.slice(0, cut) : head).replace(/ · .*$/, '').trim();
+}
+
+/**
+ * Ce qui se court et ce qui s'ajoute : le temps de course, et le nom et la
+ * durée de ce qui s'ajoute — souplesse, respiration, renforcement. La règle est
+ * celle du titre, lue sur les mêmes blocs.
+ */
+export function runAndAnnex(session: Pick<SessionRow, 'blocks'>, totalS: number) {
+  const annex = annexOf(session.blocks);
+  return { runS: totalS - (annex?.durationS ?? 0), annex };
 }
 
 const REPEAT_HEADLINE: Record<string, (n: number, d: string) => string> = {

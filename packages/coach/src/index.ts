@@ -13,3 +13,4 @@ export * from './tools.js';
 export * from './prompts.js';
 export * from './agent.js';
 export * from './insights.js';
+export * from './presentation.js';

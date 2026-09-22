@@ -2,7 +2,8 @@
 import type { ReactNode } from 'react';
 import { frDate, frStamp, num } from '@/lib/api';
 import type {
-  DeclaredAbsence, GarminOverview, GarminStatus, Readiness, ReadinessComponent, ReadinessSource,
+  DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, Readiness, ReadinessComponent, ReadinessSource,
+  SessionRow,
 } from '@/lib/api';
 import { useOutbox } from '@/lib/offline';
 
@@ -359,5 +360,45 @@ export function GarminProblems({ overview, className }: { overview?: GarminOverv
         </p>
       )}
     </>
+  );
+}
+
+const AUTHOR: Record<HistoryAuthor, string> = {
+  coach: 'le coach',
+  athlete: 'toi',
+  rules: 'les règles de charge',
+  developer: "un appel direct à l'API",
+  planner: 'le planificateur',
+};
+
+/**
+ * L'historique d'une séance : ce qui l'a façonnée au-delà de son « pourquoi ».
+ *
+ * Le raisonnement d'un coach tient en deux mille caractères, et c'est ce qui le
+ * rendait illisible servi comme « pourquoi ». Il n'est pas effacé pour autant :
+ * il se lit ici, daté, avec sa main, et avec les consignes que la présentation
+ * du jour a remplacées. Les dates relatives y ont été ancrées au jour de
+ * l'écriture — « ce soir » s'y lit « le 18/09 au soir ».
+ */
+export function SessionHistory({ history }: { history: NonNullable<SessionRow['history']> }) {
+  return (
+    <div className="history">
+      {history.map((h, i) => (
+        <section className="history-entry" key={`${h.at}-${i}`}>
+          <div className="history-head">
+            {frDate(h.at, { long: true, year: true })} · par {AUTHOR[h.by] ?? h.by}
+          </div>
+          <p className="history-text">{h.text}</p>
+          {h.notes && h.notes.length > 0 && (
+            <>
+              <div className="history-head">Ce que la séance disait alors</div>
+              <ul className="history-notes">
+                {h.notes.map((n, j) => <li key={j}>{n}</li>)}
+              </ul>
+            </>
+          )}
+        </section>
+      ))}
+    </div>
   );
 }

@@ -124,13 +124,21 @@ export interface SuccessCriterionDirective extends DirectiveBase {
   maxValue?: number;
 }
 
-/** Nature d'un bloc non couru, dont la fréquence hebdomadaire est prescrite. */
-export type BlockKind = 'mobility' | 'respiratory';
+/**
+ * Nature d'un bloc non couru.
+ *
+ * Souplesse et respiration ont une fréquence hebdomadaire prescrite au
+ * dossier, et c'est par leur nature qu'elle se compte. L'activation qui ouvre
+ * un renforcement n'en a pas, mais elle ne se court pas davantage : sans nature,
+ * ses cercles de hanches passaient pour des minutes de course, et le titre
+ * comptait dans le footing ce qui s'y ajoutait.
+ */
+export type BlockKind = 'mobility' | 'respiratory' | 'activation';
 
 /** Fréquence hebdomadaire d'un travail annexe. */
 export interface WeeklyFrequencyDirective extends DirectiveBase {
   kind: 'weekly_frequency';
-  block: BlockKind;
+  block: Exclude<BlockKind, 'activation'>;
   timesPerWeek: number;
   /** Durée d'un bloc, s. */
   durationS: number;
@@ -1064,6 +1072,32 @@ export interface SessionDecision {
 }
 
 /**
+ * Ce qui a été écrit sur une séance au-delà de sa présentation.
+ *
+ * Une séance se lit en une phrase de « pourquoi » ; ce qui l'a façonnée — le
+ * raisonnement d'un coach, ce que le planificateur a dû céder pour qu'elle reste
+ * exécutable — ne tient pas dans une phrase, et ne doit pas pour autant se
+ * perdre. Il se range ici, daté, avec sa main, et se lit à un geste de distance.
+ *
+ * Le texte est celui qui a été écrit, à une chose près : une date relative y est
+ * remplacée par la date qu'elle désignait le jour où elle a été écrite. « Ce
+ * soir » relu quatre jours plus tard désigne un autre soir.
+ */
+export interface SessionHistoryEntry {
+  /** Quand le texte a été écrit. */
+  at: string;
+  /** Qui l'a écrit : une origine de décision, ou le planificateur qui a construit la séance. */
+  by: DecisionOrigin | 'planner';
+  text: string;
+  /**
+   * Les consignes que la présentation d'aujourd'hui a remplacées, bloc par bloc
+   * — « Contre-la-montre 20 min : pars sur la fourchette basse… ». Absentes
+   * quand aucune ne l'a été.
+   */
+  notes?: string[];
+}
+
+/**
  * Devenir d'une séance prescrite.
  *
  * `withdrawn` est le seul statut qui ne dit rien de l'athlète : la séance a été
@@ -1103,15 +1137,23 @@ export interface PlannedSession {
   completedActivityId?: string;
   /** Absence déclarée qui a retiré la séance, quand `status` vaut `withdrawn`. */
   absenceId?: string;
-  /** Justification produite par le coach lors de la (re)planification. */
+  /**
+   * Le « pourquoi » de la séance, en une phrase concrète : pourquoi elle est là,
+   * ce jour-là. Il est écrit par les règles de présentation, jamais recopié d'un
+   * raisonnement : celui-ci va dans `history`.
+   */
   rationale?: string;
   /**
    * La dernière décision prise sur cette séance hors du planificateur.
    *
    * Elle vaut opposition à une reconstruction : ce qu'un athlète ou un coach a
-   * décidé se reprend, il ne se réécrit pas.
+   * décidé se reprend, il ne se réécrit pas. Ce qui se reprend est son contenu
+   * — date, type, durée, dénivelé, charge —, pas son commentaire : la
+   * présentation suit les règles du jour, comme pour toute séance.
    */
   decision?: SessionDecision;
+  /** Ce qui a façonné la séance, du plus ancien au plus récent. */
+  history?: SessionHistoryEntry[];
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: SessionSuccessCriterion[];
   /** Directives du dossier qui ont façonné cette séance, avec leur origine. */

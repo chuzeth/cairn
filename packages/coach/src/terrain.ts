@@ -401,3 +401,118 @@ export function haversineM(a: readonly [number, number], b: readonly [number, nu
     Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La montée où se court un dénivelé prescrit
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ce que le planificateur sait du terrain de l'athlète. */
+export interface TerrainHint {
+  /** Montées récurrentes, mesurées sur ses traces. */
+  climbs: readonly RecurringClimb[];
+  /** Son départ habituel : le centre du terrain le plus fréquenté. */
+  home?: readonly [number, number];
+}
+
+/** Écart toléré entre ce que les passages font et ce que la séance prescrit. */
+export const PASSAGES_TOLERANCE = 0.1;
+/** Au-delà, ce n'est plus une sortie de terrain mais une séance de côtes. */
+export const MAX_PASSAGES = 8;
+
+export interface ClimbChoice {
+  climb: RecurringClimb;
+  passages: number;
+  /** Ce que ces passages montent, m. */
+  gainM: number;
+  /** Du départ habituel au bas de la montée, quand il est connu. */
+  fromHome?: { distanceM: number; direction: string };
+}
+
+/**
+ * La montée récurrente qui convient à un dénivelé prescrit, s'il y en a une.
+ *
+ * Elle convient quand l'athlète l'a courue lors de deux sorties au moins, près
+ * de son départ habituel ; qu'elle est assez raide pour qu'on y marche — c'est
+ * l'alternance que la séance travaille ; et qu'un nombre entier de passages,
+ * huit au plus, fait le dénivelé à 10 % près. Entre deux qui conviennent, la
+ * plus longue : moins de passages, c'est plus de terrain et moins de tours. Le
+ * terrain dit où, jamais combien : une montée qui ne tombe pas juste n'est pas
+ * nommée, et le dénivelé prescrit ne se rabote pas pour elle.
+ */
+export function climbFor(
+  terrain: TerrainHint | undefined,
+  gainM: number,
+  walkingGrade: number,
+): ClimbChoice | null {
+  if (!terrain || gainM <= 0) return null;
+  const near = (c: RecurringClimb) =>
+    !terrain.home || haversineM(terrain.home, c.start) <= HOME_GROUND_RADIUS_M;
+  const fits = terrain.climbs
+    .filter((c) => c.outings >= 2 && c.gainM > 0 && c.grade >= walkingGrade && near(c))
+    .map((c) => {
+      const passages = Math.max(1, Math.round(gainM / c.gainM));
+      return { c, passages, total: passages * c.gainM };
+    })
+    .filter((x) => x.passages <= MAX_PASSAGES && Math.abs(x.total - gainM) <= PASSAGES_TOLERANCE * gainM)
+    .sort(
+      (a, b) =>
+        a.passages - b.passages || b.c.outings - a.c.outings || b.c.lastDate.localeCompare(a.c.lastDate),
+    );
+  const best = fits[0];
+  if (!best) return null;
+  return {
+    climb: best.c,
+    passages: best.passages,
+    gainM: best.total,
+    ...(terrain.home
+      ? {
+          fromHome: {
+            distanceM: haversineM(terrain.home, best.c.start),
+            direction: bearingName(terrain.home, best.c.start),
+          },
+        }
+      : {}),
+  };
+}
+
+const COMPASS = ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'];
+
+/** La direction d'un point vu d'un autre, sur huit secteurs. */
+function bearingName(from: readonly [number, number], to: readonly [number, number]): string {
+  const toRad = Math.PI / 180;
+  const dLng = (to[1] - from[1]) * toRad;
+  const y = Math.sin(dLng) * Math.cos(to[0] * toRad);
+  const x =
+    Math.cos(from[0] * toRad) * Math.sin(to[0] * toRad) -
+    Math.sin(from[0] * toRad) * Math.cos(to[0] * toRad) * Math.cos(dLng);
+  const deg = (Math.atan2(y, x) / toRad + 360) % 360;
+  return COMPASS[Math.round(deg / 45) % 8] as string;
+}
+
+const metres = (m: number) =>
+  m >= 1000 ? `${(Math.round(m / 100) / 10).toLocaleString('fr-FR')} km` : `${Math.round(m / 10) * 10} m`;
+const dayMonth = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+
+/**
+ * La montée désignée comme l'athlète peut la retrouver : sa longueur, sa pente,
+ * où elle part par rapport à son départ habituel, et la dernière sortie où il
+ * l'a prise — sous le titre que Strava lui donne. Aucun toponyme : nous n'en
+ * avons pas, et un nom inventé serait une donnée fausse au milieu de mesures.
+ */
+export function describeClimbChoice(choice: ClimbChoice, prescribedM: number): string {
+  const { climb, passages, gainM, fromHome } = choice;
+  const last = climb.occurrences.find((o) => o.date === climb.lastDate) ?? climb.best;
+  const where = fromHome
+    ? fromHome.distanceM < 100
+      ? ', au départ de chez toi'
+      : `, à ${metres(fromHome.distanceM)} ${/^(est|ouest)$/.test(fromHome.direction) ? `à l'${fromHome.direction}` : `au ${fromHome.direction}`} de ton départ habituel`
+    : '';
+  // Le nombre de passages est un entier, le dénivelé prescrit non : on dit les
+  // deux quand ils diffèrent, plutôt que de laisser croire qu'ils coïncident.
+  const total = gainM === prescribedM ? '' : `, ${gainM} m en tout`;
+  return (
+    `Les ${prescribedM} m, c'est ${passages} passage${passages > 1 ? 's' : ''} de ta montée de ` +
+    `${metres(climb.lengthM)} à ${Math.round(climb.grade * 100)} % (${climb.gainM} m par passage${total})${where}, ` +
+    `courue lors de ${climb.outings} sorties — la dernière le ${dayMonth(climb.lastDate)} (« ${last.activityName} »).`
+  );
+}

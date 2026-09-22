@@ -8,7 +8,9 @@ import {
 import {
   circuitText, CRITERION_LABELS, originLabel, provenanceText, TYPE_COLORS, TYPE_LABELS,
 } from '@/lib/sessions';
-import { AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading } from '@/components/ui';
+import {
+  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory,
+} from '@/components/ui';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -34,6 +36,7 @@ export default function PlanPage() {
   const [data, setData] = useState<PlanResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [past, setPast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -274,6 +277,26 @@ export default function PlanPage() {
                     <div className="tiny faint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                       <strong>{s.status === 'withdrawn' ? 'Pourquoi retirée :' : 'Pourquoi ici :'}</strong>{' '}
                       {s.rationale}
+                    </div>
+                  )}
+
+                  {/* Ce qui a façonné la séance — le raisonnement d'une décision,
+                      ce que la construction a cédé —, à un geste du « pourquoi ». */}
+                  {s.history && s.history.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <button
+                        type="button"
+                        className="link-button tiny"
+                        aria-expanded={past === s.id}
+                        onClick={() => setPast(past === s.id ? null : s.id)}
+                      >
+                        {past === s.id ? 'Masquer l’historique' : `Historique (${s.history.length})`}
+                      </button>
+                      {past === s.id && (
+                        <div style={{ marginTop: 8 }}>
+                          <SessionHistory history={s.history} />
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  PIERRE,
+  PIERRE, relativeDatesIn,
   type DeclaredAbsence, type PlannedSession, type RaceGoal, type TrainingPlan, type TrainingWeek,
 } from '@cairn/core';
 import { DECIDED_ON_2026_09_21, PIERRE_MODEL } from './fixtures/pierre.js';
@@ -69,7 +69,14 @@ vi.mock('@cairn/db', () => ({
   },
 }));
 
-const { executeTool } = await import('@cairn/coach');
+const { executeTool, elevationGainOf, isOneSentence, totalDuration } = await import('@cairn/coach');
+
+/** Tout ce qu'une séance enregistrée donne à lire. */
+const textsOf = (s: PlannedSession): string[] => [
+  s.title, s.intent, s.rationale ?? '', s.decision?.summary ?? '',
+  ...s.blocks.map((b) => b.notes ?? ''),
+  ...(s.history ?? []).flatMap((h) => [h.text, ...(h.notes ?? [])]),
+];
 
 /** Une séance du plan en place, réduite à ce que la reconstruction peut perdre. */
 function session(over: Partial<PlannedSession> & { id: string; date: string; title: string }): PlannedSession {
@@ -194,11 +201,21 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
     await write();
 
     const written = saved();
+    const before = PREVIOUS.flatMap((w) => w.sessions);
     for (const expected of DECIDED) {
       const kept = written.find((s) => s.id === expected.id);
       expect(kept, `séance ${expected.id} du ${expected.date} perdue par la reconstruction`).toBeDefined();
       expect(kept!.date).toBe(expected.date);
-      expect(kept!.title).toBe(expected.title);
+      const was = before.find((s) => s.id === expected.id)!;
+      // Une décision encore à venir se reprend dans son contenu, et se présente
+      // comme toute séance ; le reste est le registre de ce qui a été prescrit.
+      if (was.status === 'planned' && was.decision) {
+        for (const k of ['type', 'plannedLoad', 'plannedMechanicalLoad', 'plannedDurationS', 'plannedElevationGainM'] as const) {
+          expect(kept![k], `${expected.id} ${k}`).toEqual(was[k]);
+        }
+      } else {
+        expect(kept!.title).toBe(expected.title);
+      }
     }
   });
 
@@ -435,8 +452,75 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
     }
   });
 
-  it('reprend les conservées telles qu\'elles étaient', async () => {
+  it('reprend le contenu des conservées, et les présente comme toute séance', async () => {
     const days = byDate(await written());
-    for (const kept of DECIDED_ON_2026_09_21) expect(days.get(kept.date)).toEqual(kept);
+    for (const kept of DECIDED_ON_2026_09_21) {
+      const s = days.get(kept.date)!;
+      expect(s.id).toBe(kept.id);
+      // Une décision, c'est son contenu : date, type, durée, dénivelé, charge.
+      for (const k of [
+        'type', 'priority', 'status', 'plannedDurationS', 'plannedElevationGainM', 'plannedLoad',
+        'plannedMechanicalLoad', 'plannedDistanceM',
+      ] as const) {
+        expect(s[k], `${kept.date} ${k}`).toEqual(kept[k]);
+      }
+      expect(s.decision).toMatchObject({ at: kept.decision!.at, by: kept.decision!.by });
+      // Les blocs présentés portent la séance décidée, ni plus ni moins.
+      expect(totalDuration(s.blocks), kept.date).toBe(kept.plannedDurationS);
+      expect(elevationGainOf(s.blocks), kept.date).toBe(kept.plannedElevationGainM);
+      // Le « pourquoi » tient en une phrase ; le motif de la décision est dans
+      // l'historique, daté du jour où il a été écrit.
+      expect(isOneSentence(s.rationale ?? ''), `${kept.date} ${s.rationale}`).toBe(true);
+      expect(s.history?.[0], kept.date).toMatchObject({ at: kept.decision!.at, by: 'coach', text: kept.decision!.summary });
+    }
+
+    // La rando-course se prescrit comme elle se court : une durée, un dénivelé,
+    // une règle de marche — plus de partage entre montée et descente.
+    const rando = days.get('2026-09-27')!;
+    expect(rando.title).toBe('Rando-course — 3 h · 680 m D+');
+    expect(rando.blocks.map((b) => [b.zone, b.durationS])).toEqual([['Z2', 160 * 60], ['Z1', 20 * 60]]);
+    expect(rando.blocks[0]).toMatchObject({ elevationGainM: 680, elevationLossM: 680 });
+    expect(rando.blocks[0]!.label).toMatch(/marche dès \d+ % de pente/);
+
+    // Le test garde ses blocs et ses cibles, et prend les mots d'un test.
+    const test = days.get('2026-09-22')!;
+    const decided = DECIDED_ON_2026_09_21[0]!;
+    const content = (s: PlannedSession) => s.blocks.map((b) => [b.durationS, b.zone, b.hrRange, b.speedRangeMs]);
+    expect(content(test)).toEqual(content(decided));
+    expect(test.title).toBe('Test maximal 20 min — 1 h');
+  });
+
+  it('verse le raisonnement du coach à l\'historique, sans une date relative', async () => {
+    const [test] = store.plan!.weeks[0]!.sessions;
+    test!.rationale = "Ta séance de ce soir a sorti 13,6 km/h de meilleure moyenne sur 20 min, plus haut qu'hier.";
+    test!.blocks[2] = { ...test!.blocks[2]!, notes: 'Chiffre à battre : ta meilleure moyenne sur 20 min de ce soir.' };
+    const days = byDate(await written());
+
+    const s = days.get('2026-09-22')!;
+    expect(s.rationale).not.toContain('13,6');
+    expect(s.history?.[0]?.text).toBe(
+      'Ta séance du 18/09 au soir a sorti 13,6 km/h de meilleure moyenne sur 20 min, plus haut que le 17/09.',
+    );
+    expect(s.history?.[0]?.notes).toContain(
+      'Contre-la-montre 20 min : Chiffre à battre : ta meilleure moyenne sur 20 min du 18/09 au soir.',
+    );
+    for (const x of store.saved!.weeks.flatMap((w) => w.sessions)) {
+      for (const t of textsOf(x)) expect(relativeDatesIn(t), `${x.date} « ${t.slice(0, 60)} »`).toEqual([]);
+    }
+  });
+
+  it('ne verse pas deux fois le même raisonnement quand on reconstruit encore', async () => {
+    await written();
+    const first = byDate(store.saved!.weeks);
+    store.plan = { plan: store.saved!.plan, weeks: structuredClone(store.saved!.weeks) };
+    await written();
+    const second = byDate(store.saved!.weeks);
+    for (const kept of DECIDED_ON_2026_09_21) {
+      const a = first.get(kept.date)!;
+      const b = second.get(kept.date)!;
+      expect(b.history, kept.date).toEqual(a.history);
+      expect(b.rationale, kept.date).toBe(a.rationale);
+      expect(b.blocks, kept.date).toEqual(a.blocks);
+    }
   });
 });

@@ -19,5 +19,7 @@ export function sessionDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
+  // « 3 h », pas « 3 h 00 » : les zéros d'une heure ronde ne disent rien de plus.
+  if (h > 0) return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, '0')}`;
+  return `${m} min`;
 }

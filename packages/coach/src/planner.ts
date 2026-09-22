@@ -3,7 +3,7 @@ import type {
   RaceGoal, SessionBlock, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import {
-  ACWR_SPIKE, CS_FIT_MIN_S, DURABILITY_MEASURABLE, interpretDurability, prescribedMechanicalLoad,
+  ACWR_SPIKE, DURABILITY_MEASURABLE, interpretDurability, prescribedMechanicalLoad,
   projectFrom, projectLoadRatios, ratioExceedances, targetDistribution, targetRaceDayTsb,
   type DailyLoad, type LoadRatioExceedance,
 } from '@cairn/physiology';
@@ -15,9 +15,11 @@ import {
   formatDirectiveDuration, honourWeeklyFrequency, indexDirectives, isIntervalSession,
   nextIntervalFormat, type DirectiveSet,
 } from './directives.js';
+import { presentDecided, withConstruction } from './presentation.js';
 import { carryDecisions, decisionOn, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
+import type { TerrainHint } from './terrain.js';
 
 /**
  * Génération de la semaine d'entraînement.
@@ -69,6 +71,8 @@ export interface WeekBuildInput {
    * de la semaine d'avant ou d'après impose ses préalables par-delà le lundi.
    */
   fixed?: readonly PlannedSession[];
+  /** Le terrain de l'athlète : une rando-course y nomme la montée qui porte son dénivelé. */
+  terrain?: TerrainHint;
 }
 
 /** L'ambition qui change ce que le plan privilégie : la tenue dans la durée. */
@@ -217,6 +221,7 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
       model,
       Math.max(90, minDurationMin, durationMin),
       Math.max(400, minVert, vert),
+      input.terrain,
     );
   }
   return lib.longRun(model, Math.max(60, minDurationMin, durationMin), Math.max(0, minVert, vert));
@@ -226,23 +231,6 @@ const QUALITY_TYPES: readonly SessionType[] = [
   'tempo', 'threshold', 'vo2max', 'hill_repeats', 'downhill', 'fartlek', 'race_pace',
 ];
 const isLongType = (t: SessionType) => t === 'long_run' || t === 'long_trail';
-
-/**
- * Un test maximal, lu sur le contenu : un effort d'un seul tenant — ni répété,
- * ni coupé de récupérations — prescrit au-delà du seuil 2, et assez long pour
- * entrer dans l'ajustement de la vitesse critique. C'est la signature de la
- * preuve d'effort maximal du modèle, lue sur ce qu'on demande à l'athlète.
- */
-export function isMaximalTest(s: Pick<PlannedSession, 'blocks'>, model: PhysiologyModel): boolean {
-  return s.blocks.some(
-    (b) =>
-      !lib.isPrescribed(b) &&
-      (b.repeat ?? 1) <= 1 &&
-      !b.recovery &&
-      (b.durationS ?? 0) >= CS_FIT_MIN_S &&
-      (b.zone === 'Z5' || (b.hrRange != null && b.hrRange[0] >= model.vt2.hr)),
-  );
-}
 
 /** Ce que les séances conservées prennent à une semaine avant qu'elle ne s'écrive. */
 interface FixedPoints {
@@ -287,7 +275,7 @@ function fixedPoints(all: readonly PlannedSession[], weekStart: string, model: P
   };
 
   for (const s of all) {
-    const test = isMaximalTest(s, model);
+    const test = lib.isMaximalTest(s, model);
     const quality = test || QUALITY_TYPES.includes(s.type);
     const hard = quality || isLongType(s.type) || s.type === 'race';
 
@@ -423,7 +411,7 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
       );
     } else {
       assigned.set(d, lib.endurance(model, 60, Math.round(spec.targetElevationGainM * 0.12)));
-      reasons.set(d, 'Endurance fondamentale : le volume qui construit la base aérobie.');
+      reasons.set(d, 'Footing : le volume facile qui construit la base aérobie.');
     }
   }
 
@@ -475,7 +463,9 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
     // par le nombre de tours qu'on réintroduit l'excentrique après une coupure.
     assigned.set(strengthDay, {
       ...existing,
-      title: lib.addFormatMention(existing.title, '+ renforcement'),
+      // Le titre lit sur les blocs ce qui s'ajoute à la course : « Footing
+      // 30 min + renforcement et souplesse 45 min ».
+      title: lib.sessionTitle(lib.formatOf(existing.title), existing.type, blocks),
       blocks,
       durationS: existing.durationS + s.durationS,
       plannedLoad: existing.plannedLoad + s.plannedLoad,
@@ -596,8 +586,8 @@ function capToWeeklyCeiling(
     // En deçà d'un quart d'heure, une séance n'a plus de forme : on la retire
     // plutôt que de la raboter.
     const floorOf = (s: PlannedSession) =>
-      Math.max(lib.SESSION_GRID_S, honourDossier ? prescribedFloor(s) : 0);
-    // La maille du quart d'heure fait qu'un facteur ne tombe pas juste du
+      Math.max(lib.SESSION_FLOOR_S, honourDossier ? prescribedFloor(s) : 0);
+    // La maille des cinq minutes fait qu'un facteur ne tombe pas juste du
     // premier coup : on réduit, on remesure, on recommence tant qu'il reste du
     // mou.
     for (let pass = 0; pass < 4 && over() > 0; pass++) {
@@ -624,9 +614,9 @@ function capToWeeklyCeiling(
           : factor;
         const t = lib.transformSession(m.x, { duration: factor, vertical }, model);
         m.x.blocks = t.blocks;
-        if (t.amendments.length) {
-          m.x.rationale = [m.x.rationale, ...t.amendments].filter(Boolean).join(' ');
-        }
+        // Ce que le plafond a fait céder rejoint l'historique : le « pourquoi »
+        // reste la raison d'être de la séance.
+        if (t.amendments.length) m.x.history = withConstruction(m.x, undefined, t.amendments, builtAt()).history;
         humanize(m.x, model);
       }
     }
@@ -670,6 +660,8 @@ function capToWeeklyCeiling(
     x.plannedElevationGainM = 0;
     x.plannedDistanceM = 0;
     x.directives = undefined;
+    // Ce que sa construction avait cédé ne décrit plus rien : le jour est vide.
+    x.history = undefined;
     x.rationale =
       `Jour retiré par le plafond horaire : la semaine dépassait les ` +
       `${formatHours(spec.maxDurationS)} déclarées, et ` +
@@ -765,8 +757,10 @@ function calibrateToTarget(
           ? cappedFactor(s, fillerScale)
           : globalScale;
       const date = addDays(spec.weekStart, weekOrder(day));
-      const said = (amendments: readonly string[] = []) =>
-        [reasons.get(day), ...amendments].filter(Boolean).join(' ') || undefined;
+      // La raison de la séance, en une phrase, sous « pourquoi » ; ce que sa
+      // construction a dû céder, dans son historique.
+      const said = (session: PlannedSession, amendments: readonly string[] = []): PlannedSession =>
+        withConstruction(session, reasons.get(day), amendments, builtAt());
       const common = {
         id: uid(),
         athleteId,
@@ -779,7 +773,7 @@ function calibrateToTarget(
 
       // Un jour de repos n'a rien à mettre à l'échelle.
       if (s.durationS === 0) {
-        return {
+        return said({
           ...common,
           title: s.title,
           blocks: s.blocks,
@@ -787,8 +781,7 @@ function calibrateToTarget(
           plannedMechanicalLoad: 0,
           plannedDurationS: 0,
           plannedElevationGainM: 0,
-          rationale: said(s.amendments),
-        };
+        }, s.amendments);
       }
 
       // La sortie longue ne s'étire pas : elle se reconstruit à la durée que la
@@ -799,17 +792,17 @@ function calibrateToTarget(
       // d'un gabarit que l'athlète ne verra jamais.
       if (isLong(s) && s.rebuild) {
         const built = factor !== 1 ? s.rebuild(factor) : s;
-        return {
+        return said({
           ...common,
           title: built.title,
+          intent: built.intent,
           blocks: built.blocks,
           plannedLoad: built.plannedLoad,
           plannedMechanicalLoad: built.plannedMechanicalLoad,
           plannedDurationS: built.durationS,
           plannedDistanceM: built.plannedDistanceM,
           plannedElevationGainM: built.elevationGainM,
-          rationale: said([...(built.amendments ?? []), ...(built.divergences ?? []).map((d) => d.statement)]),
-        };
+        }, built.amendments);
       }
 
       // Tout le reste passe par le chemin commun à toute transformation : durée
@@ -834,7 +827,7 @@ function calibrateToTarget(
         change,
         model,
       );
-      return {
+      return said({
         ...common,
         title: lib.retitleFromContent({ title: s.title, type: s.type as SessionType, blocks: t.blocks }),
         blocks: t.blocks,
@@ -843,8 +836,7 @@ function calibrateToTarget(
         plannedDurationS: t.plannedDurationS,
         plannedDistanceM: t.plannedDistanceM,
         plannedElevationGainM: t.plannedElevationGainM,
-        rationale: said([...(s.amendments ?? []), ...t.amendments]),
-      };
+      }, [...(s.amendments ?? []), ...t.amendments]);
     });
 }
 
@@ -946,9 +938,12 @@ function raiseVertToMeasurable(s: PlannedSession, model: PhysiologyModel): void 
   s.plannedElevationGainM = t.plannedElevationGainM;
   s.plannedMechanicalLoad = t.plannedMechanicalLoad;
   s.plannedDurationS = t.plannedDurationS;
-  s.title = lib.restateVert(s.title, t.plannedElevationGainM);
-  if (t.amendments.length) s.rationale = [s.rationale, ...t.amendments].filter(Boolean).join(' ');
+  s.title = lib.retitleFromContent(s);
+  if (t.amendments.length) s.history = withConstruction(s, undefined, t.amendments, builtAt()).history;
 }
+
+/** L'heure d'écriture des notes de construction : celle où le planificateur écrit. */
+const builtAt = () => new Date().toISOString();
 
 /**
  * Plafond de durée par type de séance.
@@ -991,7 +986,7 @@ function minDistance(day: number, others: readonly number[]): number {
  *
  * Dernière porte avant l'enregistrement : quoi qu'il soit arrivé aux blocs —
  * calibration, dénivelé relevé, bloc annexe adossé —, ce qui sort se prescrit
- * au quart d'heure et se lit dans le titre. La charge est ensuite **mesurée**
+ * en minutes rondes et se lit dans le titre. La charge est ensuite **mesurée**
  * sur ce contenu : c'est l'inversion, la durée n'est plus le quotient d'un
  * budget.
  */
@@ -1075,6 +1070,11 @@ export interface BuildPlanInput {
    * passé ne se réécrit pas. Par défaut, le premier jour du plan.
    */
   today?: string;
+  /**
+   * Le terrain de l'athlète, lu sur ses traces. Absent, une rando-course se
+   * prescrit sans nommer de montée — ce qui reste exact, et se voit.
+   */
+  terrain?: TerrainHint;
 }
 
 /**
@@ -1295,6 +1295,7 @@ function buildWeeks(
       ambition: input.ambition,
       intervalFormat: nextIntervalFormat(policy, intervals),
       fixed,
+      terrain: input.terrain,
     });
     if (week.sessions.some((s) => isIntervalSession(s.type))) intervals++;
     return week;
@@ -1405,10 +1406,23 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   const planStart = mondayOf(startDate);
   const today = input.today ?? planStart;
 
+  // Une séance décidée et encore à venir se reprend dans son contenu — date,
+  // type, durée, dénivelé, charge — et se présente comme toute séance : titre,
+  // intention, « pourquoi » et consignes sont ceux des règles du jour, et ce
+  // qu'ils remplacent passe dans son historique. Les jours passés, eux, restent
+  // ce qu'ils étaient : ils sont le registre de ce qui a été prescrit.
+  const context = { model: input.model, terrain: input.terrain };
+  const previous = (input.previous ?? []).map((w) => ({
+    ...w,
+    sessions: w.sessions.map((s) =>
+      s.status === 'planned' && s.decision && s.date >= today ? presentDecided(s, context) : s,
+    ),
+  }));
+
   // Ce que la reconstruction conserve est là avant qu'elle n'écrive : chaque
   // semaine se construit autour, et la profondeur d'affûtage se résout sur le
   // plan tel qu'il sera, conservées comprises.
-  const held = (input.previous ?? []).flatMap((w) => w.sessions).filter((s) => decisionOn(s, today));
+  const held = previous.flatMap((w) => w.sessions).filter((s) => decisionOn(s, today));
 
   const attempt = (taperScale: number): PlanAttempt => {
     const built = buildWeeks(input, startDate, effectiveCtl, taperScale, held);
@@ -1451,8 +1465,8 @@ export function buildTrainingPlan(input: BuildPlanInput): {
       priority: 'key',
       status: 'planned',
       rationale:
-        `Jour J. Distance et dénivelé sont ceux du parcours (${input.race.course.elevationGainM} m D+), ` +
-        `relevés sur la course et non prescrits : une course n'a pas de blocs à exécuter.`,
+        `Jour J : distance et dénivelé sont ceux du parcours (${input.race.course.elevationGainM} m D+), ` +
+        `relevés sur la course et non prescrits — une course n'a pas de blocs à exécuter.`,
     });
     raceWeek.sessions.sort((a, b) => a.date.localeCompare(b.date));
   }
@@ -1462,7 +1476,7 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   // passés, séances réalisées ou remplacées, retirées par une absence déclarée,
   // ajustées à la main. Le report les remet telles qu'elles étaient, ramène
   // celles d'avant le départ, et dit ce qui change autour.
-  const carryOver = carryDecisions(input.previous ?? [], fresh, today);
+  const carryOver = carryDecisions(previous, fresh, today);
   const weeks = carryOver.weeks;
 
   // La durée d'une semaine se mesure sur ses séances : elle suit donc ce que la

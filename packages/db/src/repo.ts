@@ -599,7 +599,50 @@ export async function deleteRaceGoal(id: string): Promise<void> {
 // Plans d'entraînement
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Ajoute aux séances les colonnes que le schéma déclare et que la base n'a pas
+ * encore.
+ *
+ * Le service ne passe pas `db:push` : une colonne ajoutée au schéma manquerait
+ * à la base réelle, et Drizzle, qui nomme toutes les colonnes qu'il connaît,
+ * ferait tomber la première lecture du plan. Chaque processus — service,
+ * serveur MCP, commandes — s'en assure donc lui-même, une fois, avant de lire
+ * ou d'écrire une séance. Seule une colonne libre s'ajoute ainsi : c'est la
+ * seule qu'un `ALTER TABLE` sait poser sur une table qui a déjà des lignes, et
+ * en refuser une autre vaut mieux que la créer autrement que le schéma la dit.
+ */
+export async function ensureSessionColumns(): Promise<string[]> {
+  const db = getDb();
+  const c = getTableConfig(t.plannedSessions);
+  const present = new Set(
+    (await db.all<{ name: string }>(sql.raw(`PRAGMA table_info("${c.name}")`))).map((r) => r.name),
+  );
+  // Une table absente n'est pas une table en retard : c'est une base à créer.
+  if (present.size === 0) return [];
+  const added: string[] = [];
+  for (const col of c.columns) {
+    if (present.has(col.name)) continue;
+    if (col.notNull || col.hasDefault || col.primary) {
+      throw new Error(`${c.name}.${col.name} : colonne contrainte absente de la base — lance db:push.`);
+    }
+    await db.run(sql.raw(`ALTER TABLE "${c.name}" ADD COLUMN "${col.name}" ${col.getSQLType()}`));
+    added.push(col.name);
+  }
+  return added;
+}
+
+let sessionColumnsReady: Promise<unknown> | null = null;
+/** Une fois par processus ; un échec se retente à l'appel suivant. */
+function sessionColumns(): Promise<unknown> {
+  sessionColumnsReady ??= ensureSessionColumns().catch((e) => {
+    sessionColumnsReady = null;
+    throw e;
+  });
+  return sessionColumnsReady;
+}
+
 export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promise<void> {
+  await sessionColumns();
   const db = getDb();
 
   // Les plans précédents sont supprimés, pas seulement désactivés — leurs
@@ -663,6 +706,7 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
       decision: s.decision ?? null,
       successCriteria: s.successCriteria ?? null,
       directives: s.directives ?? null,
+      history: s.history?.length ? s.history : null,
     })),
   );
   // SQLite plafonne le nombre de variables liées : on insère par lots.
@@ -675,6 +719,7 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
 export async function getActivePlan(
   athleteId: string,
 ): Promise<{ plan: TrainingPlan; weeks: TrainingWeek[] } | null> {
+  await sessionColumns();
   const db = getDb();
   const [planRow] = await db
     .select()
@@ -752,6 +797,7 @@ function rowToSession(row: typeof t.plannedSessions.$inferSelect): PlannedSessio
     decision: (row.decision as PlannedSession['decision']) ?? undefined,
     successCriteria: (row.successCriteria as PlannedSession['successCriteria']) ?? undefined,
     directives: (row.directives as PlannedSession['directives']) ?? undefined,
+    history: (row.history as PlannedSession['history']) ?? undefined,
   };
 }
 
@@ -760,6 +806,7 @@ export async function listPlannedSessions(
   from: string,
   to: string,
 ): Promise<PlannedSession[]> {
+  await sessionColumns();
   const db = getDb();
   // Double sécurité : on ne renvoie que les séances du plan actif, même si un
   // plan orphelin subsistait en base.
@@ -785,6 +832,7 @@ export async function listPlannedSessions(
 }
 
 export async function updateSession(id: string, patch: Partial<typeof t.plannedSessions.$inferInsert>): Promise<void> {
+  await sessionColumns();
   await getDb()
     .update(t.plannedSessions)
     .set({ ...patch, updatedAt: new Date().toISOString() })

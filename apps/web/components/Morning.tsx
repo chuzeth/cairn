@@ -9,11 +9,12 @@ import {
 import { QUESTIONS } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
 import {
-  CRITERION_LABELS, circuitText, originLabel, provenanceText, sessionHeadline, slopeOf,
+  CRITERION_LABELS, circuitText, originLabel, provenanceText, runAndAnnex, sessionHeadline, slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import {
-  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, MISSING_LABEL, ReadinessBasis, Stale, unweighed, Waiting,
+  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale, unweighed,
+  Waiting,
 } from '@/components/ui';
 
 /**
@@ -216,10 +217,20 @@ function Headline({
 /**
  * La ligne de chiffres sous le titre : la pente quand il y en a une, la durée
  * toujours, le dénivelé quand le tracé ne le porte pas déjà dans sa légende.
+ *
+ * La durée sépare ce qui se court de ce qui s'ajoute, comme le titre : « 35
+ * minutes au total » pour quinze de course et vingt de souplesse et de
+ * respiration annonçait une séance que personne n'allait courir.
  */
 function subline(session: SessionRow): string {
   const p = sessionProfile(session);
-  const parts = [slopeOf(session), `${spelledDuration(p.totalS || session.plannedDurationS)} au total`];
+  const total = p.totalS || session.plannedDurationS;
+  const { runS, annex } = runAndAnnex(session, total);
+  const time =
+    annex && runS > 0
+      ? `${spelledDuration(runS)} de course, puis ${spelledDuration(annex.durationS)} de ${annex.name}`
+      : `${spelledDuration(total)} au total`;
+  const parts = [slopeOf(session), time];
   if (!p.captionIsClimb && p.gainM > 0) parts.push(`${metres(p.gainM)} de dénivelé`);
   return nbsp(parts.filter(Boolean).join(', '));
 }
@@ -237,6 +248,7 @@ function subline(session: SessionRow): string {
 function Session({ session }: { session: SessionRow }) {
   const [why, setWhy] = useState(false);
   const [said, setSaid] = useState(false);
+  const [past, setPast] = useState(false);
   const profile = sessionProfile(session);
   const notes = session.blocks.map(blockNote);
   const hasSaid = session.blocks.some((b, i) => targets(b) || notes[i]);
@@ -286,8 +298,17 @@ function Session({ session }: { session: SessionRow }) {
               {why ? 'masquer' : 'pourquoi cette séance'}
             </button>
           )}
+          {/* Le raisonnement qui a façonné la séance : trop long pour être son
+              « pourquoi », trop précieux pour disparaître. */}
+          {session.history && session.history.length > 0 && (
+            <button type="button" className="m-more" aria-expanded={past} onClick={() => setPast((h) => !h)}>
+              {past ? 'masquer' : 'historique'}
+            </button>
+          )}
         </span>
       </div>
+
+      {past && session.history && <SessionHistory history={session.history} />}
 
       {why && (
         <div className="m-why">

@@ -108,6 +108,34 @@ export function speedForMetabolicPower(powerWkg: number, grade: number): number 
 }
 
 /**
+ * Pente à partir de laquelle, à une puissance métabolique donnée, la foulée
+ * employée est la marche — le seuil de bascule marche/course, lu en pente
+ * plutôt qu'en vitesse.
+ *
+ * C'est la règle qu'un coureur applique sur un sentier : il ne regarde pas sa
+ * vitesse, il regarde la pente. À la puissance de sa zone d'endurance, courir
+ * au-delà de cette pente l'obligerait à ralentir sous la vitesse où la marche
+ * devient la foulée naturelle — il y dépense plus pour aller moins vite.
+ *
+ * Rendue en fraction (0.09 = 9 %), à 0,1 % près ; 0 si la marche l'emporte déjà
+ * à plat, 0,45 si la course tient jusqu'au bout du domaine du modèle.
+ */
+export function walkingGrade(powerWkg: number): number {
+  if (!(powerWkg > 0)) return 0;
+  const walks = (grade: number) => gaitForSpeed(speedForMetabolicPower(powerWkg, grade), grade) === 'walk';
+  if (walks(0)) return 0;
+  if (!walks(0.45)) return 0.45;
+  let lo = 0;
+  let hi = 0.45;
+  while (hi - lo > 0.0005) {
+    const mid = (lo + hi) / 2;
+    if (walks(mid)) hi = mid;
+    else lo = mid;
+  }
+  return Math.round(hi * 1000) / 1000;
+}
+
+/**
  * Vitesse ascensionnelle (VAM), en mètres de dénivelé positif par heure.
  * Métrique reine de la montée : indépendante de la distance et donc du tracé.
  */

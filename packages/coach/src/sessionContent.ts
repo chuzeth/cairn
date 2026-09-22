@@ -82,7 +82,7 @@ const WRITABLE_RECOVERY_FIELDS: Record<
 const WRITABLE_CIRCUIT_FIELDS: Record<keyof StrengthCircuit, true> = { rounds: true, exercises: true };
 const WRITABLE_EXERCISE_FIELDS: Record<keyof StrengthExercise, true> = { movement: true, reps: true };
 /** Même exigence sur les natures de bloc : la liste ne peut pas prendre du retard sur le type. */
-const WRITABLE_BLOCK_KINDS: Record<BlockKind, true> = { mobility: true, respiratory: true };
+const WRITABLE_BLOCK_KINDS: Record<BlockKind, true> = { mobility: true, respiratory: true, activation: true };
 
 // Des ensembles, pas les tables elles-mêmes : `key in table` répondrait vrai
 // pour `toString`, et laisserait passer un champ inconnu par la chaîne de

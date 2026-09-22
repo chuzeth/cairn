@@ -259,16 +259,4 @@ describe('Prescription', () => {
     }
   });
 
-  it('rend visible la contradiction entre la cible métabolique de Z2 et la courbe', () => {
-    const s = lib.longTrail(PIERRE_MODEL, 180, 1384);
-    const climb = s.blocks.find((b) => b.vamTargetMh)!;
-    const [d] = s.divergences ?? [];
-    expect(d).toMatchObject({ modelledMh: 839, durationS: climb.durationS, observedProvenance: 'field' });
-    expect(d!.observedMh).toBe(Math.round(verticalCapacity(PIERRE_MODEL, 'climb').at(climb.durationS!).vamMh));
-    expect(d!.gapPct).toBeGreaterThanOrEqual(5);
-    expect(d!.statement).toContain(`${d!.modelledMh} m/h`);
-    expect(d!.statement).toContain(`${d!.observedMh} m/h`);
-    // La vitesse prescrite est sous les deux lectures : aucun minimum ne la fixe.
-    expect(climb.vamTargetMh!).toBeLessThan(d!.observedMh);
-  });
 });

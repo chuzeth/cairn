@@ -34,6 +34,7 @@ vi.mock('@cairn/db', () => ({
   getAthlete: async () => db.athlete,
   getDailyLoads: async () => db.dailyLoads,
   listAbsences: async () => [],
+  listActivities: async () => [],
 }));
 
 const { applyAdjustments, buildTrainingPlan, executeTool } = await import('@cairn/coach');
@@ -91,8 +92,9 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     });
     const randos = weeks.flatMap((w) => w.sessions).filter((s) => s.type === 'long_trail');
     expect(randos.length).toBeGreaterThan(0);
-    // La contradiction entre cible métabolique et courbe se lit dans la séance enregistrée.
-    expect(randos.some((s) => /divergent/.test(s.rationale ?? ''))).toBe(true);
+    // Une rando-course se prescrit comme elle se court : le terrain porte son
+    // dénivelé d'un seul tenant, sans cible de vitesse ascensionnelle.
+    for (const s of randos) expect(s.blocks.some((b) => b.vamTargetMh), s.date).toBe(false);
     for (const s of randos) {
       expect(impossible(s.blocks, PIERRE_MODEL), `${s.date} ${s.title}`).toEqual([]);
       // La descente est écrite là où elle a lieu : sans elle, rien ne la contrôle.
@@ -110,8 +112,8 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     }]);
     const patch = db.updates.find((u) => u.id === 'rando')!.patch;
     expect(impossible(patch.blocks as SessionBlock[], PIERRE_MODEL)).toEqual([]);
-    // 10 799 s allégées de 40 % : 1 h 45 prescrites, pas 1 h 48 min 00 s.
-    expect(patch.plannedDurationS).toBe(6300);
+    // 10 800 s allégées de 40 % : 1 h 50 prescrites, pas 1 h 48 min 00 s.
+    expect(patch.plannedDurationS).toBe(6600);
   });
 
   it('facteur demandé par le coach', async () => {
@@ -122,7 +124,7 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     });
     const patch = db.updates.find((u) => u.id === 'rando')!.patch;
     expect(impossible(patch.blocks as SessionBlock[], PIERRE_MODEL)).toEqual([]);
-    expect(patch.plannedDurationS).toBe(6300);
+    expect(patch.plannedDurationS).toBe(6600);
   });
 });
 
@@ -186,6 +188,43 @@ describe('Ce que le coach lit d\'une séance qu\'il écrit', () => {
     } finally {
       vi.useRealTimers();
       db.dailyLoads = [];
+    }
+  });
+});
+
+describe('Ce que le coach décide est le contenu ; ce qu\'il explique va à l\'historique', () => {
+  it('refuse un titre ou une intention : ils se lisent sur le contenu', async () => {
+    db.sessions = [rando()];
+    db.updates = [];
+    await expect(
+      executeTool('pierre', 'modify_session', { session_id: 'rando', title: 'Rando longue', rationale: 'Renommée.' }),
+    ).rejects.toThrow(/« title »/);
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it('range le raisonnement dans l\'historique, daté, et dit le « pourquoi » en une phrase', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-20T07:00:00Z'));
+    try {
+      db.sessions = [rando()];
+      db.updates = [];
+      const rationale =
+        'Ta sortie de ce soir compte déjà 400 m de descente. Je coupe donc le 03/10 de 40 % pour tenir le ratio mécanique.';
+      await executeTool('pierre', 'modify_session', { session_id: 'rando', scale_load: 0.6, rationale });
+      const patch = db.updates.find((u) => u.id === 'rando')!.patch as Partial<PlannedSession>;
+      expect(patch.history).toEqual([
+        expect.objectContaining({
+          by: 'coach',
+          text: expect.stringContaining('Ta sortie du 20/09 au soir compte déjà 400 m de descente.'),
+        }),
+      ]);
+      expect(patch.rationale).not.toContain('400 m');
+      expect(patch.rationale).toMatch(/^Rando-course fixée par le coach le 20\/09 à 1 h 50/);
+      expect(patch.decision?.summary).toBe('Ta sortie du 20/09 au soir compte déjà 400 m de descente.');
+      // Une rando-course se présente comme elle se court, allégée ou non.
+      expect(patch.blocks?.map((b) => b.zone)).toEqual(['Z2', 'Z1']);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

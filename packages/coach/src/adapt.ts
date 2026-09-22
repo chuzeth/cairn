@@ -7,6 +7,7 @@ import { directivesFor, sessionDuration } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { mondayOf } from './periodization.js';
+import { firstSentence, presentDecided, withHistory } from './presentation.js';
 import {
   eccentricStrengthOf, elevationGainOf, retitleFromContent, scaledRounds, transformSession,
 } from './sessionLibrary.js';
@@ -415,10 +416,14 @@ export async function applyAdjustments(
 
   // Un ajustement est une décision de charge : elle reste sur la séance, et
   // une reconstruction la reprendra au lieu de l'écraser.
-  const decided = (summary: string): SessionDecision => ({
-    at: new Date().toISOString(),
-    by: origin,
-    summary,
+  const at = new Date().toISOString();
+  const decided = (summary: string): SessionDecision => ({ at, by: origin, summary });
+  // Le « pourquoi » d'une séance tient en une phrase : celle qui nomme le signal.
+  // Le motif entier — diagnostic, action, ce qui a dû céder — rejoint son
+  // historique, daté.
+  const told = (session: PlannedSession, text: string) => ({
+    rationale: firstSentence(text),
+    history: withHistory(session.history, { at, by: origin, text }),
   });
 
   for (const adj of adjustments) {
@@ -429,7 +434,7 @@ export async function applyAdjustments(
       case 'mark_missed':
         await db.updateSession(adj.sessionId, {
           status: 'missed',
-          rationale: adj.reason,
+          ...told(session, adj.reason),
           decision: decided(adj.reason),
         });
         break;
@@ -438,7 +443,7 @@ export async function applyAdjustments(
         await db.updateSession(adj.sessionId, {
           status: 'withdrawn',
           absenceId: adj.absenceId ?? null,
-          rationale: adj.reason,
+          ...told(session, adj.reason),
           decision: decided(adj.reason),
         });
         break;
@@ -455,12 +460,22 @@ export async function applyAdjustments(
           { duration: adj.factor ?? 1, eccentric: adj.eccentric ?? 1, repeats: adj.repeats ?? 1 },
           model,
         );
-        const title = retitleFromContent({ ...session, blocks: content.blocks });
+        const motive = [adj.reason, ...amendments].join(' ');
+        const title = `${retitleFromContent({ ...session, blocks: content.blocks }).replace(/ · allégée$/, '')} · allégée`;
+        // Allégée, elle reste une séance à venir : elle se présente comme toute
+        // séance, et son motif rejoint l'historique.
+        const presented = presentDecided(
+          { ...session, ...content, title, decision: decided(motive), rationale: motive },
+          { model },
+        );
         await db.updateSession(adj.sessionId, {
           ...content,
-          title: `${title} · allégée`,
-          rationale: [adj.reason, ...amendments].join(' '),
-          decision: decided([adj.reason, ...amendments].join(' ')),
+          title: presented.title,
+          intent: presented.intent,
+          blocks: presented.blocks,
+          rationale: presented.rationale,
+          history: presented.history ?? null,
+          decision: presented.decision,
         } as never);
         break;
       }
@@ -470,14 +485,14 @@ export async function applyAdjustments(
           await db.updateSession(adj.sessionId, {
             date: adj.newDate,
             status: 'moved',
-            rationale: adj.reason,
+            ...told(session, adj.reason),
             decision: decided(adj.reason),
           });
         }
         break;
 
       case 'swap':
-        await db.updateSession(adj.sessionId, { rationale: adj.reason, decision: decided(adj.reason) });
+        await db.updateSession(adj.sessionId, { ...told(session, adj.reason), decision: decided(adj.reason) });
         break;
     }
   }

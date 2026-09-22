@@ -199,6 +199,7 @@ export function clampCadence(
 const BLOCK_LABEL: Record<BlockKind, string> = {
   mobility: 'Souplesse chaîne postérieure',
   respiratory: 'Travail respiratoire',
+  activation: 'Activation',
 };
 
 const BLOCK_NOTES: Record<BlockKind, string> = {
@@ -209,6 +210,9 @@ const BLOCK_NOTES: Record<BlockKind, string> = {
     "Respiration diaphragmatique allongé : 5 min à 6 cycles/min, expiration deux fois plus longue que " +
     "l'inspiration. Puis 30 respirations contre résistance inspiratoire (EMT) si tu en disposes. " +
     "On vise le coefficient d'utilisation pulmonaire, pas l'essoufflement.",
+  activation:
+    'Cercles de hanches et de chevilles, 10 fentes marchées par jambe, 15 ponts fessiers ' +
+    "(dos au sol, pieds à plat, monte le bassin jusqu'à la ligne épaules-genoux).",
 };
 
 /** Un bloc annexe, non couru : ni allure, ni fréquence cardiaque à tenir. */

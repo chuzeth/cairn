@@ -113,7 +113,9 @@ export function clock(seconds: number | null | undefined): string {
  */
 export function blockDuration(seconds: number | null | undefined): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return '';
-  if (seconds >= 5400) return `${(seconds / 3600).toFixed(1)} h`;
+  // Au-delà d'une heure et demie, l'écriture de toute durée de séance : « 2 h 40 »,
+  // pas « 2.7 h » — un dixième d'heure ne se lit pas sur une montre.
+  if (seconds >= 5400) return sessionDuration(seconds);
   if (seconds >= 120 && seconds % 60 === 0) return `${seconds / 60} min`;
   if (seconds >= 120) {
     const m = Math.floor(seconds / 60);
@@ -504,12 +506,15 @@ export interface DirectiveOriginRow {
   quote: string;
 }
 
+/** Qui a écrit une entrée d'historique ou pris une décision. */
+export type HistoryAuthor = 'athlete' | 'coach' | 'rules' | 'developer' | 'planner';
+
 export interface SessionRow {
   id: string; date: string; type: string; title: string; intent: string;
   blocks: {
     label: string; zone: string; repeat?: number; durationS?: number; distanceM?: number;
-    /** Bloc non couru dont la fréquence est prescrite au dossier. */
-    kind?: 'mobility' | 'respiratory';
+    /** Bloc non couru : souplesse et respiration du dossier, ou l'activation d'un renforcement. */
+    kind?: 'mobility' | 'respiratory' | 'activation';
     /** Dénivelé du bloc, par répétition et hors récupération — le relief du profil. */
     elevationGainM?: number; elevationLossM?: number;
     hrRange?: [number, number]; paceRange?: [string, string]; vamTargetMh?: number;
@@ -537,7 +542,15 @@ export interface SessionRow {
   plannedLoad: number; plannedMechanicalLoad: number; plannedDurationS: number;
   plannedElevationGainM?: number; plannedDistanceM?: number;
   priority: 'key' | 'support' | 'optional';
+  /** Le « pourquoi », en une phrase. */
   status: string; rationale?: string;
+  /** La décision prise sur la séance hors du planificateur, quand il y en a une. */
+  decision?: { at: string; by: HistoryAuthor; summary: string };
+  /**
+   * Ce qui a façonné la séance au-delà de son « pourquoi » : le raisonnement du
+   * coach, ce que le planificateur a dû céder. À un geste de distance.
+   */
+  history?: { at: string; by: HistoryAuthor; text: string; notes?: string[] }[];
   /** Activité qui a rattaché la séance — celle qui l'a réalisée ou remplacée. */
   completedActivityId?: string;
   /** Absence déclarée qui a retiré la séance, quand le statut vaut `withdrawn`. */

@@ -1494,10 +1494,12 @@ describe('Le plafond horaire est une contrainte dure', () => {
       sessions.filter((b) => b.plannedLoad === a.plannedLoad && b.plannedDurationS !== a.plannedDurationS),
     );
     expect(pairs.length).toBeGreaterThan(0);
-    // Et la semaine ne dit plus ses heures comme un quotient de sa charge.
-    for (const w of plan(9).weeks) {
-      expect(w.plannedDurationS).not.toBe(Math.round((w.targetLoad / 55) * 3600));
-    }
+    // Et la semaine ne dit plus ses heures comme un quotient de sa charge : elle
+    // les mesure sur ses séances. Une semaine tenue au plafond peut tomber sur
+    // le quotient d'une charge elle-même plafonnée ; elles ne le font pas toutes.
+    const weeks = plan(9).weeks;
+    for (const w of weeks) expect(w.plannedDurationS, w.weekStart).toBe(lib.writtenDurationS(w.sessions));
+    expect(weeks.some((w) => w.plannedDurationS !== Math.round((w.targetLoad / 55) * 3600))).toBe(true);
   });
 
   it('dit que la plage du dossier a cédé, quand le plafond ne la contient pas', () => {
@@ -1608,11 +1610,21 @@ describe('Une séance se prescrit en nombres humains', () => {
   const running = (s: PlannedSession) =>
     lib.totalDuration(s.blocks.filter((b) => !lib.isPrescribed(b)));
 
-  it('prescrit le corps de séance au quart d\'heure', () => {
+  it('prescrit en durées rondes : cinq minutes pour la séance entière et ses blocs libres', () => {
+    // « Minute ronde » avait été lu « minute entière » : des blocs de 23, 26 ou
+    // 22 min. Pour un coureur, une durée ronde est un multiple de cinq.
+    const link = /gammes|lignes droites|pause entre/i;
     for (const s of sessions) {
       if (s.type === 'race') continue;
-      expect(running(s) % (15 * 60), `${s.date} ${s.title} — ${running(s)} s`).toBe(0);
+      expect(s.plannedDurationS % 300, `${s.date} ${s.title}`).toBe(0);
+      for (const b of s.blocks) {
+        // Les répétitions gardent la durée du dossier ; les gammes absorbent ce
+        // qui rend la séance ronde.
+        if (b.recovery || (b.repeat ?? 1) > 1 || link.test(b.label)) continue;
+        expect((b.durationS ?? 0) % 300, `${s.date} « ${b.label} »`).toBe(0);
+      }
     }
+    expect(sessions.some((s) => running(s) % 900 !== 0)).toBe(true);
   });
 
   it('prescrit les blocs à la minute ronde, jamais à la seconde', () => {
@@ -1628,12 +1640,19 @@ describe('Une séance se prescrit en nombres humains', () => {
     }
   });
 
-  it('dit dans le titre la durée que la séance entière porte', () => {
+  it('dit dans le titre ce qui se court et ce qui s\'ajoute', () => {
     for (const s of sessions) {
       if (s.type === 'race') continue;
-      expect(s.title, `${s.date} — ${s.plannedDurationS} s`).toContain(
-        `— ${sessionDuration(s.plannedDurationS)}`,
-      );
+      const annex = s.blocks.filter(lib.isPrescribed);
+      const annexS = lib.totalDuration(annex);
+      const expected =
+        annex.length === 0 || annexS === s.plannedDurationS
+          ? `— ${sessionDuration(s.plannedDurationS)}`
+          : ` ${sessionDuration(s.plannedDurationS - annexS)} + `;
+      expect(s.title, `${s.date} — ${s.plannedDurationS} s`).toContain(expected);
+      if (annex.length > 0 && annexS < s.plannedDurationS) {
+        expect(s.title, s.date).toMatch(new RegExp(`\\+ [^·]* ${sessionDuration(annexS)}(?: ·|$)`));
+      }
       expect(s.plannedDurationS, s.date).toBe(lib.totalDuration(s.blocks));
     }
   });

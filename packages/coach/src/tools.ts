@@ -3,8 +3,8 @@ import type {
   RaceGoal, SessionBlock,
 } from '@cairn/core';
 import {
-  courseFromLapFormat, courseHasUnknown, describeLapFormat, directivesFor, isLapCourse, lapsForHours,
-  targetLaps,
+  anchorRelativeDates, localDate, sessionDuration, courseFromLapFormat, courseHasUnknown, describeLapFormat, directivesFor, isLapCourse,
+  lapsForHours, targetLaps,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
@@ -20,15 +20,16 @@ import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
 import { describeOrigin, type PlanCarryOver } from './preserve.js';
 import { PRESCRIPTION_MARGIN } from './plausibility.js';
+import { firstSentence, presentDecided, withHistory } from './presentation.js';
 import { checkReserve, describeRecoveries, describeReserve } from './reserve.js';
 import {
   CLIMB_BREAK_M, CLIMB_MIN_GAIN_M, CLIMB_MIN_GRADE, HOME_GROUND_RADIUS_M, SAME_START_M,
   detectClimbs, groupRecurring, homeGrounds,
-  type ClimbOccurrence, type OutingStart, type RecurringClimb,
+  type ClimbOccurrence, type OutingStart, type RecurringClimb, type TerrainHint,
 } from './terrain.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
-  eccentricStrengthOf, elevationGainOf, renderSession, restateVert, sessionTotals, transformSession,
+  eccentricStrengthOf, renderSession, sessionTotals, transformSession,
 } from './sessionLibrary.js';
 import {
   currentCriticalSpeed, currentModel, fitnessAtPlanStart, knownLoadsBefore, loadAthleteState,
@@ -73,7 +74,7 @@ const num = (description: string, extra: Record<string, unknown> = {}) => ({ typ
 const bool = (description: string) => ({ type: 'boolean', description });
 
 const ZONES = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
-const BLOCK_KINDS = ['mobility', 'respiratory'];
+const BLOCK_KINDS = ['mobility', 'respiratory', 'activation'];
 const MOVEMENTS = Object.keys(ECCENTRIC_MOVEMENTS);
 const ABSENCE_KINDS: AbsenceKind[] = ['chosen', 'illness', 'injury', 'unavailable'];
 
@@ -109,9 +110,10 @@ const BLOCK_SCHEMA = {
     label: str('Intitulé du bloc, ex. « Contre-la-montre 20 min ».'),
     zone: str('Zone dominante du bloc.', { enum: ZONES }),
     kind: str(
-      "Nature d'un bloc annexe, non couru, dont la fréquence hebdomadaire est prescrite au dossier. " +
-        "À conserver sur un bloc qui le porte : c'est par lui que la fréquence se compte. " +
-        "Un bloc annexe n'admet ni allure, ni FC, ni cadence, ni distance.",
+      "Nature d'un bloc non couru : souplesse et respiration, dont la fréquence hebdomadaire est prescrite au " +
+        "dossier, ou l'activation qui ouvre un renforcement. À conserver sur un bloc qui le porte : c'est par lui " +
+        "que la fréquence se compte, et que le titre sépare ce qui se court de ce qui s'ajoute. " +
+        "Un bloc non couru n'admet ni allure, ni FC, ni cadence, ni distance.",
       { enum: BLOCK_KINDS },
     ),
     durationS: num(
@@ -191,7 +193,10 @@ const BLOCK_SCHEMA = {
         elevationLossM: num('Dénivelé négatif franchi pendant la récupération — la descente d\'une côte.'),
       },
     },
-    notes: str("Consigne d'exécution, affichée sous le bloc."),
+    notes: str(
+      "Consigne d'exécution, affichée sous le bloc. Sur une rando-course ou un test maximal, ce sont les consignes " +
+        "des règles qui s'affichent, et la tienne rejoint l'historique de la séance.",
+    ),
   },
 };
 
@@ -349,7 +354,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'modify_session',
     description:
-      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge, ou remplacement du contenu prescrit. C'est le contenu que l'athlète exécute — un titre changé sans ses blocs ne change rien à la séance qu'il fera. Toute modification est journalisée avec sa justification. La réponse porte les jours où le plan, modification comprise, dépasse le seuil de ratio charge aiguë/chronique d'une filière, et ceux d'avant la modification : un dépassement se lit au moment où la séance s'écrit.",
+      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge, ou remplacement du contenu prescrit. Ce que tu décides est le contenu — date, type, durée, dénivelé, charge — ; la présentation, elle, suit les règles comme pour toute séance : titre, intention, « pourquoi » en une phrase, et les consignes d'une rando-course ou d'un test maximal. Ton raisonnement (`rationale`) n'est pas affiché sous « pourquoi » : il rejoint l'historique de la séance, daté, avec les consignes que la présentation remplace. Une date relative — « ce soir », « demain » — y est remplacée par la date qu'elle désigne aujourd'hui. Toute modification est journalisée. La réponse porte les jours où le plan, modification comprise, dépasse le seuil de ratio charge aiguë/chronique d'une filière, et ceux d'avant la modification : un dépassement se lit au moment où la séance s'écrit.",
     input_schema: obj(
       {
         session_id: str('Identifiant de la séance.'),
@@ -363,8 +368,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             "Ce que le dossier prescrit — tours d'un circuit, souplesse, respiration — garde son temps. Si un segment ne tient " +
             "plus dans les courbes de l'athlète, c'est le dénivelé qui cède, et la réponse le dit. Exclusif de blocks.",
         ),
-        title: str('Nouveau titre.'),
-        intent: str("Nouvelle intention physiologique — le « pourquoi » de la séance, affiché sous le titre."),
         blocks: {
           type: 'array',
           minItems: 1,
@@ -372,7 +375,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             "Remplace intégralement le contenu prescrit. Durée, charge métabolique, distance, dénivelé et charge mécanique de la séance sont recalculés depuis ces blocs, par la formule du planificateur — la charge mécanique sur le dénivelé négatif que les blocs déclarent, ou, faute d'aucun, sur une boucle qui descend ce qu'elle monte. Un contenu dont un segment dépasse les courbes de l'athlète est refusé. Exclusif de scale_load, qui multiplie le contenu existant au lieu de le remplacer.",
           items: BLOCK_SCHEMA,
         },
-        rationale: str('Justification de la modification. Obligatoire.'),
+        rationale: str(
+          "Ton raisonnement : pourquoi cette modification. Obligatoire. Il rejoint l'historique de la séance ; " +
+            "sa première phrase résume la décision dans le journal et dans les aperçus de reconstruction.",
+        ),
       },
       ['session_id', 'rationale'],
     ),
@@ -906,7 +912,7 @@ export async function executeTool(
             priorite: s.priority,
             statut: s.status,
             activite_rattachee: s.completedActivityId ?? null,
-            justification_placement: s.rationale,
+            pourquoi: s.rationale,
             criteres_de_reussite: s.successCriteria?.map((c) => ({
               grandeur: c.metric,
               borne: c.maxValue ?? null,
@@ -928,7 +934,11 @@ export async function executeTool(
             // recharge, pas sur sa durée : 90 s rendent tout après une
             // répétition au seuil et le cinquième après une répétition en PMA.
             ...reserveReport(s, model),
-            ...(detailed ? { detail: renderSession(s) } : {}),
+            // Ce qui a façonné la séance — raisonnements, ce que la construction
+            // a cédé — se lit en détail ; sinon, on dit seulement qu'il existe.
+            ...(detailed
+              ? { detail: renderSession(s), historique: s.history ?? [] }
+              : { entrees_historique: s.history?.length ?? 0 }),
           })),
         },
       };
@@ -1238,6 +1248,7 @@ export async function executeTool(
         loadHistory: await knownLoadsBefore(state, planStart),
         previous: previous?.weeks,
         today: state.today.date,
+        terrain: await terrainHint(athleteId),
       });
 
       // Les semaines que le planificateur a écrites, sans celles d'avant le
@@ -1386,16 +1397,25 @@ export async function executeTool(
       const rationale = arg<string>(input, 'rationale');
       if (!sessionId) throw new Error('session_id requis.');
       if (!rationale) throw new Error('rationale requis : toute modification doit être justifiée.');
+      // Le titre et l'intention se lisent sur le contenu : les écrire à côté,
+      // c'était annoncer une séance que les blocs ne prescrivaient pas.
+      for (const key of ['title', 'intent'] as const) {
+        if (input[key] !== undefined) {
+          throw new Error(
+            `« ${key} » : le titre et l'intention suivent les règles de présentation, comme pour toute séance. ` +
+              'Décide le contenu (blocks, scale_load, new_date, status) et écris ton raisonnement dans `rationale` : ' +
+              "il rejoint l'historique de la séance. Rien n'a été modifié.",
+          );
+        }
+      }
 
-      const patch: Record<string, unknown> = { rationale };
+      const at = new Date().toISOString();
+      const said = anchorRelativeDates(rationale.trim(), at);
+      const patch: Record<string, unknown> = {};
       const newDate = arg<string>(input, 'new_date');
       if (newDate) patch.date = newDate;
       const status = arg<string>(input, 'status');
       if (status) patch.status = status;
-      const title = arg<string>(input, 'title');
-      if (title) patch.title = title;
-      const intent = arg<string>(input, 'intent');
-      if (intent) patch.intent = intent;
 
       const scale = arg<number>(input, 'scale_load');
       const rawBlocks = input.blocks;
@@ -1405,19 +1425,14 @@ export async function executeTool(
         );
       }
 
-      let target: PlannedSession | undefined;
-      if (rawBlocks !== undefined || (scale && scale > 0)) {
-        const from = daysAgo(60);
-        const to = iso(new Date(Date.now() + 400 * dayMs));
-        const all = await db.listPlannedSessions(athleteId, from, to);
-        target = all.find((s) => s.id === sessionId);
-        if (!target) throw new Error(`Séance ${sessionId} introuvable.`);
-      }
+      const all = await db.listPlannedSessions(athleteId, daysAgo(60), iso(new Date(Date.now() + 400 * dayMs)));
+      const target = all.find((s) => s.id === sessionId);
+      if (!target) throw new Error(`Séance ${sessionId} introuvable.`);
+      const model = await currentModel(athleteId);
 
       let blocks: SessionBlock[] | undefined;
       let amendments: string[] = [];
       if (rawBlocks !== undefined) {
-        const model = await currentModel(athleteId);
         blocks = parseSessionBlocks(rawBlocks, model);
         const totals = sessionTotals(model, blocks);
         patch.blocks = blocks;
@@ -1430,23 +1445,52 @@ export async function executeTool(
         patch.plannedMechanicalLoad = Math.round(totals.mechanicalLoad);
       }
 
-      if (target && scale && scale > 0) {
+      if (scale && scale > 0) {
         // Le chemin de toute transformation : le même que la calibration et que
         // les allègements. Il multipliait ici la durée de tous les blocs,
         // circuits compris, et laissait le dénivelé où il était.
-        const t = transformSession(target, scale, await currentModel(athleteId));
+        const t = transformSession(target, scale, model);
         patch.blocks = t.blocks;
         patch.plannedLoad = t.plannedLoad;
         patch.plannedDurationS = t.plannedDurationS;
         patch.plannedMechanicalLoad = t.plannedMechanicalLoad;
         patch.plannedElevationGainM = t.plannedElevationGainM;
         if (t.plannedDistanceM !== undefined) patch.plannedDistanceM = t.plannedDistanceM;
-        if (t.plannedElevationGainM !== elevationGainOf(target.blocks)) {
-          patch.title = restateVert(title ?? target.title, t.plannedElevationGainM);
-        }
         amendments = t.amendments;
-        if (amendments.length) patch.rationale = [rationale, ...amendments].join(' ');
       }
+
+      // La décision, portée par la séance elle-même. Sans elle, une séance
+      // encore à venir reste « planned » et ne se distingue plus de ce que le
+      // planificateur vient d'écrire : la reconstruction suivante l'écrase. Son
+      // résumé est la première phrase du raisonnement ; le raisonnement entier,
+      // et ce que la transformation a dû céder, vont à l'historique.
+      const reasoning = [said, ...amendments].join(' ');
+      const decision = { at, by: origin, summary: firstSentence(said) };
+      const decided: PlannedSession = {
+        ...target,
+        ...(patch as Partial<PlannedSession>),
+        decision,
+        rationale: reasoning,
+      };
+      // Encore à venir, elle se présente comme toute séance ; un statut, lui,
+      // se dit par la première phrase de ce qui l'a fixé.
+      const presented =
+        decided.status === 'planned' && decided.date >= localDate(at)
+          ? presentDecided(decided, {
+              model,
+              terrain: decided.type === 'long_trail' ? await terrainHint(athleteId) : undefined,
+            })
+          : {
+              ...decided,
+              rationale: firstSentence(said),
+              history: withHistory(target.history, { at, by: origin, text: reasoning }),
+            };
+      patch.title = presented.title;
+      patch.intent = presented.intent;
+      patch.blocks = presented.blocks;
+      patch.rationale = presented.rationale;
+      patch.history = presented.history ?? null;
+      patch.decision = decision;
 
       // Les ratios de charge que le plan produira, cette modification comprise,
       // lus avant qu'elle ne s'enregistre : un pic se voit quand la séance
@@ -1460,24 +1504,15 @@ export async function executeTool(
         ? ` ⚠ Ratio de charge projeté au-delà de son seuil : ${describeRatioExceedances(ratios.after)}.`
         : '';
 
-      // La décision, portée par la séance elle-même. Sans elle, une séance
-      // encore à venir reste « planned » et ne se distingue plus de ce que le
-      // planificateur vient d'écrire : la reconstruction suivante l'écrase.
-      patch.decision = {
-        at: new Date().toISOString(),
-        by: origin,
-        summary: String(patch.rationale ?? rationale),
-      };
-
       await db.updateSession(sessionId, patch as never);
       const plan = await db.getActivePlan(athleteId);
       if (plan) {
         await db.appendPlanRevision(plan.plan.id, {
-          at: new Date().toISOString(),
+          at,
           trigger: 'chat_request',
           origin,
-          summary: rationale + ratioWarning,
-          changes: [{ date: newDate ?? '', before: sessionId, after: JSON.stringify(patch), reason: rationale }],
+          summary: said + ratioWarning,
+          changes: [{ date: newDate ?? '', before: sessionId, after: JSON.stringify(patch), reason: said }],
         });
       }
       return {
@@ -1501,10 +1536,9 @@ export async function executeTool(
                 },
               }
             : {}),
-          // Ce que l'athlète lira : le contenu prescrit, pas le titre.
-          ...(blocks && target
-            ? { apercu: renderSession({ title: (title ?? target.title), intent: intent ?? target.intent, blocks }) }
-            : {}),
+          // Ce que l'athlète lira : le contenu prescrit, présenté comme il le verra.
+          apercu: renderSession(presented),
+          historique: presented.history ?? [],
         },
       };
     }
@@ -1740,6 +1774,12 @@ function carryContent(carry: PlanCarryOver) {
       denivele_m: d.session.plannedElevationGainM ?? null,
       raison: d.reason,
       ce_qu_elle_porte: d.statement,
+      // Une décision encore à venir se présente comme toute séance : son
+      // « pourquoi » est celui des règles, et ce qu'il remplace est dans son
+      // historique.
+      duree: sessionDuration(d.session.plannedDurationS),
+      pourquoi: d.session.rationale ?? null,
+      entrees_historique: d.session.history?.length ?? 0,
     })),
     seances_remplacees: carry.replaced
       .filter((c) => !c.identical)
@@ -1786,6 +1826,17 @@ const TREND_FR: Record<RecurringClimb['trend'], string> = {
   down: 'en recul',
   unknown: 'indéterminée — moins de trois sorties',
 };
+
+/**
+ * Ce que le planificateur sait du terrain : les montées récurrentes de l'année
+ * et le départ habituel. C'est par lui qu'une rando-course nomme la montée qui
+ * porte son dénivelé.
+ */
+async function terrainHint(athleteId: string): Promise<TerrainHint> {
+  const { climbs, outings } = await readTerrain(athleteId, daysAgo(365), iso(new Date()));
+  const home = homeGrounds(outings)[0]?.center;
+  return { climbs: groupRecurring(climbs), ...(home ? { home } : {}) };
+}
 
 /**
  * Lit le terrain dans les traces.
