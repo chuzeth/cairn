@@ -3,6 +3,7 @@ import type {
 } from '@cairn/core';
 import { anchorRelativeDates, sessionDuration, writtenOn } from '@cairn/core';
 import { DURABILITY_MEASURABLE } from '@cairn/physiology';
+import { firstDescentNote } from './eccentric.js';
 import { locateVertical } from './plausibility.js';
 import * as lib from './sessionLibrary.js';
 import type { TerrainHint } from './terrain.js';
@@ -126,18 +127,7 @@ function formFor(
   ctx: PresentationContext,
 ): Pick<PlannedSession, 'title' | 'intent' | 'blocks'> | null {
   const { model } = ctx;
-  if (s.type === 'long_trail' && s.blocks.length > 0) {
-    // Un contenu dont les blocs ne portent pas le dénivelé décidé n'est pas une
-    // rando-course qu'on puisse présenter autrement sans la changer.
-    const gain = lib.elevationGainOf(s.blocks);
-    if (gain !== Math.round(s.plannedElevationGainM ?? gain)) return null;
-    const t = lib.longTrail(model, s.plannedDurationS / 60, gain, ctx.terrain);
-    const intact =
-      t.durationS === s.plannedDurationS &&
-      t.elevationGainM === gain &&
-      t.elevationLossM === lib.elevationLossOf(locateVertical(s.blocks, s.type));
-    return intact ? { title: t.title, intent: t.intent, blocks: t.blocks } : null;
-  }
+  if (s.type === 'long_trail') return trailForm(s, ctx);
   if (lib.isMaximalTest(s, model)) {
     const blocks = lib.timeTrialPresentation(s.blocks, model);
     const effort = blocks.find((b) => b.label.startsWith('Contre-la-montre'));
@@ -146,6 +136,28 @@ function formFor(
     return { title: lib.sessionTitle(`Test maximal ${min} min`, s.type, blocks), intent: t.intent, blocks };
   }
   return null;
+}
+
+/**
+ * Une rando-course telle qu'elle se court — une durée, un dénivelé, une règle
+ * de marche, et la montée qui porte ce dénivelé quand le terrain en connaît une
+ * —, pourvu que cette forme ne change pas son contenu.
+ */
+function trailForm(
+  s: PlannedSession,
+  ctx: PresentationContext,
+): Pick<PlannedSession, 'title' | 'intent' | 'blocks'> | null {
+  if (s.blocks.length === 0) return null;
+  // Un contenu dont les blocs ne portent pas le dénivelé décidé n'est pas une
+  // rando-course qu'on puisse présenter autrement sans la changer.
+  const gain = lib.elevationGainOf(s.blocks);
+  if (gain !== Math.round(s.plannedElevationGainM ?? gain)) return null;
+  const t = lib.longTrail(ctx.model, s.plannedDurationS / 60, gain, ctx.terrain);
+  const intact =
+    t.durationS === s.plannedDurationS &&
+    t.elevationGainM === gain &&
+    t.elevationLossM === lib.elevationLossOf(locateVertical(s.blocks, s.type));
+  return intact ? { title: t.title, intent: t.intent, blocks: t.blocks } : null;
 }
 
 /**
@@ -221,4 +233,55 @@ export function withConstruction(
     ...(reason ? { rationale: reason } : {}),
     ...(history?.length ? { history } : {}),
   };
+}
+
+export interface TerrainContext extends PresentationContext {
+  /** Ce qui est avant ne se réécrit pas. */
+  today: string;
+  /** Séances de descente faites avant `today` : sans aucune, la première à venir le dit. */
+  descentsDone: number;
+}
+
+/**
+ * Pose sur le terrain de l'athlète les séances de terrain à venir, sans rien
+ * reconstruire.
+ *
+ * Une descente que personne n'a décidée est posée sur sa montée (`layDescent`) :
+ * tronçon, remontée à pied, consigne d'effort, et la durée qui suit. La première
+ * descente à venir dit ce que ses courbatures toucheront. Une rando-course prend
+ * la forme des règles du jour, qui nomment sa montée : décidée, par
+ * `presentDecided` ; sinon par la même forme, quand elle ne change rien à son
+ * contenu. Une séance décidée d'un autre type, passée ou réalisée est rendue
+ * telle quelle — la même instance.
+ *
+ * C'est le chemin du planificateur comme de la relève : une séance se pose de
+ * la même façon, qu'elle vienne d'être écrite ou qu'elle attende son jour.
+ */
+export function onTerrain(sessions: readonly PlannedSession[], ctx: TerrainContext): PlannedSession[] {
+  const upcoming = (s: PlannedSession) => s.date >= ctx.today && s.status === 'planned';
+  // La première descente à venir, faute d'aucune de faite : celle qui dit quoi
+  // ménager. Une descente prévue compte dès qu'elle précède — celle d'après
+  // n'est plus une première.
+  const first = ctx.descentsDone > 0
+    ? undefined
+    : [...sessions]
+        .filter((s) => upcoming(s) && s.type === 'downhill')
+        .sort((a, b) => a.date.localeCompare(b.date))[0];
+
+  return sessions.map((s) => {
+    if (!upcoming(s)) return s;
+    if (s.type === 'downhill') {
+      // Une descente décidée l'est dans son contenu, durées comprises.
+      if (s.decision) return s;
+      const exposure = s === first ? firstDescentNote(s.date, sessions) : undefined;
+      const laid = lib.layDescent(s, ctx.model, ctx.terrain, exposure);
+      return laid ? { ...s, ...laid } : s;
+    }
+    if (s.type === 'long_trail') {
+      if (s.decision) return presentDecided(s, ctx);
+      const form = trailForm(s, ctx);
+      return form ? { ...s, ...form } : s;
+    }
+    return s;
+  });
 }

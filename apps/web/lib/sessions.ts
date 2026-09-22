@@ -8,6 +8,7 @@
  */
 import { annexOf } from '@cairn/core/annex';
 import { describeMovement } from '@cairn/core/movements';
+import { climbsBack } from '@cairn/core/terrain';
 import { frDate, prime } from './api';
 import type { DirectiveOriginRow, SessionRow } from './api';
 
@@ -145,3 +146,21 @@ export function originLabel(o: DirectiveOriginRow): string {
     o.source === 'lab_test' ? "test d'effort" : o.source === 'athlete_notes' ? 'notes du dossier' : 'toi';
   return `${what}, ${frDate(o.date)}`;
 }
+
+/**
+ * La récupération d'un bloc, dite comme elle se fait. Une remontée se marche
+ * jusqu'en haut, et la montre attend le bouton tour : sa durée n'est qu'une
+ * estimation. Le reste se chronomètre.
+ */
+export function recoveryText(r: NonNullable<SessionRow['blocks'][number]['recovery']>): string {
+  if (!climbsBack(r)) return `récup ${prime(r.durationS)} ${r.active ? 'active' : 'passive'}`;
+  // La durée repose sur la marche facile du modèle : elle porte sa provenance.
+  const from = r.provenance?.vam ? ` (${PROVENANCE_SHORT[r.provenance.vam] ?? r.provenance.vam})` : '';
+  return `remontée en marchant, environ ${prime(r.durationS)}${from}, tour en haut`;
+}
+
+/** « vite mais maîtrisé » : la tête d'une consigne d'effort, avant ses points de technique. */
+export const effortHead = (effort: string): string => {
+  const head = effort.split(':')[0]!.trim();
+  return `${head.charAt(0).toLocaleLowerCase('fr')}${head.slice(1)}`;
+};

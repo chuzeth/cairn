@@ -24,9 +24,9 @@ import { firstSentence, presentDecided, withHistory } from './presentation.js';
 import { checkReserve, describeRecoveries, describeReserve } from './reserve.js';
 import {
   CLIMB_BREAK_M, CLIMB_MIN_GAIN_M, CLIMB_MIN_GRADE, HOME_GROUND_RADIUS_M, SAME_START_M,
-  detectClimbs, groupRecurring, homeGrounds,
-  type ClimbOccurrence, type OutingStart, type RecurringClimb, type TerrainHint,
+  groupRecurring, homeGrounds, type RecurringClimb,
 } from './terrain.js';
+import { countDescents, readTerrain, terrainHint } from './terrainSessions.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
   eccentricStrengthOf, renderSession, sessionTotals, transformSession,
@@ -180,6 +180,12 @@ const BLOCK_SCHEMA = {
         'à la fois ne sont acceptés que s\'ils concordent.',
     ),
     cadenceTargetSpm: num('Cadence cible, en pas par minute.'),
+    effort: str(
+      "Consigne d'un bloc que ni la FC ni l'allure ne pilotent — une descente : un effort et une technique, ex. " +
+        "« Vite mais maîtrisé : foulée courte et rapide, pieds sous le bassin, regard trois ou quatre mètres " +
+        "devant. » Un bloc qui la porte n'a ni hrRange ni speedRangeMs. Le tronçon où il se court se relève sur " +
+        'le terrain de l\'athlète et ne se saisit pas.',
+    ),
     recovery: {
       type: 'object',
       additionalProperties: false,
@@ -189,7 +195,11 @@ const BLOCK_SCHEMA = {
         durationS: num('Durée de la récupération, en secondes.'),
         zone: str('Zone de la récupération.', { enum: ZONES }),
         active: bool('Trottinée (défaut) ou à l\'arrêt.'),
-        elevationGainM: num('Dénivelé positif franchi pendant la récupération — la remontée d\'une descente.'),
+        elevationGainM: num(
+          "Dénivelé positif franchi pendant la récupération — la remontée d'une descente. Elle se marche, à " +
+            "allure facile : sa durée doit laisser à la marche le temps de le monter, faute de quoi le bloc est " +
+            'refusé avec ce temps ; sur la montre, elle se termine au bouton du tour.',
+        ),
         elevationLossM: num('Dénivelé négatif franchi pendant la récupération — la descente d\'une côte.'),
       },
     },
@@ -1252,6 +1262,7 @@ export async function executeTool(
         today: state.today.date,
         terrain: await terrainHint(athleteId),
         eccentricCircuitsDone: state.eccentricCircuitsDone,
+        descentsDone: await countDescents(athleteId, state.today.date),
       });
 
       // Les semaines que le planificateur a écrites, sans celles d'avant le
@@ -1829,51 +1840,6 @@ const TREND_FR: Record<RecurringClimb['trend'], string> = {
   down: 'en recul',
   unknown: 'indéterminée — moins de trois sorties',
 };
-
-/**
- * Ce que le planificateur sait du terrain : les montées récurrentes de l'année
- * et le départ habituel. C'est par lui qu'une rando-course nomme la montée qui
- * porte son dénivelé.
- */
-async function terrainHint(athleteId: string): Promise<TerrainHint> {
-  const { climbs, outings } = await readTerrain(athleteId, daysAgo(365), iso(new Date()));
-  const home = homeGrounds(outings)[0]?.center;
-  return { climbs: groupRecurring(climbs), ...(home ? { home } : {}) };
-}
-
-/**
- * Lit le terrain dans les traces.
- *
- * Seul endroit qui décompresse les flux pour y chercher autre chose que de la
- * physiologie. Une soixantaine de traces se lisent en quelques centaines de
- * millisecondes : à ce prix-là, rien ne justifie d'en garder une copie qui
- * pourrait vieillir à côté des flux.
- */
-async function readTerrain(athleteId: string, from: string, to: string) {
-  const activities = await db.listActivities(athleteId, { from, to, limit: 500 });
-  const climbs: ClimbOccurrence[] = [];
-  const outings: OutingStart[] = [];
-  let traced = 0;
-  for (const a of activities) {
-    const stored = await db.getStreams(a.id);
-    if (!stored) continue;
-    traced++;
-    const date = a.startDateLocal.slice(0, 10);
-    const start = stored.streams.latlng?.find((p) => p != null);
-    if (start) {
-      outings.push({
-        activityId: a.id,
-        date,
-        start: [start[0], start[1]],
-        elevationGainM: a.totalElevationGainM,
-      });
-    }
-    for (const c of detectClimbs(stored.streams)) {
-      climbs.push({ ...c, activityId: a.id, activityName: a.name, date });
-    }
-  }
-  return { activities, traced, climbs, outings };
-}
 
 /**
  * Dénivelé d'une course visée, ou `null`.

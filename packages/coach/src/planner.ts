@@ -19,7 +19,7 @@ import {
   FULL_ECCENTRIC_ROUNDS, descentAfter, descentReason, eccentricRoundsFor, eccentricVerdicts, progressionReason,
   roundsLabel,
 } from './eccentric.js';
-import { presentDecided, withConstruction } from './presentation.js';
+import { onTerrain, presentDecided, withConstruction } from './presentation.js';
 import { carryDecisions, decisionOn, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
@@ -135,7 +135,7 @@ function selectQualitySessions(input: WeekBuildInput): SessionTemplate[] {
 
   switch (spec.phase) {
     case 'base':
-      out.push(medium ? lib.pyramid(model, [3, 5, 8, 5, 3]) : lib.hillRepeats(model, 8, 90, 0.1));
+      out.push(medium ? lib.pyramid(model, [3, 5, 8, 5, 3]) : lib.hillRepeats(model, 8, 90, 0.1, input.terrain));
       if (slots >= 2) out.push(lib.tempo(model, 20));
       break;
 
@@ -145,7 +145,9 @@ function selectQualitySessions(input: WeekBuildInput): SessionTemplate[] {
         // La tolérance excentrique est le facteur limitant du trail long : quand
         // c'est là que l'athlète veut performer, la descente passe devant le
         // tempo sur le créneau de résistance douce.
-        out.push(longAmbition || i % 2 === 1 ? lib.downhillSession(model, 6, 3) : lib.tempo(model, 25));
+        out.push(
+          longAmbition || i % 2 === 1 ? lib.downhillSession(model, 6, 3, input.terrain) : lib.tempo(model, 25),
+        );
       }
       break;
 
@@ -1149,6 +1151,11 @@ export interface BuildPlanInput {
    * fait : ses premiers circuits commencent à un tour.
    */
   eccentricCircuitsDone?: number;
+  /**
+   * Séances de descente que l'athlète a faites. Absent, il n'en a jamais fait :
+   * la première à venir dit ce que ses courbatures toucheront.
+   */
+  descentsDone?: number;
 }
 
 /**
@@ -1612,7 +1619,18 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   // ajustées à la main. Le report les remet telles qu'elles étaient, ramène
   // celles d'avant le départ, et dit ce qui change autour.
   const carryOver = carryDecisions(previous, fresh, today);
-  const weeks = carryOver.weeks;
+  // Les séances de terrain se posent sur les montées de l'athlète comme le fait
+  // la relève pour une séance déjà écrite : le même chemin, pour que le plan
+  // qu'on enregistre soit celui qu'elle trouvera.
+  const laid = new Map(
+    onTerrain(carryOver.weeks.flatMap((w) => w.sessions), {
+      model: input.model,
+      terrain: input.terrain,
+      today,
+      descentsDone: input.descentsDone ?? 0,
+    }).map((s) => [s.id, s]),
+  );
+  const weeks = carryOver.weeks.map((w) => ({ ...w, sessions: w.sessions.map((s) => laid.get(s.id) ?? s) }));
 
   // La durée d'une semaine se mesure sur ses séances : elle suit donc ce que la
   // course substituée et la reprise des décisions viennent d'y changer. Écrite

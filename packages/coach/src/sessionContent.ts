@@ -43,6 +43,7 @@ const MAX_ELEVATION_GAIN_M = 5_000;
 const MAX_VAM_MH = 2_500;
 const MAX_LABEL_CHARS = 80;
 const MAX_NOTES_CHARS = 400;
+const MAX_EFFORT_CHARS = 200;
 const MAX_ROUNDS = 10;
 const MAX_EXERCISES = 12;
 const MAX_REPS = 200;
@@ -58,17 +59,18 @@ const MAX_REPS = 200;
  * liste, et le marqueur de souplesse effacé par un remplacement de blocs, avec
  * lui la fréquence hebdomadaire que le praticien avait prescrite.
  *
- * `paceRange` et `provenance` sont seuls exclus : le premier est dérivé de
- * `speedRangeMs`, le second dit d'où vient chaque cible et se déduit donc de la
- * façon dont elle a été obtenue. Les laisser écrire, ce serait laisser annoncer
- * « terrain » sur un nombre que personne n'a mesuré.
+ * `paceRange`, `provenance` et `where` sont seuls exclus : le premier est
+ * dérivé de `speedRangeMs`, le second dit d'où vient chaque cible et se déduit
+ * donc de la façon dont elle a été obtenue, le troisième est un tronçon relevé
+ * sur les traces de l'athlète. Les laisser écrire, ce serait laisser annoncer
+ * « terrain » sur un nombre ou un endroit que personne n'a mesuré.
  */
-type DerivedBlockField = 'paceRange' | 'provenance';
+type DerivedBlockField = 'paceRange' | 'provenance' | 'where';
 
 const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockField>, true> = {
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
-  cadenceTargetSpm: true, recovery: true, circuit: true, notes: true,
+  cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true,
 };
 
 type Recovery = NonNullable<SessionBlock['recovery']>;
@@ -181,6 +183,11 @@ function parseBlock(
         `${at}.provenance : la provenance d'une cible se déduit de ce qui l'a produite, elle ne se déclare pas.`,
       );
     }
+    if (key === 'where') {
+      throw new Error(
+        `${at}.where : le tronçon d'une montée se relève sur les traces de l'athlète, il ne se déclare pas.`,
+      );
+    }
     throw new Error(`${at}.${key} : champ inconnu.`);
   }
 
@@ -202,6 +209,22 @@ function parseBlock(
     }
     if (raw.durationS === undefined) {
       throw new Error(`${at}.durationS : requis sur un bloc ${kind} — sa durée est ce qui se prescrit.`);
+    }
+  }
+
+  // Un bloc piloté à l'effort — une descente — a pour consigne un effort et une
+  // technique. Lui prêter la FC et l'allure de sa zone, c'est afficher une cible
+  // qu'on ne peut pas suivre : la FC d'une descente reste basse quoi qu'on
+  // fasse, et une allure à plat n'y veut rien dire.
+  const effort = raw.effort === undefined ? undefined : text(raw.effort, `${at}.effort`, MAX_EFFORT_CHARS);
+  if (effort !== undefined) {
+    if (kind !== undefined) throw new Error(`${at}.effort : un bloc ${kind} ne se court pas.`);
+    const offending = (['hrRange', 'speedRangeMs'] as const).filter((f) => raw[f] !== undefined);
+    if (offending.length > 0) {
+      throw new Error(
+        `${at}.${offending[0]} : un bloc piloté à l'effort ne se pilote ni à la FC ni à l'allure — ` +
+          `sa consigne d'effort les remplace.`,
+      );
     }
   }
 
@@ -265,7 +288,10 @@ function parseBlock(
   // Les cibles omises viennent de la zone. Une cible explicite peut sortir de la
   // bande — un test maximal vise au-delà du plafond de Z4 — mais reste bornée
   // par la physiologie de l'athlète.
-  if (kind === undefined) {
+  if (effort !== undefined) {
+    block.effort = effort;
+    if (vamTargetMh !== undefined) block.provenance = { vam: 'default' };
+  } else if (kind === undefined) {
     const hrRange = raw.hrRange === undefined
       ? ([Math.round(z.hrMin), Math.round(z.hrMax)] as [number, number])
       : range(raw.hrRange, `${at}.hrRange`, 0, model.hrMax, true);
@@ -335,15 +361,6 @@ function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[]): Recov
     zone,
     active: r.active === undefined ? true : boolean(r.active, `${at}.active`),
   };
-  // Une récupération est un segment de la séance : elle porte ce qu'il y a à y
-  // tenir, comme les blocs. Sans cela, « récup 90 s active » s'exécute au juger,
-  // et le bilan de réserve anaérobie doit deviner la vitesse au lieu de la lire.
-  if (z.speedMaxMs != null) {
-    recovery.hrRange = [Math.round(z.hrMin), Math.round(z.hrMax)];
-    recovery.speedRangeMs = [z.speedMinMs, z.speedMaxMs];
-    recovery.paceRange = [formatPace(z.speedMaxMs), formatPace(z.speedMinMs)];
-    recovery.provenance = { hr: hrProvenanceOf(z), speed: speedProvenanceOf(z) };
-  }
   // La remontée d'une descente, la descente d'une côte : une récupération qui
   // franchit du dénivelé le déclare, et son temps se contrôle comme un autre.
   if (r.elevationGainM !== undefined) {
@@ -351,6 +368,21 @@ function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[]): Recov
   }
   if (r.elevationLossM !== undefined) {
     recovery.elevationLossM = Math.round(number(r.elevationLossM, `${at}.elevationLossM`, 0, MAX_ELEVATION_GAIN_M));
+  }
+  // Une récupération est un segment de la séance : elle porte ce qu'il y a à y
+  // tenir, comme les blocs. Sans cela, « récup 90 s active » s'exécute au juger,
+  // et le bilan de réserve anaérobie doit deviner la vitesse au lieu de la lire.
+  // Une remontée se marche : sa plage cardiaque dit ce qu'est « facile », une
+  // allure à plat n'y dirait rien.
+  if (z.speedMaxMs != null) {
+    recovery.hrRange = [Math.round(z.hrMin), Math.round(z.hrMax)];
+    if ((recovery.elevationGainM ?? 0) > 0) {
+      recovery.provenance = { hr: hrProvenanceOf(z) };
+    } else {
+      recovery.speedRangeMs = [z.speedMinMs, z.speedMaxMs];
+      recovery.paceRange = [formatPace(z.speedMaxMs), formatPace(z.speedMinMs)];
+      recovery.provenance = { hr: hrProvenanceOf(z), speed: speedProvenanceOf(z) };
+    }
   }
   return recovery;
 }

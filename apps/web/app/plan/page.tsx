@@ -6,10 +6,10 @@ import {
   type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
-  circuitText, CRITERION_LABELS, originLabel, provenanceText, TYPE_COLORS, TYPE_LABELS,
+  circuitText, CRITERION_LABELS, originLabel, provenanceText, recoveryText, TYPE_COLORS, TYPE_LABELS,
 } from '@/lib/sessions';
 import {
-  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory,
+  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory, WhereLine,
 } from '@/components/ui';
 
 /**
@@ -245,7 +245,8 @@ export default function PlanPage() {
                             {b.distanceM ? ` ${num(b.distanceM)} m` : ''}
                           </strong>
                           <span className="small muted">{b.label}</span>
-                          <Badge>{b.zone}</Badge>
+                          {/* Un bloc piloté à l'effort n'a pas de zone à tenir. */}
+                          {!b.effort && <Badge>{b.zone}</Badge>}
                           {b.hrRange && (
                             <span className="tiny mono faint">
                               {b.hrRange[0] > 0 ? `${num(b.hrRange[0])}-${num(b.hrRange[1])}` : `< ${num(b.hrRange[1])}`} bpm
@@ -266,7 +267,7 @@ export default function PlanPage() {
                           )}
                           {b.recovery && (
                             <span className="tiny faint">
-                              récup {blockDuration(b.recovery.durationS)} {b.recovery.active ? 'active' : 'passive'}
+                              {recoveryText(b.recovery)}
                               {b.recovery.paceRange &&
                                 ` · ${b.recovery.paceRange[1] === '—'
                                   ? `> ${b.recovery.paceRange[0]}`
@@ -274,6 +275,12 @@ export default function PlanPage() {
                             </span>
                           )}
                         </div>
+                        {b.effort && <div className="small" style={{ marginTop: 3 }}>{b.effort}</div>}
+                        {b.where && (
+                          <div className="tiny" style={{ marginTop: 3 }}>
+                            <WhereLine where={b.where} /> — sur {b.where.climb}.
+                          </div>
+                        )}
                         {b.circuit && (
                           <div className="tiny" style={{ marginTop: 3 }}>{circuitText(b.circuit)}</div>
                         )}

@@ -131,13 +131,14 @@ describe('Le titre distingue ce qui se court de ce qui s\'ajoute', () => {
 /** Une montée récurrente telle que le terrain la rend. */
 function climb(over: Partial<RecurringClimb> & Pick<RecurringClimb, 'start' | 'gainM' | 'lengthM'>): RecurringClimb {
   const occurrence: ClimbOccurrence = {
-    startIndex: 0, endIndex: 1, start: over.start, startAltitudeM: 172, lengthM: over.lengthM, gainM: over.gainM,
-    grade: over.gainM / over.lengthM, durationS: 600, vamMh: 800, avgHr: 150, provenance: 'field',
-    activityId: 'strava-1', activityName: 'Trail dans l’après-midi', date: '2026-08-17',
+    startIndex: 0, endIndex: 1, start: over.start, top: [45.763824, 4.822308], startAltitudeM: 172,
+    lengthM: over.lengthM, gainM: over.gainM, grade: over.gainM / over.lengthM, durationS: 600, vamMh: 800, avgHr: 150,
+    profile: [], provenance: 'field', activityId: 'strava-1', activityName: 'Trail dans l’après-midi', date: '2026-08-17',
   };
   return {
     grade: Math.round((over.gainM / over.lengthM) * 1000) / 1000, passages: 4, outings: 4,
-    firstDate: '2026-06-13', lastDate: '2026-08-17', bestVamMh: 915, best: occurrence, medianVamMh: 869,
+    firstDate: '2026-06-13', lastDate: '2026-08-17', bestVamMh: 915, best: occurrence, latest: occurrence,
+    medianVamMh: 869,
     trend: 'flat', activityNames: ['Trail dans l’après-midi'], occurrences: [occurrence], provenance: 'field',
     ...over,
   };
@@ -175,10 +176,19 @@ describe('Une séance de terrain se prescrit comme elle se court', () => {
     };
     const s = lib.longTrail(PIERRE_MODEL, 180, 680, terrain);
     expect(s.blocks[0]!.notes).toContain(
-      "Les 680 m, c'est 6 passages de ta montée de 940 m à 13 % (121 m par passage, 726 m en tout), " +
-        "à 510 m à l'ouest de ton départ habituel, courue lors de 4 sorties — la dernière le 17/08 " +
-        '(« Trail dans l’après-midi »).',
+      "Les 680 m, c'est 6 passages de ta montée de 940 m, du pied au haut : 121 m par passage, 726 m en tout.",
     );
+    // La montée, et ses deux bouts sur la carte.
+    expect(s.blocks[0]!.where).toEqual({
+      climb:
+        "ta montée de 940 m à 13 % (121 m), à 510 m à l'ouest de ton départ habituel, courue lors de 4 sorties — " +
+        'la dernière le 17/08 (« Trail dans l’après-midi »)',
+      from: { role: 'pied', at: [45.764389, 4.82914] },
+      to: { role: 'haut', at: [45.763824, 4.822308] },
+      lengthM: 942,
+      grade: 0.128,
+      provenance: 'field',
+    });
   });
 
   it('ne nomme rien quand aucune montée ne tombe juste', () => {

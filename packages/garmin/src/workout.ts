@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
-  describeMovement, sessionDuration, type PlannedSession, type SessionBlock, type SessionType,
+  climbsBack, coordinates, describeMovement, sessionDuration, stretchSpan, type PlannedSession, type SessionBlock,
+  type SessionType,
 } from '@cairn/core';
 
 /**
@@ -251,18 +252,47 @@ function mainStep(block: SessionBlock, type: SessionType): WatchStep {
   }
   const target = targetFor(alarmRule(type, block, 'work'), block.hrRange);
   const extra = end.type === 'distance' && block.durationS ? [`environ ${sessionDuration(block.durationS)}`] : [];
+  // La consigne d'effort et le tronçon passent avant les conseils : c'est ce
+  // qu'une descente a à tenir, et où elle fait demi-tour.
+  const said = [block.effort, block.where ? whereNote(block) : '', block.notes].filter(Boolean).join(' ');
   return {
     kind: 'step',
     type: roleOf(block.label),
     end,
     target,
-    note: note(block.label, [...quantities(block, target), ...extra], block.notes),
+    note: note(block.label, [...quantities(block, target), ...extra], said || undefined),
   };
 }
 
+/** « Du haut au demi-tour, 405 m à 19 % ; demi-tour 45.766158, 4.825112. » */
+function whereNote(block: SessionBlock): string {
+  const w = block.where!;
+  const span = stretchSpan(w);
+  return `${span[0]!.toUpperCase()}${span.slice(1)} ; ${w.to.role} ${coordinates(w.to)}.`;
+}
+
+/**
+ * Une récupération qui remonte se termine au bouton du tour, en haut : la
+ * montre attend l'athlète au lieu de lancer la descente suivante pendant qu'il
+ * monte encore. Sa durée n'est qu'une estimation, et se lit dans la note.
+ */
 function recoveryStep(block: SessionBlock, type: SessionType): WatchStep {
   const r = block.recovery!;
   const target = targetFor(alarmRule(type, block, 'recovery'), r.hrRange);
+  if (climbsBack(r)) {
+    const top = block.where ? `jusqu'au ${block.where.from.role}` : "jusqu'en haut";
+    return {
+      kind: 'step',
+      type: 'recovery',
+      end: { type: 'lap' },
+      target,
+      note: note(
+        `Remontée en marchant ${top}`,
+        [...quantities(r, target), `environ ${sessionDuration(r.durationS)}`],
+        'Tour en haut : la descente suivante part de là.',
+      ),
+    };
+  }
   return {
     kind: 'step',
     type: r.active ? 'recovery' : 'rest',

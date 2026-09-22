@@ -972,6 +972,39 @@ export interface TargetProvenance {
   vam?: ParameterProvenance;
 }
 
+/**
+ * Un point d'une montée de l'athlète, relevé sur une de ses traces.
+ *
+ * Il n'a pas de nom : Cairn n'a pas de géocodage, et un toponyme inventé serait
+ * une donnée fausse au milieu de mesures. Il a un rôle dans la séance et des
+ * coordonnées, par lesquelles il s'ouvre sur une carte.
+ */
+export interface TerrainPoint {
+  role: 'pied' | 'haut' | 'demi-tour';
+  /** Latitude, longitude. */
+  at: [number, number];
+}
+
+/**
+ * Le tronçon d'une montée réelle où se court un bloc.
+ *
+ * Il dit ce qu'une séance de terrain doit dire pour se courir sans rien
+ * deviner : quelle montée, d'où à où, sur quelle longueur, à quelle pente. Le
+ * dénivelé d'une répétition est celui du bloc. Mesuré sur une trace de
+ * l'athlète — un endroit où il est passé —, il est de provenance `field`.
+ */
+export interface TerrainStretch {
+  /** La montée, désignée comme l'athlète peut la retrouver : ses chiffres, la dernière sortie où il l'a prise. */
+  climb: string;
+  from: TerrainPoint;
+  to: TerrainPoint;
+  /** Longueur du tronçon, m. */
+  lengthM: number;
+  /** Pente moyenne du tronçon, fraction positive. */
+  grade: number;
+  provenance: ParameterProvenance;
+}
+
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */
 export interface SessionBlock {
   label: string;
@@ -1004,11 +1037,22 @@ export interface SessionBlock {
   /** Vitesse ascensionnelle cible, m/h, pour les blocs en côte. */
   vamTargetMh?: number;
   cadenceTargetSpm?: number;
+  /**
+   * La consigne d'un bloc que ni la FC ni l'allure ne pilotent : un effort et
+   * une technique. Une descente en est un — la FC y reste basse quoi qu'on y
+   * fasse, et une allure à plat n'y veut rien dire. Un bloc qui la porte n'a ni
+   * plage cardiaque ni allure.
+   */
+  effort?: string;
+  /** Où le bloc se court, quand une montée de l'athlète en porte le dénivelé. */
+  where?: TerrainStretch;
   /** D'où viennent les cibles du bloc. */
   provenance?: TargetProvenance;
   /**
    * Récupération suivant chaque répétition. Elle porte son propre dénivelé
    * quand elle en a un : la remontée d'une descente, la descente d'une côte.
+   * Une récupération qui remonte se marche, et se termine en haut, pas au
+   * chronomètre : sa durée est ce que la marche y prend, une estimation.
    */
   recovery?: {
     durationS: number;
@@ -1222,7 +1266,9 @@ export interface PlanRevision {
   at: string;
   trigger:
     | 'initial' | 'new_activity' | 'chat_request' | 'missed_session'
-    | 'readiness' | 'goal_change' | 'declared_absence';
+    | 'readiness' | 'goal_change' | 'declared_absence'
+    /** Des séances de terrain posées sur les montées de l'athlète, sans reconstruction. */
+    | 'terrain';
   /** Qui tenait l'outil. Absent des révisions écrites avant qu'on le demande. */
   origin?: DecisionOrigin;
   summary: string;

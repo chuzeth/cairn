@@ -1,5 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
+import type { TerrainStretch } from '@cairn/core';
+import { mapUrl } from '@cairn/core/terrain';
 import { frDate, frStamp, num } from '@/lib/api';
 import type {
   DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, Readiness, ReadinessComponent, ReadinessSource,
@@ -400,5 +402,22 @@ export function SessionHistory({ history }: { history: NonNullable<SessionRow['h
         </section>
       ))}
     </div>
+  );
+}
+
+/**
+ * Où se court un bloc : « du haut au demi-tour, 405 m à 19 % », chaque bout
+ * ouvert sur la carte par ses coordonnées — c'est là qu'on fait demi-tour, et
+ * rien d'autre ne le dit aussi exactement.
+ */
+export function WhereLine({ where }: { where: TerrainStretch }) {
+  const link = (p: TerrainStretch['from']) => (
+    <a href={mapUrl(p)} className="m-inline" target="_blank" rel="noreferrer">{p.role}</a>
+  );
+  const pct = Math.round(where.grade * 100);
+  return (
+    <>
+      Du {link(where.from)} au {link(where.to)}, {num(where.lengthM)}{'\u00a0'}m à {pct}{'\u00a0'}%
+    </>
   );
 }

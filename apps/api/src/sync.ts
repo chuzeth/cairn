@@ -2,7 +2,8 @@ import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
-  generateActivityInsight, loadAthleteState, rebuildPhysiologyModel, rematchRecent, type AthleteState,
+  generateActivityInsight, layPlanOnTerrain, loadAthleteState, rebuildPhysiologyModel, rematchRecent,
+  type AthleteState,
 } from '@cairn/coach';
 import { StravaClient, StravaRateLimitError, ingestStreams, isRunLike, mapActivity } from '@cairn/strava';
 import { env } from './env.js';
@@ -268,6 +269,12 @@ export async function backfill(
       const matched = await rematchRecent(athleteId, model, new Date().toISOString().slice(0, 10));
       if (matched.length > 0) await adjustPlan(athleteId, await loadAthleteState(athleteId));
     }
+
+    // Les séances de terrain à venir se posent sur les montées du jour, à chaque
+    // relève et sans reconstruction : une séance écrite avant que le terrain ne
+    // la situe — ou avant qu'une remontée ne se chronomètre à la marche — le
+    // devient ici. Une séance déjà posée ne change plus.
+    await layPlanOnTerrain(athleteId, new Date().toISOString().slice(0, 10));
 
     progress.message = progress.rateLimited
       ? `Quota Strava presque atteint : ${progress.ingested} activité(s) importée(s). Relance l'import dans un quart d'heure pour continuer.`

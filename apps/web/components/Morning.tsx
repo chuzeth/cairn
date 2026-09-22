@@ -9,12 +9,13 @@ import {
 import { QUESTIONS } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
 import {
-  CRITERION_LABELS, circuitText, originLabel, provenanceText, runAndAnnex, sessionHeadline, slopeOf,
+  CRITERION_LABELS, circuitText, effortHead, originLabel, provenanceText, recoveryText, runAndAnnex, sessionHeadline,
+  slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale, unweighed,
-  Waiting,
+  Waiting, WhereLine,
 } from '@/components/ui';
 
 /**
@@ -303,7 +304,15 @@ function Session({ session }: { session: SessionRow }) {
             <span className="m-block-body">
               {blockLabel(b.label)}
               {hrText(b) && <span className="m-faint"> · {hrText(b)}</span>}
-              {shape(b) && <span className="m-block-note">{nbsp(shape(b))}</span>}
+              {/* Une descente se pilote à l'effort : sa consigne tient la place de la FC. */}
+              {b.effort && <span className="m-faint"> · {nbsp(effortHead(b.effort))}</span>}
+              {(b.where || shape(b)) && (
+                <span className="m-block-note">
+                  {b.where && <WhereLine where={b.where} />}
+                  {b.where && shape(b) && ' · '}
+                  {shape(b) && nbsp(shape(b))}
+                </span>
+              )}
               {said && (targets(b) || notes[i]) && (
                 <span className="m-block-said">
                   {targets(b) && <span className="m-faint">{nbsp(targets(b))} </span>}
@@ -394,10 +403,9 @@ function hrText(b: SessionRow['blocks'][number]): string {
  */
 function shape(b: SessionRow['blocks'][number]): string {
   const parts: string[] = [];
-  if (b.recovery && b.recovery.durationS > 0) {
-    parts.push(`récup ${prime(b.recovery.durationS)} ${b.recovery.active ? 'active' : 'passive'}`);
-  }
-  if (b.distanceM) parts.push(`${num(b.distanceM)} m`);
+  if (b.recovery && b.recovery.durationS > 0) parts.push(recoveryText(b.recovery));
+  // Posé sur un tronçon, le bloc dit sa longueur avec lui.
+  if (b.distanceM && !b.where) parts.push(`${num(b.distanceM)} m`);
   return parts.join(' · ');
 }
 
@@ -411,6 +419,7 @@ function shape(b: SessionRow['blocks'][number]): string {
  */
 function targets(b: SessionRow['blocks'][number]): string {
   const parts: string[] = [];
+  if (b.effort) parts.push(b.effort.replace(/\.$/, ''));
   if (b.paceRange) {
     parts.push(b.paceRange[1] === '—' ? `plus lent que ${b.paceRange[0]}/km` : `${b.paceRange[0]}–${b.paceRange[1]}/km`);
   }
@@ -430,6 +439,8 @@ function targets(b: SessionRow['blocks'][number]): string {
   // au moment de décider si on tient le chiffre ou ses sensations.
   const from = provenanceText(b.provenance);
   if (parts.length > 0 && from) parts.push(`d'après ${from}`);
+  // La montée entière, telle qu'on la retrouve : le tronçon est sur la ligne du bloc.
+  if (b.where) parts.push(`sur ${b.where.climb}`);
   return parts.join(' · ');
 }
 
@@ -444,6 +455,9 @@ function blockNote(b: SessionRow['blocks'][number]): string {
   if (!b.notes) return '';
   return b.vamTargetMh || b.hrRange ? b.notes.replace(/^\s*Cible[^.]*\.\s*/i, '') : b.notes;
 }
+
+/** Part de la largeur du tracé qu'occupe le repère de fin, aligné à droite. */
+const END_MARK_SPAN = 0.13;
 
 /**
  * Le tracé.
@@ -480,7 +494,14 @@ function Trace({
     else paths.push({ d: `M${from}L${to}`, tone: s.tone });
   }
 
-  const marks = p.marks.filter((m, i, all) => i === 0 || m.at - all[i - 1]!.at > 0.08);
+  // Le dernier repère s'aligne à droite et prend la largeur de « 1 h 35 » :
+  // celui qui le précède de trop près s'efface, pas lui — la fin dit la durée.
+  const marks = p.marks.filter(
+    (m, i, all) =>
+      i === 0 ||
+      i === all.length - 1 ||
+      (m.at - all[i - 1]!.at > 0.08 && all[all.length - 1]!.at - m.at > END_MARK_SPAN),
+  );
 
   return (
     <svg

@@ -149,6 +149,8 @@ const occurrence = (
 ): ClimbOccurrence => ({
   startIndex: 0,
   endIndex: 360,
+  top: null,
+  profile: [],
   startAltitudeM: 200,
   lengthM: 600,
   gainM: 90,

@@ -100,12 +100,15 @@ describe('Construction', () => {
     expect(s.amendments?.join(' ')).toMatch(/Dénivelé ramené de 1384 à \d+ m/);
   });
 
-  it('laisse à la remontée d\'une descente le temps que la courbe accorde', () => {
-    // 90 m remontés en 4 min : au-delà de ce que Pierre a jamais tenu sur cette durée.
+  it('laisse à la remontée d\'une descente le temps que la marche y prend', () => {
+    // 90 m remontés en 4 min exigeaient plus que ce que Pierre tient à fond :
+    // la remontée se marche désormais, et la descente garde ses 540 m.
     const s = lib.downhillSession(PIERRE_MODEL, 6, 3);
-    expect(s.amendments?.[0]).toMatch(/récupération/);
+    expect(s.amendments).toBeUndefined();
     expect(lib.elevationLossOf(s.blocks)).toBe(s.elevationGainM);
-    expect(s.elevationGainM).toBeLessThan(540);
+    expect(s.elevationGainM).toBe(540);
+    const rep = s.blocks.find((b) => b.repeat === 6)!;
+    expect((90 / rep.recovery!.durationS) * 3600).toBeLessThan(700);
   });
 });
 

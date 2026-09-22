@@ -45,6 +45,13 @@ const FLAT_IMPACT_PER_M = 1 / 2500;
  */
 const DESCENT_SEVERITY = 1.25;
 
+/**
+ * Intensité d'une récupération active, en part de la vitesse au SV2 : celle à
+ * laquelle la charge prévue la compte. Une durée de récupération qui en
+ * supposerait une autre ferait décrire le même segment par deux intensités.
+ */
+export const ACTIVE_RECOVERY_INTENSITY = 0.55;
+
 /** TRIMP de Banister (pondération exponentielle masculine, Morton et al. 1990). */
 export function trimp(samples: readonly LoadSample[], model: PhysiologyModel, sex: 'M' | 'F' = 'M'): number {
   const k = sex === 'M' ? 1.92 : 1.67;

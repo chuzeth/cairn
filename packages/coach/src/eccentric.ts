@@ -42,9 +42,13 @@ type Dated = { date: string; type: SessionType };
 /** Une séance qui aura lieu : à faire, ou déplacée. */
 const standing = (s: Pick<PlannedSession, 'status'>) => s.status === 'planned' || s.status === 'moved';
 
-/** La première séance qui descend dans les 48 h qui suivent `date`. */
-export function descentAfter<T extends Dated>(date: string, sessions: Iterable<T>): T | undefined {
-  const last = addDays(date, CLEARANCE_DAYS);
+/** La première séance qui descend dans les `days` jours qui suivent `date` — 48 h par défaut. */
+export function descentAfter<T extends Dated>(
+  date: string,
+  sessions: Iterable<T>,
+  days: number = CLEARANCE_DAYS,
+): T | undefined {
+  const last = addDays(date, days);
   let found: T | undefined;
   for (const s of sessions) {
     if (!(s.type in DESCENDING) || s.date <= date || s.date > last) continue;
@@ -116,6 +120,24 @@ export const progressionReason = (rank: number): string =>
   `${ORDINALS[rank] ?? `${rank + 1}e`} circuit excentrique, et un premier travail de ce type donne des ` +
   `courbatures qui culminent 24 à 72 h après. La répétition protège dès la séance suivante : un tour de plus ` +
   `toutes les deux séances, jusqu'aux ${FULL_ECCENTRIC_ROUNDS} du dossier.`;
+
+/** Jours où culminent les courbatures d'une première exposition : jusqu'à 72 h après. */
+const SORENESS_DAYS = 3;
+
+/**
+ * Ce qu'une première séance de descente doit dire à l'athlète : la consigne est
+ * « vite mais maîtrisé », et pour une première exposition, c'est « maîtrisé »
+ * qui l'emporte — les courbatures culminent 24 à 72 h après, et la séance qui
+ * descend dans cet intervalle les porterait. `sessions` est le plan autour
+ * d'elle ; une séance qui ne tiendra pas n'y compte pas.
+ */
+export function firstDescentNote(date: string, sessions: Iterable<Dated & Pick<PlannedSession, 'status'>>): string {
+  const next = descentAfter(date, [...sessions].filter(standing), SORENESS_DAYS);
+  return (
+    `Première séance de descente : « maîtrisé » l'emporte sur « vite » — ses courbatures culmineront 24 à 72 h ` +
+    `après${next ? `, pendant ${nameDescent(next)}` : ''}.`
+  );
+}
 
 /** « 1 tour », « 2 tours ». */
 export const roundsLabel = (n: number): string => `${n} tour${n > 1 ? 's' : ''}`;

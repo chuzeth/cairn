@@ -1,5 +1,5 @@
 import { sessionDuration } from '@cairn/core/format';
-import type { EccentricMovement } from '@cairn/core';
+import type { EccentricMovement, TerrainStretch } from '@cairn/core';
 
 /**
  * Les appels partent de l'origine qui a servi la page — `/api/...`, jamais
@@ -521,6 +521,10 @@ export interface SessionRow {
     elevationGainM?: number; elevationLossM?: number;
     hrRange?: [number, number]; paceRange?: [string, string]; vamTargetMh?: number;
     cadenceTargetSpm?: number; notes?: string;
+    /** La consigne d'un bloc que ni la FC ni l'allure ne pilotent — une descente : un effort et une technique. */
+    effort?: string;
+    /** Où le bloc se court : un tronçon d'une montée de l'athlète, chaque bout ouvert sur la carte. */
+    where?: TerrainStretch;
     /** D'où vient chaque cible du bloc. */
     provenance?: { hr?: string; speed?: string; vam?: string };
     /**

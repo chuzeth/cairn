@@ -3,6 +3,7 @@ import { weakestProvenance } from '@cairn/core';
 import { durabilityFactor } from './durability.js';
 import { descentSpeedCeiling } from './environment.js';
 import { FLAT_RUNNING_COST, locomotionCost, speedForMetabolicPower, vam } from './grade.js';
+import { ACTIVE_RECOVERY_INTENSITY } from './load.js';
 import { interpolateCurve, meanMaximal, type MmpCurve } from './mmp.js';
 import { fractionalUtilization } from './prediction.js';
 
@@ -330,6 +331,25 @@ function referenceVam(model: PhysiologyModel, direction: VerticalDirection, dura
     return Math.max(...REFERENCE_GRADES.map((g) => vam(speedForMetabolicPower(power, g), g)));
   }
   return f * REFERENCE_DESCENT_MH;
+}
+
+/**
+ * La vitesse ascensionnelle d'une remontée facile, sur une pente donnée.
+ *
+ * Une récupération qui remonte se fait à allure facile : la puissance
+ * métabolique d'une récupération active (`ACTIVE_RECOVERY_INTENSITY` de la
+ * vitesse au SV2), dépensée sur cette pente — en marchant, dès qu'elle est
+ * raide. Pas la courbe de montée : elle dit ce que l'athlète tient à fond, et
+ * une remontée de 78 m en 4 min, que la courbe laissait passer, demandait
+ * 1 170 m/h à un athlète dont le meilleur passage sur cette montée est à
+ * 915 m/h. La provenance est celle de la vitesse au SV2.
+ */
+export function easyClimbRate(model: PhysiologyModel, grade: number): VerticalBound {
+  const power = FLAT_RUNNING_COST * ACTIVE_RECOVERY_INTENSITY * model.vt2.speedMs;
+  return {
+    vamMh: vam(speedForMetabolicPower(power, grade), grade),
+    provenance: model.provenance?.['vt2.speedMs'] ?? 'default',
+  };
 }
 
 /** Plafond vertical d'un trailer de référence en terrain moyen, sur la pente la plus favorable, m/h. */

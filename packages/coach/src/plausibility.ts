@@ -1,6 +1,6 @@
 import type { ParameterProvenance, PhysiologyModel, SessionBlock, SessionType } from '@cairn/core';
 import { PROVENANCE_FR, sessionDuration, weakestProvenance } from '@cairn/core';
-import { verticalCapacity, type VerticalBound, type VerticalCapacity } from '@cairn/physiology';
+import { easyClimbRate, verticalCapacity, type VerticalBound, type VerticalCapacity } from '@cairn/physiology';
 
 /**
  * Plausibilité verticale d'une séance.
@@ -31,7 +31,16 @@ import { verticalCapacity, type VerticalBound, type VerticalCapacity } from '@ca
 export interface AthleteVertical {
   climb: VerticalCapacity;
   descent: VerticalCapacity;
+  /**
+   * Ce qu'une remontée de récupération monte à l'heure, à allure facile, sur
+   * une pente — sur la plus favorable quand aucune n'est donnée : c'est la
+   * borne qui ne refuse que l'impossible.
+   */
+  easy(grade?: number): VerticalBound;
 }
+
+/** Pentes sur lesquelles une remontée sans tronçon est jugée : la plus favorable l'emporte. */
+const EASY_GRADES = Array.from({ length: 41 }, (_, i) => 0.05 + i * 0.01);
 
 const byModel = new WeakMap<PhysiologyModel, AthleteVertical>();
 
@@ -45,12 +54,18 @@ export function verticalOf(model: PhysiologyModel): AthleteVertical {
   if (known) return known;
   let climb: VerticalCapacity | undefined;
   let descent: VerticalCapacity | undefined;
+  let easiest: VerticalBound | undefined;
   const vertical: AthleteVertical = {
     get climb() {
       return (climb ??= verticalCapacity(model, 'climb'));
     },
     get descent() {
       return (descent ??= verticalCapacity(model, 'descent'));
+    },
+    easy(grade?: number) {
+      if (grade != null && grade > 0) return easyClimbRate(model, grade);
+      easiest ??= EASY_GRADES.map((g) => easyClimbRate(model, g)).reduce((a, b) => (b.vamMh > a.vamMh ? b : a));
+      return easiest;
     },
   };
   if (cacheable) byModel.set(model, vertical);
@@ -148,6 +163,8 @@ export interface VerticalSegment {
   /** Dénivelés déjà franchis quand il commence, m. */
   gainBeforeM: number;
   lossBeforeM: number;
+  /** Pente du tronçon où le bloc se court, quand un tronçon le situe. */
+  grade?: number;
 }
 
 export interface SegmentVerdict extends VerticalSegment {
@@ -168,6 +185,12 @@ export interface SegmentVerdict extends VerticalSegment {
   descentBoundNow?: VerticalBound;
   /** Ce qu'une prescription peut exiger au plus sur cette durée, m/h : la borne de l'instant, moins la marge. */
   ceilingMh?: number;
+  /**
+   * Sur une récupération qui remonte, la marche facile qui la borne : elle se
+   * fait à allure facile, pas au mieux de la courbe de montée.
+   */
+  easyBound?: VerticalBound;
+  easyS?: number;
   /** Provenance des temps minimaux : la plus faible. */
   provenance: ParameterProvenance;
   /** Dans la borne de l'instant : l'athlète peut l'exécuter. */
@@ -203,6 +226,7 @@ export function verticalSegments(blocks: readonly SessionBlock[]): VerticalSegme
         block: i, part: 'recovery', label: `${b.label} — récupération`, repeat, durationS: rest.s,
         gainM: rest.gain, lossM: rest.loss,
         startS: last.s + work.s, gainBeforeM: last.gain + work.gain, lossBeforeM: last.loss + work.loss,
+        ...(b.where ? { grade: b.where.grade } : {}),
       });
     }
     clockS += repeat * (work.s + rest.s);
@@ -219,7 +243,12 @@ export function judgeSegment(s: VerticalSegment, vertical: AthleteVertical): Seg
   const keep = 1 - PRESCRIPTION_MARGIN;
   const up = climb?.timeFor(s.gainM / keep);
   const down = descent?.timeFor(s.lossM / keep);
-  const climbS = up?.durationS ?? 0;
+  // Une récupération qui remonte se fait à allure facile : c'est la marche qui
+  // la borne, pas le meilleur de la courbe. Elle ne se prescrit pas en deçà du
+  // temps que la marche y prend — sans marge : c'est déjà une allure facile.
+  const easyBound = s.part === 'recovery' && s.gainM > 0 ? vertical.easy(s.grade) : undefined;
+  const easyS = easyBound && easyBound.vamMh > 0 ? (s.gainM / easyBound.vamMh) * 3600 : undefined;
+  const climbS = Math.max(up?.durationS ?? 0, easyS ?? 0);
   const descentS = down?.durationS ?? 0;
   const minimalS = climbS + descentS;
   const within = (seconds: number) => s.durationS > 0 && seconds <= s.durationS + TOLERANCE_S;
@@ -228,7 +257,9 @@ export function judgeSegment(s: VerticalSegment, vertical: AthleteVertical): Seg
   // l'impossible ne se cherche que pour ce qui ne la laisse pas.
   const feasible =
     prescribable ||
-    within((climb?.timeFor(s.gainM).durationS ?? 0) + (descent?.timeFor(s.lossM).durationS ?? 0));
+    within(
+      Math.max(climb?.timeFor(s.gainM).durationS ?? 0, easyS ?? 0) + (descent?.timeFor(s.lossM).durationS ?? 0),
+    );
   const perHour = (m: number) => (s.durationS > 0 ? Math.round((m / s.durationS) * 3600) : Infinity);
   const onlyUp = s.gainM > 0 && s.lossM <= 0;
   const onlyDown = s.lossM > 0 && s.gainM <= 0;
@@ -244,6 +275,7 @@ export function judgeSegment(s: VerticalSegment, vertical: AthleteVertical): Seg
     ...(onlyUp ? { climbBound: vertical.climb.at(s.durationS), climbBoundNow: now } : {}),
     ...(onlyDown ? { descentBound: vertical.descent.at(s.durationS), descentBoundNow: now } : {}),
     ...(now ? { ceilingMh: Math.round(now.vamMh * keep) } : {}),
+    ...(easyBound && easyS != null ? { easyBound, easyS } : {}),
     provenance: first ? weakestProvenance(first, ...rest) : 'default',
     feasible,
     prescribable,
@@ -268,6 +300,14 @@ export function describeVerdict(v: SegmentVerdict): string {
     return `${where} : un dénivelé ne se prescrit que sur une durée, et ce segment n'en a pas.`;
   }
   const margin = `${Math.round(PRESCRIPTION_MARGIN * 100)} %`;
+  // La marche facile a lié la remontée : c'est elle qu'on nomme.
+  if (v.easyBound && v.easyS != null && v.easyS >= v.climbS - TOLERANCE_S && v.lossM <= 0) {
+    return (
+      `${where} : ${v.gainM} m de D+ en ${minutes(v.durationS)} exigent ${v.climbMh} m/h ; une récupération qui ` +
+      `remonte se fait à allure facile, ${Math.round(v.easyBound.vamMh)} m/h en marchant d'après ta vitesse au SV2 ` +
+      `(${PROVENANCE_FR[v.easyBound.provenance]}). Il faut au moins ${minutes(Math.ceil(v.easyS))} pour ce dénivelé.`
+    );
+  }
   const instant =
     v.startS > 0
       ? `à ${minutes(v.startS)} de séance, après ${v.gainBeforeM} m de D+` +
