@@ -166,6 +166,12 @@ export default function PlanPage() {
                                 </div>
                               )}
                               {s.status === 'completed' && <span className="plan-status" data-tone="done">✓ faite</span>}
+                              {/* Faite la veille ou le lendemain : elle est à son jour réel, et dit celui du plan. */}
+                              {s.plannedDate && (
+                                <div className="plan-status" data-tone="mute" style={{ whiteSpace: 'normal' }}>
+                                  prévue le {frDate(s.plannedDate)}
+                                </div>
+                              )}
                               {s.status === 'replaced' && <span className="plan-status" data-tone="off">remplacée</span>}
                               {s.status === 'missed' && <span className="plan-status" data-tone="off">manquée</span>}
                               {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait

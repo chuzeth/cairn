@@ -1,8 +1,8 @@
-import type { Activity } from '@cairn/core';
+import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
-  generateActivityInsight, loadAthleteState, rebuildPhysiologyModel,
+  generateActivityInsight, loadAthleteState, rebuildPhysiologyModel, rematchRecent,
 } from '@cairn/coach';
 import { StravaClient, StravaRateLimitError, ingestStreams, isRunLike, mapActivity } from '@cairn/strava';
 import { env } from './env.js';
@@ -243,8 +243,9 @@ export async function backfill(
 
     // Ré-estimation unique en fin d'import, puis ré-analyse des séances avec
     // le modèle consolidé.
+    let model: PhysiologyModel | null = null;
     if (progress.ingested > 0) {
-      const model = await rebuildPhysiologyModel(athleteId);
+      model = await rebuildPhysiologyModel(athleteId);
       // Les séances qui viennent d'entrer ont été analysées avec le modèle
       // précédent. Elles ne sont pas « périmées » au sens du moteur — même
       // version — mais elles ont été jugées à l'aune d'un modèle qu'elles
@@ -252,6 +253,12 @@ export async function backfill(
       const stale = await db.findStaleAnalyses(athleteId, 400);
       for (const id of new Set([...ingestedIds, ...stale])) await analyzeAndStore(athleteId, id, model);
     }
+
+    // Le rattachement des sept derniers jours se refait à chaque relève, qu'elle
+    // ait importé ou non : une séance courue la veille ou le lendemain de sa
+    // date se reconnaît sans réimport.
+    model ??= await db.getLatestModel(athleteId);
+    if (model) await rematchRecent(athleteId, model, new Date().toISOString().slice(0, 10));
 
     progress.message = progress.rateLimited
       ? `Quota Strava presque atteint : ${progress.ingested} activité(s) importée(s). Relance l'import dans un quart d'heure pour continuer.`

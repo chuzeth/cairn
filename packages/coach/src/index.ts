@@ -3,6 +3,7 @@ export * from './reserve.js';
 export * from './sessionContent.js';
 export * from './directives.js';
 export * from './sessionLibrary.js';
+export * from './eccentric.js';
 export * from './periodization.js';
 export * from './preserve.js';
 export * from './terrain.js';

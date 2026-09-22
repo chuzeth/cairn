@@ -69,7 +69,7 @@ vi.mock('@cairn/db', () => ({
   },
 }));
 
-const { executeTool, elevationGainOf, isOneSentence, totalDuration } = await import('@cairn/coach');
+const { carriesEccentricStrength, executeTool, elevationGainOf, isOneSentence, totalDuration } = await import('@cairn/coach');
 
 /** Tout ce qu'une séance enregistrée donne à lire. */
 const textsOf = (s: PlannedSession): string[] => [
@@ -488,6 +488,21 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
     const content = (s: PlannedSession) => s.blocks.map((b) => [b.durationS, b.zone, b.hrRange, b.speedRangeMs]);
     expect(content(test)).toEqual(content(decided));
     expect(test.title).toBe('Test maximal 20 min — 1 h');
+  });
+
+  it('ne pose aucun circuit dans les 48 h qui précèdent une rando-course, et le dit sans mot interne', async () => {
+    // Le 26/09, veille de la rando-course : le plan y posait trois tours de
+    // renforcement excentrique à un athlète qui n'en avait jamais fait.
+    const days = byDate(await written());
+    for (const date of ['2026-09-25', '2026-09-26', '2026-10-01', '2026-10-02']) {
+      expect(carriesEccentricStrength(days.get(date)?.blocks ?? []), date).toBe(false);
+    }
+    expect(days.get('2026-09-26')?.history?.map((h) => h.text).join(' ')).toContain(
+      'Pas de renforcement dans la semaine : la rando-course du 27/09 suit de moins de 48 h',
+    );
+    // « Séance conservée » est un mot du planificateur, pas de l'athlète.
+    expect(days.get('2026-10-04')?.rationale).toMatch(/^Décrassage : lendemain de « Rando-course .* », on facilite/);
+    for (const s of days.values()) expect(s.rationale ?? '', s.date).not.toMatch(/conserv/);
   });
 
   it('verse le raisonnement du coach à l\'historique, sans une date relative', async () => {

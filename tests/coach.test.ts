@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ECCENTRIC_MOVEMENT_TEXT, LAB_TEST_2025_07_24, PIERRE, buildDirectives, directivesFor,
-  sessionDuration,
+  sessionDuration, writtenOn,
   type DeclaredAbsence, type PlannedSession, type RaceGoal, type TrainingWeek,
 } from '@cairn/core';
 import { DURABILITY_MEASURABLE, modelFromLabOnly, msToKmh, projectFrom } from '@cairn/physiology';
@@ -559,9 +559,11 @@ describe('Règles d\'ajustement automatique', () => {
         },
       ],
     });
-    // Le métabolique est calme ; seul l'excentrique a dépassé son seuil.
+    // Le métabolique est calme ; seul l'excentrique a dépassé son seuil. Les
+    // circuits sont familiers : la progression ne limite plus les tours.
     const state = baseState({
       today: { date: '2026-09-01', ctl: 50, atl: 55, tsb: -5, mechanicalTsb: 0, acwr: 1.0, mechanicalAcwr: 1.87, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
+      eccentricCircuitsDone: 6,
     });
     const [adj] = evaluateAdjustments(state, [palier]);
     expect(adj!.rule).toBe('mechanical_acwr_spike');
@@ -576,6 +578,7 @@ describe('Règles d\'ajustement automatique', () => {
     // c'était la seule règle, et l'excentrique n'était protégé par rien.
     const metabolic = baseState({
       today: { date: '2026-09-01', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8, mechanicalAcwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
+      eccentricCircuitsDone: 6,
     });
     const [spike] = evaluateAdjustments(metabolic, [palier]);
     expect(spike!.rule).toBe('acwr_spike');
@@ -1760,5 +1763,147 @@ describe('Un mouvement demandé est un mouvement expliqué', () => {
       expect(gammes.notes, s.title).toMatch(/montées de genou/);
       expect(gammes.notes, s.title).toMatch(/talons-fesses/);
     }
+  });
+});
+
+describe('Le renforcement excentrique dans la semaine', () => {
+  const DESCENDING = new Set(['long_run', 'long_trail', 'downhill', 'race']);
+  const shift = (date: string, days: number) =>
+    new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+  const plans = (over: Partial<Parameters<typeof buildTrainingPlan>[0]> = {}) =>
+    ['2026-09-01', '2026-09-03', '2026-09-10'].flatMap((startDate) =>
+      [{}, { directives: directivesFor(PIERRE), ambition: PIERRE.ambition }].map((dossier) =>
+        buildTrainingPlan({
+          athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+          currentCtl: 45, estimatedRaceDurationS: 3 * 3600, startDate, ...dossier, ...over,
+        }).weeks.flatMap((w) => w.sessions),
+      ),
+    );
+
+  it('ne place aucun circuit dans les 48 h qui précèdent une séance qui descend', () => {
+    // Le 26/09, veille d'une rando-course de 680 m D+, le plan posait trois tours
+    // de squats bulgares et de descentes de marche : les courbatures d'un premier
+    // circuit culminent 24 à 72 h après, pendant les descentes du lendemain.
+    let circuits = 0;
+    for (const sessions of plans()) {
+      for (const s of sessions.filter((x) => lib.carriesEccentricStrength(x.blocks))) {
+        circuits++;
+        const next = sessions.filter((x) => x.date > s.date && x.date <= shift(s.date, 2) && DESCENDING.has(x.type));
+        expect(next.map((x) => `${x.date} ${x.type}`), `${s.date} ${s.title}`).toEqual([]);
+      }
+    }
+    expect(circuits).toBeGreaterThan(20);
+  });
+
+  it('dit pourquoi une semaine n\'a pas de renforcement, sur le jour qui l\'aurait porté', () => {
+    let notes = 0;
+    for (const sessions of plans()) {
+      for (const s of sessions) {
+        const note = s.history?.find((h) => h.text.startsWith('Pas de renforcement'));
+        if (!note) continue;
+        notes++;
+        // La séance nommée est celle qui suit ce jour-là, pas une autre.
+        const next = sessions.find((x) => x.date > s.date && x.date <= shift(s.date, 2) && DESCENDING.has(x.type))!;
+        expect(note.text, s.date).toContain(`du ${writtenOn(next.date)}`);
+        expect(lib.carriesEccentricStrength(s.blocks)).toBe(false);
+      }
+    }
+    expect(notes).toBeGreaterThan(0);
+  });
+
+  it('commence à un tour, puis monte d\'un tour toutes les deux séances', () => {
+    for (const sessions of plans()) {
+      const rounds = sessions.filter((s) => lib.carriesEccentricStrength(s.blocks)).map((s) => lib.eccentricRoundsOf(s.blocks));
+      expect(rounds.slice(0, 5)).toEqual([1, 1, 2, 2, 3]);
+      expect(rounds.slice(5).every((r) => r === 3)).toBe(true);
+    }
+    // Un athlète qui en a fait prend les tours du dossier ; un seul circuit
+    // fait le place au second rang.
+    for (const sessions of plans({ eccentricCircuitsDone: 4 })) {
+      expect(sessions.filter((s) => lib.carriesEccentricStrength(s.blocks)).map((s) => lib.eccentricRoundsOf(s.blocks)))
+        .toSatisfy((r: number[]) => r.every((x) => x === 3));
+    }
+    for (const sessions of plans({ eccentricCircuitsDone: 1 })) {
+      const rounds = sessions.filter((s) => lib.carriesEccentricStrength(s.blocks)).map((s) => lib.eccentricRoundsOf(s.blocks));
+      expect(rounds.slice(0, 4)).toEqual([1, 2, 2, 3]);
+    }
+  });
+
+  it('dit sur la séance pourquoi son circuit est court, et ne promet pas de récupération entre les tours', () => {
+    const [sessions] = plans();
+    const first = sessions!.find((s) => lib.carriesEccentricStrength(s.blocks))!;
+    expect(first.history?.map((h) => h.text).join(' ')).toContain('Circuit sur 1 tour au lieu de 3 : premier circuit excentrique');
+    expect(first.blocks.find((b) => b.circuit)!.notes).not.toMatch(/entre les tours/);
+    expect(lib.strength(model, 3).blocks.find((b) => b.circuit)!.notes).toMatch(/entre les tours/);
+  });
+
+  it('retire le circuit sans toucher au reste de la séance', () => {
+    const s = lib.strength(model, 3);
+    const footing = lib.endurance(model, 30, 60);
+    const blocks = [...footing.blocks, ...s.blocks];
+    const session = {
+      type: 'endurance' as const, blocks, plannedLoad: 0, plannedMechanicalLoad: 0,
+      plannedDurationS: lib.totalDuration(blocks), plannedDistanceM: 1,
+    };
+    const out = lib.withoutEccentricStrength(session, model);
+    expect(out.blocks.some((b) => b.circuit || b.kind === 'activation')).toBe(false);
+    expect(out.blocks.some((b) => b.kind === 'mobility')).toBe(true);
+    expect(out.plannedDurationS).toBe(lib.totalDuration(out.blocks));
+    expect(out.plannedMechanicalLoad).toBe(lib.sessionTotals(model, footing.blocks).mechanicalLoad);
+  });
+
+  describe('dans les règles de charge', () => {
+    const circuit = (id: string, date: string, rounds = 3): PlannedSession => ({
+      id, athleteId: 'pierre', date, type: 'endurance', title: 'Footing + renforcement', intent: '',
+      blocks: [
+        { label: 'Footing en endurance aérobie', zone: 'Z2', durationS: 1800 },
+        {
+          label: 'Circuit force', zone: 'Z2', durationS: 900,
+          circuit: { rounds, exercises: [{ movement: 'split_squat', reps: 8 }, { movement: 'step_down', reps: 10 }] },
+        },
+      ],
+      plannedLoad: 30, plannedMechanicalLoad: 12, plannedDurationS: 2700, priority: 'support', status: 'planned',
+    });
+    const rando = (date: string): PlannedSession => ({
+      id: `rando_${date}`, athleteId: 'pierre', date, type: 'long_trail', title: 'Rando-course', intent: '',
+      blocks: [], plannedLoad: 140, plannedMechanicalLoad: 40, plannedDurationS: 10800, priority: 'key', status: 'planned',
+    });
+    const state = (done: number) =>
+      ({
+        today: { date: '2026-09-22', ctl: 36, atl: 38, tsb: -2, mechanicalTsb: 2, acwr: 1.1, mechanicalAcwr: 0.8, rampRate: 1, monotony: 0.9, tsbLabel: '', acwrLabel: '', acwrRisk: 'low' },
+        readiness: { date: '2026-09-22', score: 75, verdict: 'green', components: {}, recommendation: '' },
+        absences: [], model, profile: PIERRE, eccentricCircuitsDone: done,
+      }) as never;
+
+    it('retire le circuit de la veille et de l\'avant-veille d\'une rando-course, pas au-delà', () => {
+      for (const date of ['2026-09-26', '2026-09-25']) {
+        const [adj] = evaluateAdjustments(state(10), [circuit('c', date), rando('2026-09-27')]);
+        expect(adj).toMatchObject({ sessionId: 'c', action: 'drop_strength', rule: 'eccentric_before_descent' });
+        expect(adj!.reason).toContain('la rando-course du 27/09 suit de moins de 48 h');
+      }
+      expect(evaluateAdjustments(state(10), [circuit('c', '2026-09-24'), rando('2026-09-27')])).toEqual([]);
+      // Une rando-course retirée ne chasse plus rien.
+      expect(evaluateAdjustments(state(10), [circuit('c', '2026-09-26'), { ...rando('2026-09-27'), status: 'withdrawn' }]))
+        .toEqual([]);
+    });
+
+    it('ramène les premiers circuits d\'un athlète sans historique à un tour', () => {
+      const [adj] = evaluateAdjustments(state(0), [circuit('c', '2026-09-23')]);
+      expect(adj).toMatchObject({ sessionId: 'c', action: 'scale', factor: 1, rule: 'eccentric_progression' });
+      expect(lib.transformSession(circuit('c', '2026-09-23'), { duration: 1, eccentric: adj!.eccentric! }, model)
+        .blocks[1]!.circuit!.rounds).toBe(1);
+
+      // Un circuit prévu avant lui compte : le second garde un tour, le troisième en prend deux.
+      const three = evaluateAdjustments(state(0), [circuit('a', '2026-09-23', 1), circuit('b', '2026-09-25', 1), circuit('c', '2026-09-28')]);
+      expect(three.map((a) => [a.sessionId, a.eccentric])).toEqual([['c', 2 / 3]]);
+      expect(three[0]!.reason).toContain('troisième circuit excentrique');
+
+      // Un circuit qu'une descente chasse n'aura pas lieu, et ne compte pas.
+      const chased = evaluateAdjustments(state(1), [circuit('a', '2026-09-23', 1), rando('2026-09-24'), circuit('b', '2026-09-26', 2)]);
+      expect(chased.map((a) => [a.sessionId, a.rule])).toEqual([
+        ['a', 'eccentric_before_descent'], ['b', 'eccentric_progression'],
+      ]);
+      expect(evaluateAdjustments(state(4), [circuit('c', '2026-09-23')])).toEqual([]);
+    });
   });
 });

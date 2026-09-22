@@ -76,6 +76,11 @@ export function Morning({
   );
   // Une journée peut porter une séance et un repos ; c'est la séance qu'on ouvre.
   const session = held.find((s) => s.type !== 'rest') ?? held[0];
+  // La séance prévue aujourd'hui a pu être faite la veille : elle est alors à sa
+  // date réelle, et la journée n'a plus rien à préparer.
+  const early = session
+    ? undefined
+    : plan.sessions.find((s) => s.plannedDate === today && s.date < today && answeredStatus(s));
   const absence = state.absences.find((a) => a.startDate <= today && a.endDate >= today);
   const doneToday = plan.completedByDate[today];
   const next = plan.sessions.find(
@@ -85,7 +90,7 @@ export function Morning({
   const work = session && session.blocks.length > 0 && !done ? session : undefined;
   // Sans effort aujourd'hui, c'est le prochain qu'on ouvre — sauf le jour où la
   // séance est déjà faite, où il n'y a plus rien à préparer.
-  const openNext = !work && !done ? next : undefined;
+  const openNext = !work && !done && !early ? next : undefined;
   const race = state.upcomingRaces[0];
 
   return (
@@ -100,9 +105,22 @@ export function Morning({
       {recordedAt && <Stale recordedAt={recordedAt} />}
       <Waiting />
 
-      <Headline session={session} absence={absence} done={doneToday} />
+      <Headline session={session} absence={absence} done={doneToday} early={early} />
 
       {work && <Session session={work} />}
+
+      {early && (
+        <>
+          {early.status === 'completed' && <Trace session={early} muted />}
+          {early.completedActivityId && (
+            <Link href={`/activities/${early.completedActivityId}`} className="m-link">
+              {plan.completedByDate[early.date]?.id === early.completedActivityId
+                ? plan.completedByDate[early.date]!.name
+                : 'La séance d’hier'} · l&apos;analyse →
+            </Link>
+          )}
+        </>
+      )}
 
       {/* Ce qui a été prescrit ne se dessine que s'il a été fait : le jour où une
           autre séance l'a remplacée, ce tracé montrerait ce qui n'a pas eu lieu. */}
@@ -176,8 +194,14 @@ export function Morning({
 
 /** La réponse à « qu'est-ce que je fais aujourd'hui », en un titre et une ligne. */
 function Headline({
-  session, absence, done,
-}: { session?: SessionRow; absence?: DeclaredAbsence; done?: { id: string; name: string } }) {
+  session, absence, done, early,
+}: {
+  session?: SessionRow;
+  absence?: DeclaredAbsence;
+  done?: { id: string; name: string };
+  /** La séance prévue aujourd'hui, faite la veille. */
+  early?: SessionRow;
+}) {
   const head = (title: string, sub: React.ReactNode) => (
     <header className="m-head">
       <h1 className="m-title">{title}</h1>
@@ -190,7 +214,20 @@ function Headline({
       "C'est fait.",
       session.status === 'replaced'
         ? 'Pas la séance prévue, mais elle est faite et elle compte.'
-        : 'Séance du jour faite et rattachée au plan.',
+        : session.plannedDate
+          ? `Prévue ${session.plannedDate < session.date ? 'hier' : 'demain'}, faite aujourd’hui : elle compte à sa date réelle.`
+          : 'Séance du jour faite et rattachée au plan.',
+    );
+  }
+  // Une phrase : ce qui a été fait, quand, et ce que la règle fait de
+  // l'aujourd'hui — le lendemain d'une séance clef est un repos ou un décrassage.
+  if (!session && early) {
+    return head(
+      "C'est fait, hier.",
+      nbsp(
+        `Ta séance du jour, ${sessionHeadline(early).toLocaleLowerCase('fr')}, a été faite hier : elle compte à sa ` +
+          `date réelle${early.priority === 'key' ? ', et aujourd’hui, son lendemain, c’est repos ou décrassage' : ''}.`,
+      ),
     );
   }
   if (session && session.type === 'rest') return head('Repos complet', nbsp(firstSentence(session.intent)));

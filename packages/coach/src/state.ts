@@ -11,8 +11,9 @@ import {
   type ReadinessDay,
 } from '@cairn/physiology';
 import { absenceCovering } from './adapt.js';
-import { addDays } from './periodization.js';
-import { eccentricStrengthOf } from './sessionLibrary.js';
+import { addDays, mondayOf } from './periodization.js';
+import { withHistory } from './presentation.js';
+import { carriesEccentricStrength, eccentricStrengthOf } from './sessionLibrary.js';
 
 /**
  * État de l'athlète.
@@ -91,6 +92,11 @@ export interface AthleteState {
   speedCurveHr: MmpCurve;
   vamCurve: Record<string, number>;
   weeklyTotals: { weekStart: string; load: number; mechanical: number; durationS: number; vertM: number }[];
+  /**
+   * Circuits excentriques que l'athlète a faits : le rang de son prochain
+   * circuit, donc ses tours. Zéro, il n'en a jamais fait.
+   */
+  eccentricCircuitsDone: number;
 }
 
 /**
@@ -380,6 +386,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
 
   const today = iso(new Date());
   const loads = await realizedDailyLoads(athleteId, daysAgo(400), today);
+  const eccentricCircuitsDone = await countEccentricCircuits(athleteId, daysAgo(400), today);
   const pmc = buildPmcSeries(loads, loads[0]?.date ?? daysAgo(90), today);
   const checkIns = await db.listCheckIns(athleteId, daysAgo(60));
 
@@ -463,6 +470,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     speedCurveHr: envelope.companion,
     vamCurve,
     weeklyTotals: computeWeeklyTotals(recentActivities, analyses),
+    eccentricCircuitsDone,
   };
 }
 
@@ -557,6 +565,17 @@ export async function realizedDailyLoads(athleteId: string, from: string, to: st
     .map((s) => ({ date: s.date, metabolic: 0, mechanical: eccentricStrengthOf(s.blocks) }))
     .filter((l) => l.mechanical > 0);
   return [...measured, ...strength].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Circuits excentriques faits entre deux dates : les séances réalisées qui en
+ * portaient un. C'est la même lecture que la charge réalisée — une séance faite
+ * a fait son circuit, faute de flux qui dise le contraire.
+ */
+export async function countEccentricCircuits(athleteId: string, from: string, to: string): Promise<number> {
+  return (await db.listPlannedSessions(athleteId, from, to)).filter(
+    (s) => s.status === 'completed' && carriesEccentricStrength(s.blocks),
+  ).length;
 }
 
 /** Ce qu'une séance attendue pèsera, sur les deux filières. */
@@ -672,11 +691,18 @@ export function currentCriticalSpeed(state: AthleteState) {
   };
 }
 
-/** Analyse (ou ré-analyse) une activité et persiste le résultat. */
+/**
+ * Analyse (ou ré-analyse) une activité et persiste le résultat.
+ *
+ * `onlyIfMatched` : rien n'est écrit si l'activité ne rattache aucune séance —
+ * c'est la passe de rattachement, qui ne réécrit une analyse que pour y poser
+ * un rattachement.
+ */
 export async function analyzeAndStore(
   athleteId: string,
   activityId: string,
   model: PhysiologyModel,
+  opts: { onlyIfMatched?: boolean } = {},
 ): Promise<ActivityAnalysis | null> {
   const activity = await db.getActivity(activityId);
   if (!activity) return null;
@@ -684,8 +710,9 @@ export async function analyzeAndStore(
   if (!stored) return null;
 
   const day = activity.startDateLocal.slice(0, 10);
-  // Le rattachement choisit parmi les séances du jour, ou n'en choisit aucune.
-  const planned = await db.listPlannedSessions(athleteId, day, day);
+  // Le rattachement choisit parmi les séances du jour, de la veille et du
+  // lendemain, ou n'en choisit aucune.
+  const planned = await db.listPlannedSessions(athleteId, addDays(day, -1), addDays(day, 1));
 
   const analysis = analyzeActivity(activity, stored.streams, model, {
     sex: 'M',
@@ -693,12 +720,14 @@ export async function analyzeAndStore(
     plannedSessions: planned,
   });
 
+  const compliance = analysis.compliance;
+  if (opts.onlyIfMatched && !compliance) return null;
   await db.saveAnalysis(athleteId, activity.startDateLocal, analysis);
 
-  const compliance = analysis.compliance;
   if (compliance) {
     const target = planned.find((p) => p.id === compliance.plannedSessionId);
     const status = compliance.outcome === 'fulfilled' ? 'completed' : 'replaced';
+    const dayMonth = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
     // Le statut est recalculé à chaque analyse, sans garde sur l'état précédent :
     // une séance passée en « manquée » par les règles doit pouvoir être reprise
     // par l'activité qui arrive après elles.
@@ -709,7 +738,59 @@ export async function analyzeAndStore(
       // Elle est remplacée quand ce qui s'est passé la dément : une séance
       // remplacée, ou une « non réalisée » que l'activité vient contredire.
       ...(status === 'replaced' || target?.status === 'missed' ? { rationale: compliance.detail } : {}),
+      // Réalisée la veille ou le lendemain, la séance prend sa date réelle et
+      // garde celle du plan. Tout ce qui lit une séance par sa date — le
+      // lendemain d'un test maximal, les 48 h entre deux séances exigeantes, la
+      // charge de la semaine, ce que porte la montre — la lit alors au jour où
+      // elle a eu lieu.
+      ...(target && target.date !== day
+        ? {
+            date: day,
+            weekStart: mondayOf(day),
+            plannedDate: target.plannedDate ?? target.date,
+            history: withHistory(target.history, {
+              at: new Date().toISOString(),
+              by: 'rules',
+              text:
+                `Prévue le ${dayMonth(target.date)}, réalisée le ${dayMonth(day)} : « ${activity.name} » ` +
+                `en porte le contenu. La séance prend sa date réelle.`,
+            }),
+          }
+        : {}),
     });
   }
   return analysis;
+}
+
+/**
+ * Le rattachement des sept derniers jours, refait.
+ *
+ * Une activité peut avoir été analysée avant que la séance qu'elle réalisait
+ * ne soit candidate : un plan reconstruit depuis, ou le rattachement d'avant,
+ * qui ne regardait que le jour même — le test maximal couru le 21/09 pour le
+ * 22/09. La passe reprend, dans l'ordre où elles ont été courues, les activités
+ * récentes qu'aucune séance ne tient. Celles qu'une séance tient ne sont pas
+ * relues : refaire le rattachement ne défait jamais un rattachement existant.
+ * Rien n'est écrit pour une activité qui ne rattache toujours rien.
+ */
+export async function rematchRecent(
+  athleteId: string,
+  model: PhysiologyModel,
+  today: string,
+  days = 7,
+): Promise<{ activityId: string; sessionId: string }[]> {
+  const from = addDays(today, -days);
+  const activities = await db.listActivities(athleteId, { from, to: today });
+  const held = new Set(
+    (await db.listPlannedSessions(athleteId, addDays(from, -1), addDays(today, 1)))
+      .map((s) => s.completedActivityId)
+      .filter((id): id is string => id != null),
+  );
+  const matched: { activityId: string; sessionId: string }[] = [];
+  for (const a of [...activities].sort((x, y) => x.startDateLocal.localeCompare(y.startDateLocal))) {
+    if (held.has(a.id)) continue;
+    const analysis = await analyzeAndStore(athleteId, a.id, model, { onlyIfMatched: true });
+    if (analysis?.compliance) matched.push({ activityId: a.id, sessionId: analysis.compliance.plannedSessionId });
+  }
+  return matched;
 }

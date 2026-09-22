@@ -4,8 +4,8 @@ import type {
 } from '@cairn/core';
 import { PROVENANCE_FR, annexOf, describeMovement, sessionDuration, weakestProvenance } from '@cairn/core';
 import {
-  CS_FIT_MIN_S, ECCENTRIC_MOVEMENTS, FLAT_RUNNING_COST, buildZones, eccentricStrengthLoad, formatPace, gradeAdjustedSpeed,
-  hrProvenanceOf, msToKmh, prescribedMechanicalLoad, speedForMetabolicPower, speedProvenanceOf, vam,
+  ECCENTRIC_MOVEMENTS, FLAT_RUNNING_COST, buildZones, eccentricStrengthLoad, formatPace, gradeAdjustedSpeed,
+  hrProvenanceOf, maximalEffortIndex, msToKmh, prescribedMechanicalLoad, speedForMetabolicPower, speedProvenanceOf, vam,
   walkingGrade,
 } from '@cairn/physiology';
 import { describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit } from './plausibility.js';
@@ -329,6 +329,45 @@ export function mechanicalFor(
  */
 export function eccentricStrengthOf(blocks: readonly SessionBlock[]): number {
   return Math.round(eccentricStrengthLoad(circuitsOf(blocks)).score * 10) / 10;
+}
+
+/**
+ * Un circuit qui freine : du renforcement excentrique, par opposition au
+ * gainage. Ce qui en fait un n'est pas ce que la filière mécanique en retient —
+ * un nordic freine, et ne coûte presque rien aux quadriceps.
+ */
+export const isEccentricCircuit = (b: SessionBlock): boolean =>
+  Boolean(b.circuit) && eccentricStrengthLoad(circuitsOf([b])).reps > 0;
+
+/** La séance porte-t-elle du renforcement excentrique ? */
+export const carriesEccentricStrength = (blocks: readonly SessionBlock[]): boolean =>
+  blocks.some(isEccentricCircuit);
+
+/** Tours que portent les circuits excentriques d'une séance. */
+export const eccentricRoundsOf = (blocks: readonly SessionBlock[]): number =>
+  circuitsOf(blocks.filter(isEccentricCircuit)).reduce((a, c) => a + c.rounds, 0);
+
+/**
+ * La séance sans son renforcement excentrique : le circuit qui freine part, et
+ * l'activation qui l'ouvrait avec lui quand plus aucun circuit ne reste. La
+ * course, la souplesse, la respiration demeurent, et les totaux se relisent sur
+ * ce qui reste.
+ */
+export function withoutEccentricStrength(
+  session: TransformableSession,
+  model: PhysiologyModel,
+): Omit<TransformedSession, 'amendments'> {
+  const kept = locateVertical(session.blocks, session.type).filter((b) => !isEccentricCircuit(b));
+  const blocks = kept.some((b) => b.circuit) ? kept : kept.filter((b) => b.kind !== 'activation');
+  const totals = sessionTotals(model, blocks, elevationLossOf(blocks));
+  return {
+    blocks,
+    plannedDurationS: totals.durationS,
+    plannedLoad: totals.load,
+    plannedMechanicalLoad: totals.mechanicalLoad,
+    plannedElevationGainM: totals.elevationGainM,
+    ...(session.plannedDistanceM ? { plannedDistanceM: Math.round(totals.distanceM) } : {}),
+  };
 }
 
 /**
@@ -1266,18 +1305,6 @@ export function isMaximalTest(s: Pick<PlannedSession, 'blocks'>, model: Physiolo
   return maximalEffortIndex(s.blocks, model) >= 0;
 }
 
-/** Le bloc qui porte l'effort maximal d'un test, ou −1. */
-function maximalEffortIndex(blocks: readonly SessionBlock[], model: PhysiologyModel): number {
-  return blocks.findIndex(
-    (b) =>
-      !isPrescribed(b) &&
-      (b.repeat ?? 1) <= 1 &&
-      !b.recovery &&
-      (b.durationS ?? 0) >= CS_FIT_MIN_S &&
-      (b.zone === 'Z5' || (b.hrRange != null && b.hrRange[0] >= model.vt2.hr)),
-  );
-}
-
 /**
  * Les mots d'un test maximal, posés sur ses blocs : échauffement, gammes,
  * effort, retour au calme. Rien d'autre que les libellés et les consignes ne
@@ -1709,6 +1736,9 @@ const STRENGTH_CIRCUIT: StrengthExercise[] = [
   { movement: 'isometric', reps: 45 },
 ];
 
+/** Ce que le renforcement ajoute à l'intention du footing qui le porte. */
+export const STRENGTH_INTENT = 'Le renforcement suit immédiatement : chaîne postérieure et souplesse.';
+
 export function strength(model: PhysiologyModel, rounds = 3): SessionTemplate {
   const c = ctxOf(model);
   const circuit: StrengthCircuit = { rounds, exercises: STRENGTH_CIRCUIT.map((e) => ({ ...e })) };
@@ -1743,7 +1773,7 @@ export function strength(model: PhysiologyModel, rounds = 3): SessionTemplate {
         circuit,
         notes:
           'La charge se prend en freinant, jamais en poussant : trois secondes pour descendre, ' +
-          'une pour remonter. Deux minutes de récupération entre les tours.',
+          `une pour remonter.${rounds > 1 ? ' Deux minutes de récupération entre les tours.' : ''}`,
       }),
       block(c, 'Souplesse chaîne postérieure', 'Z1', mobilityS, {
         kind: 'mobility',

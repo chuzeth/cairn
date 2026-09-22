@@ -1112,7 +1112,14 @@ export type SessionStatus =
 export interface PlannedSession {
   id: string;
   athleteId: string;
-  date: string; // ISO date (jour)
+  /** ISO date (jour) : celui où la séance a eu lieu, quand elle a été réalisée. */
+  date: string;
+  /**
+   * Le jour que le plan avait fixé, quand la séance a été réalisée la veille ou
+   * le lendemain. `date` porte alors le jour réel, pour que les règles qui
+   * lisent une séance par sa date la lisent au jour où elle a eu lieu.
+   */
+  plannedDate?: string;
   type: SessionType;
   title: string;
   /** L'intention physiologique, en une phrase — le « pourquoi » de la séance. */

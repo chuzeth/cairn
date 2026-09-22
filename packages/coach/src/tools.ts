@@ -897,6 +897,8 @@ export async function executeTool(
           seances: sessions.map((s) => ({
             id: s.id,
             date: s.date,
+            // Réalisée la veille ou le lendemain : `date` est le jour réel.
+            ...(s.plannedDate ? { prevue_le: s.plannedDate } : {}),
             type: s.type,
             titre: s.title,
             intention: s.intent,
@@ -1249,6 +1251,7 @@ export async function executeTool(
         previous: previous?.weeks,
         today: state.today.date,
         terrain: await terrainHint(athleteId),
+        eccentricCircuitsDone: state.eccentricCircuitsDone,
       });
 
       // Les semaines que le planificateur a écrites, sans celles d'avant le

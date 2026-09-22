@@ -201,6 +201,26 @@ describe('Charge mécanique prescrite', () => {
     expect(uni.reps).toBe(20);
   });
 
+  it('compte un circuit à hauteur de ce qu\'il coûte aux quadriceps et aux mollets', () => {
+    // Le défaut : trois tours pesaient 5 points, 127 m de descente — un premier
+    // circuit la veille d'une rando-course ne pouvait allumer aucun ratio.
+    // Chaque répétition vaut désormais les mètres de descente qui coûteraient
+    // autant aux quadriceps et aux mollets, sur l'échelle de la descente.
+    const trois = eccentricStrengthLoad([{ ...CIRCUIT, rounds: 3 }]);
+    expect(trois.descentEquivalentM).toBeGreaterThan(250);
+    expect(trois.descentEquivalentM).toBeLessThan(320);
+    expect(trois.score).toBeCloseTo(prescribedMechanicalLoad({ elevationLossM: trois.descentEquivalentM }).descent, 10);
+
+    // Ce qui freine par les quadriceps pèse ; ce qui freine par les
+    // ischio-jambiers compte comme freinage, pas dans la filière.
+    const un = (movement: keyof typeof ECCENTRIC_MOVEMENTS) =>
+      eccentricStrengthLoad([{ rounds: 1, exercises: [{ movement, reps: 10 }] }]);
+    expect(un('step_down').score).toBeGreaterThan(un('single_leg_deadlift').score * 5);
+    expect(un('eccentric_calf').score).toBeGreaterThan(0);
+    expect(un('nordic_curl').score).toBe(0);
+    expect(un('nordic_curl').reps).toBe(10);
+  });
+
   it('garde la calibration de la descente : ~40 pts pour 1 000 m de D−', () => {
     const m = prescribedMechanicalLoad({ elevationLossM: 1000 });
     expect(m.descent).toBeGreaterThan(37);
@@ -994,7 +1014,8 @@ describe('Rattachement d\'une activité à la séance prescrite', () => {
   });
   // La sortie réellement courue le 02/09 : 103 min, 134 points de charge.
   const sortie = (over: Partial<RealizedEffort> = {}): RealizedEffort => ({
-    activityId: 'strava-20007158487', sportType: 'TrailRun', durationS: 6201, load: 134, ...over,
+    activityId: 'strava-20007158487', sportType: 'TrailRun', date: '2026-09-02', durationS: 6201, load: 134,
+    ...over,
   });
 
   const longue = session({
@@ -1003,11 +1024,11 @@ describe('Rattachement d\'une activité à la séance prescrite', () => {
   });
 
   it('retient la séance la plus proche de ce qui a été fait, pas la première du jour', () => {
-    expect(matchPlannedSession([session(), longue], sortie())?.id).toBe('ses_longue');
+    expect(matchPlannedSession([session(), longue], sortie(), model)?.id).toBe('ses_longue');
     // L'ordre d'entrée en base ne doit rien y changer.
-    expect(matchPlannedSession([longue, session()], sortie())?.id).toBe('ses_longue');
+    expect(matchPlannedSession([longue, session()], sortie(), model)?.id).toBe('ses_longue');
     // Et un décrassage réellement couru reste rattaché au décrassage.
-    expect(matchPlannedSession([session(), longue], sortie({ durationS: 2300, load: 8 }))?.id).toBe('ses_recup');
+    expect(matchPlannedSession([session(), longue], sortie({ durationS: 2300, load: 8 }), model)?.id).toBe('ses_recup');
   });
 
   it('reprend une séance passée en « manquée » quand l\'activité arrive après les règles', () => {
@@ -1017,36 +1038,36 @@ describe('Rattachement d\'une activité à la séance prescrite', () => {
       rationale: 'Séance non réalisée : statut passé à « manquée ».',
     });
     const courue = sortie({ activityId: 'strava-20007144020', durationS: 1333, load: 35 });
-    expect(matchPlannedSession([cotes], courue)?.id).toBe('ses_cotes');
+    expect(matchPlannedSession([cotes], courue, model)?.id).toBe('ses_cotes');
   });
 
   it('refuse une séance dont la place est tenue par une autre activité', () => {
     const prise = session({ status: 'completed', completedActivityId: 'strava-autre' });
-    expect(matchPlannedSession([prise], sortie())).toBeNull();
+    expect(matchPlannedSession([prise], sortie(), model)).toBeNull();
     // La ré-analyse de la même activité, elle, retrouve son rattachement.
-    expect(matchPlannedSession([prise], sortie({ activityId: 'strava-autre' }))?.id).toBe('ses_recup');
+    expect(matchPlannedSession([prise], sortie({ activityId: 'strava-autre' }), model)?.id).toBe('ses_recup');
   });
 
   it('refuse une séance annulée ou déplacée', () => {
-    expect(matchPlannedSession([session({ status: 'cancelled' })], sortie())).toBeNull();
-    expect(matchPlannedSession([session({ status: 'moved' })], sortie())).toBeNull();
+    expect(matchPlannedSession([session({ status: 'cancelled' })], sortie(), model)).toBeNull();
+    expect(matchPlannedSession([session({ status: 'moved' })], sortie(), model)).toBeNull();
   });
 
   it('refuse une séance retirée par une absence déclarée', () => {
     // Courir pendant une coupure annoncée n'honore aucune prescription : ce
     // jour-là, le plan ne demandait plus rien.
-    expect(matchPlannedSession([session({ status: 'withdrawn' })], sortie())).toBeNull();
+    expect(matchPlannedSession([session({ status: 'withdrawn' })], sortie(), model)).toBeNull();
   });
 
   it('refuse de croiser les disciplines', () => {
-    expect(matchPlannedSession([session()], sortie({ sportType: 'Swim' }))).toBeNull();
-    expect(matchPlannedSession([session({ type: 'strength' })], sortie())).toBeNull();
-    expect(matchPlannedSession([session({ type: 'cross_training' })], sortie({ sportType: 'Ride' }))?.id)
+    expect(matchPlannedSession([session()], sortie({ sportType: 'Swim' }), model)).toBeNull();
+    expect(matchPlannedSession([session({ type: 'strength' })], sortie(), model)).toBeNull();
+    expect(matchPlannedSession([session({ type: 'cross_training' })], sortie({ sportType: 'Ride' }), model)?.id)
       .toBe('ses_recup');
   });
 
   it('ne rattache rien quand le jour ne prescrit rien', () => {
-    expect(matchPlannedSession([], sortie())).toBeNull();
+    expect(matchPlannedSession([], sortie(), model)).toBeNull();
   });
 });
 

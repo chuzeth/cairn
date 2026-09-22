@@ -15,6 +15,10 @@ import {
   formatDirectiveDuration, honourWeeklyFrequency, indexDirectives, isIntervalSession,
   nextIntervalFormat, type DirectiveSet,
 } from './directives.js';
+import {
+  FULL_ECCENTRIC_ROUNDS, descentAfter, descentReason, eccentricRoundsFor, eccentricVerdicts, progressionReason,
+  roundsLabel,
+} from './eccentric.js';
 import { presentDecided, withConstruction } from './presentation.js';
 import { carryDecisions, decisionOn, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
@@ -73,6 +77,11 @@ export interface WeekBuildInput {
   fixed?: readonly PlannedSession[];
   /** Le terrain de l'athlète : une rando-course y nomme la montée qui porte son dénivelé. */
   terrain?: TerrainHint;
+  /**
+   * Circuits excentriques faits, ou prévus et maintenus, avant cette semaine :
+   * le rang du circuit qu'elle portera. Absent, l'athlète n'en a jamais fait.
+   */
+  circuitsDone?: number;
 }
 
 /** L'ambition qui change ce que le plan privilégie : la tenue dans la durée. */
@@ -296,11 +305,11 @@ function fixedPoints(all: readonly PlannedSession[], weekStart: string, model: P
     const after = addDays(s.date, 1);
     for (const d of [before, after]) if (inWeek(d)) out.near.add(dow(d));
     if (inWeek(after)) {
-      out.easy.set(dow(after), `lendemain de « ${s.title} », séance conservée`);
+      out.easy.set(dow(after), `lendemain de « ${s.title} », on facilite la récupération sans ajouter de charge`);
       if (isLongType(s.type)) out.afterLong.add(dow(after));
     }
     if (test && inWeek(before)) {
-      out.easy.set(dow(before), `veille du test maximal conservé du ${s.date} : un effort maximal ne se mesure que reposé`);
+      out.easy.set(dow(before), `veille du test maximal du ${s.date} : un effort maximal ne se mesure que reposé`);
     }
   }
   return out;
@@ -452,11 +461,28 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
     }
   }
 
-  // Renforcement adossé à un jour d'endurance (jamais un jour de qualité).
-  const strengthDay = remaining.find((d) => !restDays.includes(d) && assigned.get(d)?.type === 'endurance');
+  // Renforcement adossé à un jour d'endurance (jamais un jour de qualité), et
+  // jamais dans les 48 h qui précèdent une séance qui descend : celles de la
+  // semaine, les conservées de part et d'autre du lundi, la course.
+  const dateOf = (d: number) => addDays(spec.weekStart, weekOrder(d));
+  const descending = [
+    ...[...assigned].map(([d, s]) => ({ date: dateOf(d), type: s.type as SessionType })),
+    ...(input.fixed ?? []).filter((s) => s.status === 'planned' || s.status === 'moved'),
+    { date: input.race.date.slice(0, 10), type: 'race' as const },
+  ];
+  const hosts = remaining.filter((d) => !restDays.includes(d) && assigned.get(d)?.type === 'endurance');
+  const strengthDay = hosts.find((d) => !descentAfter(dateOf(d), descending));
   if (strengthDay != null && spec.phase !== 'taper') {
     const existing = assigned.get(strengthDay)!;
-    const s = lib.strength(model);
+    // Le rang du circuit : ceux d'avant la semaine, puis les conservées de la
+    // semaine qui le précèdent.
+    const rank = (input.circuitsDone ?? 0) + (input.fixed ?? []).filter(
+      (s) =>
+        s.status === 'planned' && s.date >= spec.weekStart && s.date < dateOf(strengthDay) &&
+        lib.carriesEccentricStrength(s.blocks),
+    ).length;
+    const rounds = eccentricRoundsFor(rank);
+    const s = lib.strength(model, rounds);
     const blocks = [...existing.blocks, ...s.blocks];
     // La charge mécanique se relit sur les blocs fusionnés, jamais par forfait :
     // un forfait fait peser un tour de circuit comme trois, et c'est justement
@@ -470,7 +496,16 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
       durationS: existing.durationS + s.durationS,
       plannedLoad: existing.plannedLoad + s.plannedLoad,
       plannedMechanicalLoad: lib.mechanicalFor(blocks, existing.elevationLossM).total,
-      intent: `${existing.intent} Le renforcement suit immédiatement : chaîne postérieure et souplesse.`,
+      intent: `${existing.intent} ${lib.STRENGTH_INTENT}`,
+    });
+  } else if (hosts.length > 0 && spec.phase !== 'taper') {
+    // Aucun jour ne convenait : la semaine s'en passe, et le jour qui l'aurait
+    // porté dit pourquoi.
+    const host = assigned.get(hosts[0]!)!;
+    const before = descentAfter(dateOf(hosts[0]!), descending)!;
+    assigned.set(hosts[0]!, {
+      ...host,
+      amendments: [...(host.amendments ?? []), `Pas de renforcement dans la semaine : ${descentReason(before)}`],
     });
   }
 
@@ -666,7 +701,7 @@ function capToWeeklyCeiling(
       `Jour retiré par le plafond horaire : la semaine dépassait les ` +
       `${formatHours(spec.maxDurationS)} déclarées, et ` +
       (crowded
-        ? `les séances conservées, qui ne cèdent pas, ne laissaient plus la place.`
+        ? `les séances déjà fixées, qui ne cèdent pas, ne laissaient plus la place.`
         : `le volume facile ne pouvait plus reculer.`);
   }
 
@@ -1075,6 +1110,11 @@ export interface BuildPlanInput {
    * prescrit sans nommer de montée — ce qui reste exact, et se voit.
    */
   terrain?: TerrainHint;
+  /**
+   * Circuits excentriques que l'athlète a faits. Absent, il n'en a jamais
+   * fait : ses premiers circuits commencent à un tour.
+   */
+  eccentricCircuitsDone?: number;
 }
 
 /**
@@ -1283,7 +1323,15 @@ function buildWeeks(
   // tour à l'alternance.
   const policy = indexDirectives(input.directives).intervals;
   let intervals = 0;
-  return specs.map((spec) => {
+  // Le rang des circuits se compte de même : ceux que l'athlète a faits, les
+  // conservées à venir, et ceux que le plan écrit semaine après semaine.
+  const today = input.today ?? mondayOf(startDate);
+  const heldIds = new Set(fixed.map((s) => s.id));
+  const heldCircuits = fixed.filter(
+    (s) => s.status === 'planned' && s.date >= today && lib.carriesEccentricStrength(s.blocks),
+  );
+  let circuits = input.eccentricCircuitsDone ?? 0;
+  const weeks = specs.map((spec) => {
     const week = buildWeek({
       spec,
       model: input.model,
@@ -1296,10 +1344,63 @@ function buildWeeks(
       intervalFormat: nextIntervalFormat(policy, intervals),
       fixed,
       terrain: input.terrain,
+      circuitsDone: circuits + heldCircuits.filter((s) => s.date < spec.weekStart).length,
     });
     if (week.sessions.some((s) => isIntervalSession(s.type))) intervals++;
+    circuits += week.sessions.filter(
+      (s) => !heldIds.has(s.id) && s.date >= today && lib.carriesEccentricStrength(s.blocks),
+    ).length;
     return week;
   });
+  honourEccentricRules(weeks, heldIds, input, today);
+  return weeks;
+}
+
+/**
+ * Les deux règles du renforcement excentrique, vérifiées sur le plan entier.
+ *
+ * Une semaine choisit le jour de son circuit sur ce qu'elle voit : ses séances,
+ * les conservées, la course. Elle ne voit pas les séances que le planificateur
+ * écrira la semaine suivante, et un circuit posé un dimanche peut précéder de
+ * 48 h la descente du mardi. La vérification se refait donc sur le plan écrit,
+ * par la règle même qu'appliquent les règles de charge (`eccentricVerdicts`).
+ * Ce que le planificateur a écrit cède ; une séance conservée, non — ce sont
+ * les règles de charge qui la jugeront.
+ */
+function honourEccentricRules(
+  weeks: TrainingWeek[],
+  heldIds: ReadonlySet<string>,
+  input: BuildPlanInput,
+  today: string,
+): void {
+  const race = { date: input.race.date.slice(0, 10), type: 'race' as const };
+  const sessions = weeks.flatMap((w) => w.sessions);
+  for (const v of eccentricVerdicts(sessions, input.eccentricCircuitsDone ?? 0, today, [race])) {
+    const s = v.session;
+    if (heldIds.has(s.id)) continue;
+    const rounds = Math.min(v.prescribed, v.allowed);
+    if (v.before || v.prescribed > v.allowed) {
+      const t = v.before
+        ? lib.withoutEccentricStrength(s, input.model)
+        : lib.transformSession(s, { duration: 1, eccentric: v.allowed / v.prescribed }, input.model);
+      s.blocks = t.blocks;
+      s.plannedDurationS = t.plannedDurationS;
+      s.plannedLoad = t.plannedLoad;
+      s.plannedMechanicalLoad = t.plannedMechanicalLoad;
+      s.plannedElevationGainM = t.plannedElevationGainM;
+      if (t.plannedDistanceM !== undefined) s.plannedDistanceM = t.plannedDistanceM;
+      s.title = lib.retitleFromContent(s);
+      if (v.before) s.intent = s.intent.replace(` ${lib.STRENGTH_INTENT}`, '');
+    }
+    // Ce que la séance a cédé, ou pourquoi son circuit est court, rejoint son
+    // historique : c'est une décision de charge, et elle se lit.
+    const note = v.before
+      ? `Renforcement retiré : ${descentReason(v.before)}`
+      : rounds < FULL_ECCENTRIC_ROUNDS
+        ? `Circuit sur ${roundsLabel(rounds)} au lieu de ${FULL_ECCENTRIC_ROUNDS} : ${progressionReason(v.rank)}`
+        : null;
+    if (note) s.history = withConstruction(s, undefined, [note], builtAt()).history;
+  }
 }
 
 /**

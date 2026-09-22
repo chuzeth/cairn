@@ -162,18 +162,30 @@ export function mechanicalLoad(samples: readonly LoadSample[]): {
 /**
  * Catalogue des mouvements excentriques prescriptibles.
  *
- * Chaque mouvement est décrit par ce qu'il freine — la fraction de masse
- * corporelle réellement retenue, et la course sur laquelle elle l'est — puis
- * par sa `severity` : les dégâts par joule absorbé, relativement à un appui de
- * descente courue qui vaut 1 par définition. Une répétition lente, en fin
- * d'amplitude, sur une jambe, abîme davantage qu'un appui de course qui absorbe
- * la même énergie en 150 ms ; c'est tout ce que dit ce coefficient.
+ * La filière mécanique mesure ce que les quadriceps et les mollets encaissent
+ * en freinant : c'est ce qui limite une descente. Un mouvement y compte à
+ * hauteur de ce qu'il leur coûte, en mètres de descente courue qui leur
+ * coûteraient autant. Chaque mouvement est donc décrit par ce qu'il freine —
+ * la fraction de masse corporelle retenue et la course sur laquelle elle l'est
+ * —, par la part de ce freinage qui passe par les quadriceps et par les mollets
+ * (le reste va aux hanches et aux ischio-jambiers, que la descente sollicite
+ * peu), et par son `lengthening` : les dégâts par joule sur ces muscles,
+ * relativement à l'appui d'une descente courue.
  *
- * Ces valeurs ne sont pas mesurées sur l'athlète : ce sont des ordres de
- * grandeur, écrits ici pour être discutés plutôt que devinés. Ce qu'elles
- * rendent vrai n'est pas le niveau absolu — c'est que trois tours pèsent trois
- * fois un tour, que des mollets excentriques ne pèsent pas comme des squats
- * bulgares, et que du gainage ne pèse rien.
+ * L'appui de course freine en 150 ms, près de la longueur optimale du muscle.
+ * Une répétition lente descend en fin d'amplitude — genou à 90°, talon sous la
+ * marche —, là où le muscle s'abîme le plus. Six fois plus par joule est une
+ * valeur prudente : une vingtaine de minutes de montées-descentes de marche
+ * (Newham 1983) abîment davantage les quadriceps qu'une demi-heure de course en
+ * descente (Byrnes 1985), pour un travail négatif bien moindre. Un saut en
+ * contrebas freine vite et court : deux fois.
+ *
+ * Rien de cela n'est mesuré sur l'athlète : ce sont des valeurs par défaut,
+ * écrites ici pour être discutées plutôt que devinées. Un tour du circuit du
+ * planificateur coûte ainsi aux quadriceps et aux mollets ce que leur coûtent
+ * environ 90 m de descente ; les squats bulgares partagent leur freinage avec
+ * les hanches, le soulevé de terre et le nordic le laissent presque entier aux
+ * ischio-jambiers, et du gainage ne coûte rien.
  */
 /**
  * Intitulé, consigne d'exécution et latéralité viennent du texte partagé : le
@@ -194,22 +206,45 @@ export const ECCENTRIC_MOVEMENTS: Record<
     bodyFraction: number;
     /** Course du freinage, m. */
     rangeM: number;
-    /** Dégâts par joule absorbé, relativement à un appui de descente courue. */
-    severity: number;
+    /** Part du freinage absorbée par les quadriceps. */
+    quadriceps: number;
+    /** Part du freinage absorbée par les mollets. */
+    calves: number;
+    /** Dégâts par joule sur ces muscles, relativement à l'appui d'une descente courue. */
+    lengthening: number;
     /** Le mouvement se compte par côté : les répétitions prescrites sont doublées. */
     unilateral: boolean;
   }
 > = {
-  split_squat:         { ...text('split_squat'),         bodyFraction: 0.85, rangeM: 0.40, severity: 3.0 },
-  step_down:           { ...text('step_down'),           bodyFraction: 0.90, rangeM: 0.30, severity: 3.0 },
-  single_leg_deadlift: { ...text('single_leg_deadlift'), bodyFraction: 0.68, rangeM: 0.45, severity: 2.5 },
-  eccentric_calf:      { ...text('eccentric_calf'),      bodyFraction: 0.95, rangeM: 0.12, severity: 3.0 },
-  nordic_curl:         { ...text('nordic_curl'),         bodyFraction: 0.60, rangeM: 0.55, severity: 5.0 },
-  drop_jump:           { ...text('drop_jump'),           bodyFraction: 1.00, rangeM: 0.35, severity: 2.0 },
+  split_squat:         { ...text('split_squat'),         bodyFraction: 0.85, rangeM: 0.40, quadriceps: 0.50, calves: 0.05, lengthening: 6 },
+  step_down:           { ...text('step_down'),           bodyFraction: 0.90, rangeM: 0.30, quadriceps: 0.65, calves: 0.20, lengthening: 6 },
+  single_leg_deadlift: { ...text('single_leg_deadlift'), bodyFraction: 0.68, rangeM: 0.45, quadriceps: 0.05, calves: 0.05, lengthening: 6 },
+  eccentric_calf:      { ...text('eccentric_calf'),      bodyFraction: 0.95, rangeM: 0.12, quadriceps: 0,    calves: 1,    lengthening: 6 },
+  nordic_curl:         { ...text('nordic_curl'),         bodyFraction: 0.60, rangeM: 0.55, quadriceps: 0,    calves: 0,    lengthening: 6 },
+  drop_jump:           { ...text('drop_jump'),           bodyFraction: 1.00, rangeM: 0.35, quadriceps: 0.50, calves: 0.40, lengthening: 2 },
   // Le gainage n'a pas de phase de freinage : il tient la position. Il a sa
   // place dans le circuit, aucune dans la charge excentrique.
-  isometric:           { ...text('isometric'),           bodyFraction: 0,    rangeM: 0,    severity: 0    },
+  isometric:           { ...text('isometric'),           bodyFraction: 0,    rangeM: 0,    quadriceps: 0,    calves: 0,    lengthening: 0 },
 };
+
+/**
+ * Part de l'énergie d'un mètre de descente courue (m·g) que freinent les
+ * quadriceps et les mollets : environ 85 % du travail négatif des articulations
+ * va au genou et à la cheville, et un peu moins de 20 % de l'énergie se perd
+ * hors des muscles — chaussure, talon, choc. Un mouvement lent, lui, freine
+ * tout par les muscles.
+ */
+const DESCENT_QUADS_CALVES_SHARE = 0.7;
+
+/**
+ * Mètres de descente courue qui coûteraient aux quadriceps et aux mollets ce
+ * que leur coûte une répétition, d'un côté.
+ */
+export function descentEquivalentPerRep(movement: EccentricMovement): number {
+  const m = ECCENTRIC_MOVEMENTS[movement];
+  return (eccentricWorkPerRep(movement) * (m.quadriceps + m.calves) * m.lengthening) /
+    (G * DESCENT_QUADS_CALVES_SHARE);
+}
 
 /** Travail négatif absorbé par répétition et par côté, J/kg. */
 export function eccentricWorkPerRep(movement: EccentricMovement): number {
@@ -217,13 +252,21 @@ export function eccentricWorkPerRep(movement: EccentricMovement): number {
   return m.bodyFraction * G * m.rangeM;
 }
 
-/** Charge mécanique d'un ou plusieurs circuits de renforcement. */
+/**
+ * Charge mécanique d'un ou plusieurs circuits de renforcement : les mètres de
+ * descente qu'ils valent pour les quadriceps et les mollets, sur l'échelle de
+ * la descente courue.
+ *
+ * `reps` compte tous les freinages, ischio-jambiers compris : qu'un circuit
+ * soit excentrique ne dépend pas des muscles que la filière mesure.
+ */
 export function eccentricStrengthLoad(circuits: readonly StrengthCircuit[]): {
   score: number;
+  descentEquivalentM: number;
   negativeWorkJPerKg: number;
   reps: number;
 } {
-  let weighted = 0;
+  let metres = 0;
   let raw = 0;
   let reps = 0;
   for (const c of circuits) {
@@ -234,11 +277,16 @@ export function eccentricStrengthLoad(circuits: readonly StrengthCircuit[]): {
       const n = rounds * (Number.isFinite(e.reps) ? Math.max(0, e.reps) : 0) * (spec.unilateral ? 2 : 1);
       const work = n * eccentricWorkPerRep(e.movement);
       raw += work;
-      weighted += work * spec.severity;
-      if (spec.severity > 0) reps += n;
+      metres += n * descentEquivalentPerRep(e.movement);
+      if (work > 0) reps += n;
     }
   }
-  return { score: weighted / MECHANICAL_SCALE, negativeWorkJPerKg: raw, reps };
+  return {
+    score: (metres * G * DESCENT_SEVERITY) / MECHANICAL_SCALE,
+    descentEquivalentM: metres,
+    negativeWorkJPerKg: raw,
+    reps,
+  };
 }
 
 /**

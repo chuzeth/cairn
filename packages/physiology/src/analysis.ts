@@ -15,7 +15,9 @@ import {
   VERTICAL_CURVE_DURATIONS, descentCurve, gradeProfile, vamCurve, verticalityIndex,
 } from './vertical.js';
 import { wPrimeBalance } from './criticalSpeed.js';
-import { matchPlannedSession, sessionOutcome } from './sessionMatch.js';
+import {
+  deviationsFrom, matchPlannedSession, maximalEffortIndex, maximalTestProof, outcomeOf, type RealizedEffort,
+} from './sessionMatch.js';
 import { formatDuration, mean, movingAverage } from './units.js';
 
 /**
@@ -32,8 +34,9 @@ export interface AnalyzeOptions {
   sex?: 'M' | 'F';
   gpsQuality?: 'good' | 'poor' | 'none';
   /**
-   * Séances prescrites le jour de l'activité. C'est le rattachement, et non la
-   * date, qui décide laquelle — au plus une — cette activité concerne.
+   * Séances prescrites de la veille au lendemain de l'activité. C'est le
+   * rattachement, et non la date, qui décide laquelle — au plus une — cette
+   * activité concerne.
    */
   plannedSessions?: PlannedSession[];
   hotSessionsLast14Days?: number;
@@ -216,13 +219,27 @@ export function analyzeActivity(
     avgCadence: mean(streams.cadence ?? []) ?? null,
   });
 
-  const match = matchPlannedSession(opts.plannedSessions ?? [], {
+  // ── Rattachement ──────────────────────────────────────────────────────────
+  const planned = opts.plannedSessions ?? [];
+  // L'effort d'un test se juge sur la durée de son bloc, qui n'est pas toujours
+  // une durée de la courbe.
+  const testDurations = planned
+    .map((s) => s.blocks[maximalEffortIndex(s.blocks, model)]?.durationS)
+    .filter((d): d is number => d != null && !(String(d) in hrAtMms));
+  const realized: RealizedEffort = {
     activityId: activity.id,
     sportType: activity.sportType,
+    date: activity.startDateLocal.slice(0, 10),
     durationS,
     load: load.metabolic,
-  });
-  if (match) analysis.compliance = assessCompliance(match, analysis, durationS);
+    blockSpeedMs: mean(intervals.map((i) => i.avgGradedSpeedMs)),
+    bestEffortHr: {
+      ...hrAtMms,
+      ...companionAtMeanMaximal(gapSeries, idx.map((i) => hr[i] ?? null), testDurations),
+    },
+  };
+  const match = matchPlannedSession(planned, realized, model);
+  if (match) analysis.compliance = assessCompliance(match, realized, model);
 
   return analysis;
 }
@@ -354,35 +371,14 @@ function buildFlags(
 /** Compare l'exécution à la prescription. */
 function assessCompliance(
   planned: PlannedSession,
-  analysis: ActivityAnalysis,
-  actualDurationS: number,
+  realized: RealizedEffort,
+  model: PhysiologyModel,
 ): SessionCompliance {
-  const loadDev =
-    planned.plannedLoad > 0
-      ? ((analysis.load.metabolic - planned.plannedLoad) / planned.plannedLoad) * 100
-      : 0;
-  const durDev =
-    planned.plannedDurationS > 0
-      ? ((actualDurationS - planned.plannedDurationS) / planned.plannedDurationS) * 100
-      : 0;
-
-  // Intensité : on compare la vitesse graduée des blocs détectés à la cible du
-  // premier bloc de travail prescrit.
-  const targetBlock = planned.blocks.find((b) => b.speedRangeMs && b.zone !== 'Z1' && b.zone !== 'Z2');
-  let intensityDev: number | null = null;
-  if (targetBlock?.speedRangeMs && analysis.intervals.length > 0) {
-    const targetMid = (targetBlock.speedRangeMs[0] + targetBlock.speedRangeMs[1]) / 2;
-    const actual = mean(analysis.intervals.map((i) => i.avgGradedSpeedMs));
-    if (actual != null && targetMid > 0) intensityDev = ((actual - targetMid) / targetMid) * 100;
-  }
+  const { loadPct: loadDev, durationPct: durDev, intensityPct: intensityDev } = deviationsFrom(planned, realized);
 
   // Deux questions distinctes, deux jeux de seuils : l'issue dit si c'est bien
   // la séance prescrite qui a eu lieu, le verdict note comment elle a été menée.
-  const outcome = sessionOutcome({
-    loadPct: loadDev,
-    durationPct: durDev,
-    intensityPct: intensityDev,
-  });
+  const outcome = outcomeOf(planned, realized, model);
 
   let verdict: SessionCompliance['verdict'];
   let detail: string;
@@ -408,10 +404,21 @@ function assessCompliance(
   }
 
   if (outcome === 'replaced') {
-    detail =
-      `Ce n'est pas la séance prescrite : ${formatDuration(actualDurationS)} pour ` +
-      `${formatDuration(planned.plannedDurationS)} et ${Math.round(analysis.load.metabolic)} points de charge ` +
-      `pour ${Math.round(planned.plannedLoad)} prévus. ${detail}`;
+    const test = maximalTestProof(planned, realized, model);
+    const why =
+      test && !test.proven
+        ? `aucun effort de ${formatDuration(test.effortS)} tenu au-dessus de ${Math.round(model.vt2.hr)} bpm, ` +
+          `la FC du seuil 2${test.hr != null ? ` (${Math.round(test.hr)} bpm sur le meilleur)` : ''}`
+        : `${formatDuration(realized.durationS)} pour ${formatDuration(planned.plannedDurationS)} et ` +
+          `${Math.round(realized.load)} points de charge pour ${Math.round(planned.plannedLoad)} prévus`;
+    detail = `Ce n'est pas la séance prescrite : ${why}. ${detail}`;
+  }
+
+  // Une séance réalisée un autre jour que prévu le dit d'abord.
+  const plannedOn = planned.plannedDate ?? planned.date;
+  if (plannedOn !== realized.date) {
+    const dayMonth = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+    detail = `Prévue le ${dayMonth(plannedOn)}, réalisée ${plannedOn > realized.date ? 'la veille' : 'le lendemain'}. ${detail}`;
   }
 
   return {

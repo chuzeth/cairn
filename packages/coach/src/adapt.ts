@@ -6,10 +6,12 @@ import * as db from '@cairn/db';
 import { directivesFor, sessionDuration } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
+import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
 import { mondayOf } from './periodization.js';
 import { firstSentence, presentDecided, withHistory } from './presentation.js';
 import {
-  eccentricStrengthOf, elevationGainOf, retitleFromContent, scaledRounds, transformSession,
+  STRENGTH_INTENT, carriesEccentricStrength, elevationGainOf, retitleFromContent, scaledRounds, transformSession,
+  withoutEccentricStrength,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
 
@@ -34,7 +36,8 @@ import { currentModel, type AthleteState } from './state.js';
 export interface Adjustment {
   sessionId: string;
   date: string;
-  action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw';
+  /** `drop_strength` retire le renforcement excentrique de la séance, et laisse le reste. */
+  action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw' | 'drop_strength';
   factor?: number;
   /** Facteur appliqué aux tours des circuits excentriques, sur `scale`. Absent : ils restent entiers. */
   eccentric?: number;
@@ -64,7 +67,7 @@ const ECCENTRIC_TYPES = new Set(['downhill', 'long_trail', 'long_run', 'race_pac
 
 /** Une séance qui sollicite à nouveau l'excentrique : en descendant, ou par un circuit de renforcement. */
 const carriesEccentric = (s: PlannedSession) =>
-  ECCENTRIC_TYPES.has(s.type) || s.plannedMechanicalLoad >= 35 || eccentricStrengthOf(s.blocks) > 0;
+  ECCENTRIC_TYPES.has(s.type) || s.plannedMechanicalLoad >= 35 || carriesEccentricStrength(s.blocks);
 
 /**
  * Ce qu'un allègement retire à un fractionné : des répétitions, jamais des
@@ -210,6 +213,40 @@ export function evaluateAdjustments(
       s.type !== 'rest' &&
       !absenceCovering(absences, s.date),
   );
+
+  // ── Règle 1 bis : renforcement excentrique ────────────────────────────────
+  // Les deux règles du planificateur (`eccentric.ts`), sur le plan tel qu'il
+  // est devenu — une séance déplacée, un circuit réécrit par le coach, un
+  // circuit manqué qui décale la progression : aucun circuit dans les 48 h qui
+  // précèdent une séance qui descend, et un athlète sans historique commence à
+  // un tour. Elles passent avant les règles de fatigue, qui allègent ce qui se
+  // court et laissent le circuit entier. Elles jugent la semaine qui vient ; au
+  // delà, le plan peut encore bouger.
+  const ahead = upcoming.filter(
+    (s) => s.date >= today && (s.status === 'planned' || s.status === 'moved') && !absenceCovering(absences, s.date),
+  );
+  for (const v of eccentricVerdicts(ahead, state.eccentricCircuitsDone ?? 0, today)) {
+    if (daysUntil(v.session.date) > 7) continue;
+    if (v.before) {
+      push({
+        sessionId: v.session.id,
+        date: v.session.date,
+        action: 'drop_strength',
+        rule: 'eccentric_before_descent',
+        reason: `Renforcement excentrique retiré : ${descentReason(v.before)} Le reste de la séance est maintenu.`,
+      });
+    } else if (v.prescribed > v.allowed) {
+      push({
+        sessionId: v.session.id,
+        date: v.session.date,
+        action: 'scale',
+        factor: 1,
+        eccentric: v.allowed / v.prescribed,
+        rule: 'eccentric_progression',
+        reason: `Circuit ramené de ${v.prescribed} à ${roundsLabel(v.allowed)} : ${progressionReason(v.rank)}`,
+      });
+    }
+  }
 
   // ── Règle 2 : fatigue musculaire excentrique ──────────────────────────────
   // La charge mécanique récupère plus lentement que la métabolique : on protège
@@ -480,6 +517,38 @@ export async function applyAdjustments(
         break;
       }
 
+      case 'drop_strength': {
+        // Le circuit part, et l'activation qui l'ouvrait ; la course, la
+        // souplesse et la respiration restent, et se présentent comme toute
+        // séance. Une séance qui n'était que renforcement n'a plus lieu.
+        model ??= await currentModel(athleteId);
+        const content = withoutEccentricStrength(session, model);
+        if (content.plannedDurationS === 0) {
+          await db.updateSession(adj.sessionId, {
+            status: 'cancelled',
+            ...told(session, adj.reason),
+            decision: decided(adj.reason),
+          });
+          break;
+        }
+        const title = `${retitleFromContent({ ...session, blocks: content.blocks }).replace(/ · allégée$/, '')} · allégée`;
+        const intent = session.intent.replace(` ${STRENGTH_INTENT}`, '');
+        const presented = presentDecided(
+          { ...session, ...content, title, intent, decision: decided(adj.reason), rationale: adj.reason },
+          { model },
+        );
+        await db.updateSession(adj.sessionId, {
+          ...content,
+          title: presented.title,
+          intent: presented.intent,
+          blocks: presented.blocks,
+          rationale: presented.rationale,
+          history: presented.history ?? null,
+          decision: presented.decision,
+        } as never);
+        break;
+      }
+
       case 'move':
         if (adj.newDate) {
           await db.updateSession(adj.sessionId, {
@@ -509,13 +578,16 @@ export async function applyAdjustments(
         before: byId.get(a.sessionId)?.title ?? a.sessionId,
         after:
           a.action === 'scale'
-            ? `charge × ${a.factor}${a.eccentric != null ? `, tours excentriques × ${a.eccentric}` : ''}` +
+            ? `charge × ${a.factor}` +
+              `${a.eccentric != null ? `, tours excentriques × ${Math.round(a.eccentric * 100) / 100}` : ''}` +
               `${a.repeats != null ? `, répétitions × ${a.repeats}` : ''}`
             : a.action === 'move'
               ? `déplacée au ${a.newDate}`
               : a.action === 'withdraw'
                 ? 'retirée (absence déclarée)'
-                : a.action,
+                : a.action === 'drop_strength'
+                  ? 'renforcement excentrique retiré'
+                  : a.action,
         reason: a.reason,
       })),
     });
@@ -531,14 +603,18 @@ export function describeAdjustments(adjustments: Adjustment[]): string {
     .map((a) => {
       const what =
         a.action === 'scale'
-          ? `allégée de ${Math.round((1 - (a.factor ?? 1)) * 100)} %`
-          : a.action === 'move'
-            ? `déplacée au ${a.newDate}`
-            : a.action === 'mark_missed'
-              ? 'marquée manquée'
-              : a.action === 'withdraw'
-                ? 'retirée'
-                : 'ajustée';
+          ? (a.factor ?? 1) < 1
+            ? `allégée de ${Math.round((1 - (a.factor ?? 1)) * 100)} %`
+            : 'allégée'
+          : a.action === 'drop_strength'
+            ? 'allégée de son renforcement'
+            : a.action === 'move'
+              ? `déplacée au ${a.newDate}`
+              : a.action === 'mark_missed'
+                ? 'marquée manquée'
+                : a.action === 'withdraw'
+                  ? 'retirée'
+                  : 'ajustée';
       return `- **${a.date}** — séance ${what}. ${a.reason}`;
     })
     .join('\n');

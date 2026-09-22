@@ -511,6 +511,8 @@ export type HistoryAuthor = 'athlete' | 'coach' | 'rules' | 'developer' | 'plann
 
 export interface SessionRow {
   id: string; date: string; type: string; title: string; intent: string;
+  /** Le jour que le plan avait fixé, quand la séance a été faite la veille ou le lendemain — `date` est alors le jour réel. */
+  plannedDate?: string;
   blocks: {
     label: string; zone: string; repeat?: number; durationS?: number; distanceM?: number;
     /** Bloc non couru : souplesse et respiration du dossier, ou l'activation d'un renforcement. */

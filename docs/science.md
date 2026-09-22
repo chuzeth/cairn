@@ -73,6 +73,23 @@ Cairn calcule donc une seconde charge, à partir du travail négatif absorbé
 Échelle calibrée pour que 1 000 m de D− à pente et vitesse modérées valent
 ≈ 40 points, du même ordre que le coût métabolique d'une sortie longue vallonnée.
 
+### Écart assumé : le renforcement compte comme de la descente
+
+Un circuit excentrique n'est dans aucun flux, et il abîme les muscles qui
+limitent la descente. Il compte donc dans la charge mécanique à hauteur de ce
+qu'il coûte aux quadriceps et aux mollets : chaque répétition vaut les mètres de
+descente courue qui leur coûteraient autant — travail freiné, part qui passe par
+ces deux muscles, et six fois plus de dégâts par joule qu'un appui de course,
+parce qu'elle freine lentement en fin d'amplitude (valeur par défaut, non
+mesurée). Un tour du circuit du plan vaut ≈ 90 m de D−.
+
+Le ratio ne voit pas la nouveauté : une charge chronique bâtie sur la descente
+masque un premier circuit, dont les courbatures culminent 24 à 72 h après. Deux
+règles de prescription s'y ajoutent donc, dans le planificateur comme dans les
+règles de charge : aucun circuit dans les 48 h qui précèdent une sortie longue,
+une rando-course, une descente ou une course ; un athlète sans historique
+commence à un tour pour deux séances, puis deux, puis les trois du dossier.
+
 ## Chartes de forme
 
 Modèle à réponse impulsionnelle de Banister, avec **deux jeux de constantes de

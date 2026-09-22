@@ -216,6 +216,11 @@ export const plannedSessions = sqliteTable(
     planId: text('plan_id').notNull().references(() => trainingPlans.id, { onDelete: 'cascade' }),
     athleteId: text('athlete_id').notNull(),
     date: text('date').notNull(),
+    /**
+     * Le jour que le plan avait fixé, quand la séance a été réalisée un autre
+     * jour. Ajoutée par `ensureSessionColumns`.
+     */
+    plannedDate: text('planned_date'),
     weekStart: text('week_start').notNull(),
     phase: text('phase').notNull(),
     type: text('type').notNull(),
