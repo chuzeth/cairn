@@ -7,11 +7,12 @@ import { directivesFor, sessionDuration } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
-import { mondayOf } from './periodization.js';
+import { addDays, mondayOf } from './periodization.js';
+import { RECOVERY_MIN, isHardSession, isLongType } from './planner.js';
 import { firstSentence, presentDecided, withHistory } from './presentation.js';
 import {
-  STRENGTH_INTENT, carriesEccentricStrength, elevationGainOf, retitleFromContent, scaledRounds, transformSession,
-  withoutEccentricStrength,
+  STRENGTH_INTENT, carriesEccentricStrength, elevationGainOf, formatOf, isMaximalTest, recovery as decrassage,
+  restDay, retitleFromContent, scaledRounds, transformSession, withoutEccentricStrength,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
 
@@ -36,8 +37,16 @@ import { currentModel, type AthleteState } from './state.js';
 export interface Adjustment {
   sessionId: string;
   date: string;
-  /** `drop_strength` retire le renforcement excentrique de la séance, et laisse le reste. */
-  action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw' | 'drop_strength';
+  /**
+   * `drop_strength` retire le renforcement excentrique de la séance, et laisse le reste.
+   * `recover` fait de la séance le lendemain d'une séance clef — repos ou décrassage —,
+   * au jour `newDate` quand il est donné. `free` libère un jour qui ne protège plus rien.
+   */
+  action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw' | 'drop_strength' | 'recover' | 'free';
+  /** Sur `recover` : ce que la séance devient. */
+  recovery?: 'rest' | 'recovery';
+  /** Sur `recover` : le jour est vide, la séance s'écrit sous l'identifiant `sessionId`. */
+  insert?: boolean;
   factor?: number;
   /** Facteur appliqué aux tours des circuits excentriques, sur `scale`. Absent : ils restent entiers. */
   eccentric?: number;
@@ -162,6 +171,191 @@ export function withdrawalsFor(
     }));
 }
 
+const dayMonth = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+
+/** Le pire des cinq crans du point du jour : fatigue « vidé », courbatures « sévères ». */
+const WORST = 5;
+
+/** Ce qu'une séance peut devenir au lendemain d'une séance clef, et ce qui protège une date. */
+const EASY_TYPES = new Set(['rest', 'recovery', 'endurance']);
+const PROTECTIVE_TYPES = new Set(['rest', 'recovery']);
+
+/** Une séance que les règles peuvent réécrire : personne d'autre ne l'a décidée. */
+const rulesMay = (s: PlannedSession) => !s.decision || s.decision.by === 'rules';
+const live = (s: PlannedSession) => s.status !== 'cancelled' && s.status !== 'withdrawn';
+
+/**
+ * Ce que la règle pose au lendemain d'une séance clef réalisée, et pourquoi.
+ *
+ * C'est la règle du planificateur : repos ou décrassage. Après une sortie
+ * longue, le repos, là où il vaut le plus ; après une autre séance clef, le
+ * décrassage. Après un test maximal, le décrassage aussi — il soulage les
+ * courbatures et ajoute du volume facile —, et le repos ne l'emporte que le
+ * jour même (`day`), sur une disponibilité rouge ou un point du jour « vidé » ou
+ * « courbatures sévères ». La veille, personne ne sait ce que le corps dira.
+ */
+function aftermathOf(
+  k: PlannedSession,
+  test: boolean,
+  day: Pick<AthleteState, 'readiness' | 'todayCheckIn'> | null,
+): { kind: 'rest' | 'recovery'; reason: string } {
+  const realized = dayMonth(k.date);
+  const planned = k.plannedDate && k.plannedDate !== k.date ? dayMonth(k.plannedDate) : null;
+  if (test) {
+    const who = `Test maximal ${planned ? `prévu le ${planned}, couru le ${realized}` : `couru le ${realized}`}`;
+    const signal = !day
+      ? null
+      : day.readiness.verdict === 'red'
+        ? `la disponibilité est rouge (${day.readiness.score}/100)`
+        : day.todayCheckIn?.fatigue === WORST
+          ? 'le point du jour dit « vidé »'
+          : day.todayCheckIn?.soreness === WORST
+            ? 'le point du jour dit « courbatures sévères »'
+            : null;
+    return signal
+      ? { kind: 'rest', reason: `${who}, et ${signal} : son lendemain est un repos complet plutôt qu'un décrassage.` }
+      : {
+          kind: 'recovery',
+          reason:
+            `${who} : son lendemain est un décrassage, qui soulage les courbatures et ajoute du volume facile. ` +
+            `Le repos ne l'emporte que sur une disponibilité rouge, ou un point du jour « vidé » ou « courbatures sévères ».`,
+        };
+  }
+  const who = `Séance clef « ${formatOf(k.title)} » prévue le ${planned ?? realized}, réalisée le ${realized}`;
+  return isLongType(k.type)
+    ? { kind: 'rest', reason: `${who} : son lendemain est un repos complet, le jour où il vaut le plus.` }
+    : {
+        kind: 'recovery',
+        reason: `${who} : son lendemain est un décrassage, on facilite la récupération sans ajouter de charge.`,
+      };
+}
+
+/**
+ * Les voisines d'une séance clef réalisée, réévaluées sans reconstruction.
+ *
+ * Le test maximal prévu le 22/09 a été couru le 21/09. Le rattachement l'a
+ * reconnu et a libéré le 22/09 ; restaient le 22/09 vide et le 23/09 en
+ * « Repos complet », posé comme lendemain du test à son ancienne date.
+ * Personne n'avait décidé ces deux jours de repos.
+ *
+ * Réalisée un autre jour que prévu, une séance clef emporte ses voisines :
+ *  · son lendemain réel reçoit ce que la règle pose après elle (`aftermathOf`)
+ *    — sur la séance facile qui l'occupe ; jour vide, sur la protection de
+ *    l'ancienne date, qui suit la séance à son nouveau lendemain ; à défaut,
+ *    sur une séance écrite pour lui ;
+ *  · ce qui protégeait l'ancienne date — son lendemain, et sa veille pour un
+ *    test — est libéré, à moins de protéger encore autre chose.
+ * Un test maximal couru à sa date n'a que son lendemain à réévaluer.
+ *
+ * Seuls bougent les jours à venir, les séances que personne d'autre que les
+ * règles n'a décidées, et les jours que l'athlète a déclarés disponibles. Un
+ * lendemain qui porte une séance exigeante, décidée ou déjà faite reste tel
+ * quel.
+ */
+export function afterKeySessions(state: AthleteState, upcoming: readonly PlannedSession[]): Adjustment[] {
+  const today = state.today.date;
+  const model = state.model;
+  // La séance clef se lit aussi dans le plan entier : le point du jour ne passe
+  // aux règles que ce qui vient, et elle a pu être courue la veille.
+  const known = new Map<string, PlannedSession>();
+  for (const s of [...(state.plan?.weeks.flatMap((w) => w.sessions) ?? []), ...upcoming]) known.set(s.id, s);
+  const all = [...known.values()].filter(live);
+  const available = new Set(state.profile?.constraints.availableDays ?? [0, 1, 2, 3, 4, 5, 6]);
+  const isAvailable = (date: string) => available.has(new Date(`${date}T00:00:00Z`).getUTCDay());
+  // Un jour protège encore s'il est le lendemain d'une autre séance exigeante,
+  // ou la veille d'un autre test.
+  const stillGuards = (date: string, k: PlannedSession) =>
+    all.some(
+      (x) =>
+        x.id !== k.id &&
+        ((x.date === addDays(date, -1) && isHardSession(x, model)) ||
+          (x.date === addDays(date, 1) && isMaximalTest(x, model))),
+    );
+
+  const out: Adjustment[] = [];
+  for (const k of all) {
+    if (k.priority !== 'key' || k.status !== 'completed' || !isHardSession(k, model)) continue;
+    const test = isMaximalTest(k, model);
+    const moved = k.plannedDate != null && k.plannedDate !== k.date;
+    if (!moved && !test) continue;
+
+    const after = addDays(k.date, 1);
+    // Le lendemain de l'ancienne date en premier : c'est lui qui suit la séance.
+    const guards = moved ? [addDays(k.plannedDate!, 1), ...(test ? [addDays(k.plannedDate!, -1)] : [])] : [];
+    const freed = guards.flatMap((date) =>
+      upcoming.filter(
+        (s) =>
+          s.date === date && date !== after && date >= today && s.status === 'planned' &&
+          PROTECTIVE_TYPES.has(s.type) && rulesMay(s) && !stillGuards(date, k),
+      ),
+    );
+
+    if (after >= today && isAvailable(after) && !absenceCovering(state.absences, after)) {
+      const want = aftermathOf(k, test, after === today ? state : null);
+      const day = upcoming.filter((s) => s.date === after && live(s));
+      const easy = day.filter((s) => s.status === 'planned' && EASY_TYPES.has(s.type) && rulesMay(s));
+      if (easy.length === day.length) {
+        const recover = {
+          date: after, action: 'recover' as const, recovery: want.kind, rule: 'day_after_key', reason: want.reason,
+        };
+        const [here] = easy;
+        if (here) {
+          if (here.type !== want.kind) out.push({ ...recover, sessionId: here.id });
+        } else if (freed.length > 0) {
+          const source = freed.shift()!;
+          out.push({
+            ...recover,
+            sessionId: source.id,
+            date: source.date,
+            newDate: after,
+            reason:
+              `${want.reason} ${source.type === 'rest' ? 'Le repos' : 'Le décrassage'} posé le ` +
+              `${dayMonth(source.date)} pour protéger l'ancienne date passe au ${dayMonth(after)}.`,
+          });
+        } else {
+          out.push({ ...recover, sessionId: `${k.id}-lendemain`, insert: true });
+        }
+      }
+    }
+
+    for (const s of freed) {
+      out.push({
+        sessionId: s.id,
+        date: s.date,
+        action: 'free',
+        rule: 'protection_freed',
+        reason:
+          `Libéré : la séance « ${formatOf(k.title)} », prévue le ${dayMonth(k.plannedDate!)}, a été réalisée le ` +
+          `${dayMonth(k.date)} — ${s.type === 'rest' ? 'ce repos' : 'ce décrassage'} ne protège plus rien.`,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Le contenu d'un lendemain de séance clef : le repos complet, ou le décrassage
+ * du planificateur. Un décrassage qui ne fait que suivre la séance à son
+ * nouveau lendemain garde le sien, souplesse et respiration comprises.
+ */
+function recoveryContent(kind: 'rest' | 'recovery', from: PlannedSession | undefined, model: PhysiologyModel) {
+  if (kind === 'recovery' && from?.type === 'recovery') {
+    const { type, title, intent, priority, blocks, plannedLoad, plannedMechanicalLoad, plannedDurationS } = from;
+    return {
+      type, title, intent, priority, blocks, plannedLoad, plannedMechanicalLoad, plannedDurationS,
+      plannedElevationGainM: from.plannedElevationGainM, plannedDistanceM: from.plannedDistanceM,
+      directives: from.directives, successCriteria: from.successCriteria,
+    };
+  }
+  const t = kind === 'rest' ? restDay() : decrassage(model, RECOVERY_MIN);
+  return {
+    type: t.type, title: t.title, intent: t.intent, priority: t.priority, blocks: t.blocks,
+    plannedLoad: t.plannedLoad, plannedMechanicalLoad: t.plannedMechanicalLoad, plannedDurationS: t.durationS,
+    plannedElevationGainM: t.elevationGainM, plannedDistanceM: t.plannedDistanceM,
+    directives: undefined, successCriteria: undefined,
+  };
+}
+
 export function evaluateAdjustments(
   state: AthleteState,
   upcoming: PlannedSession[],
@@ -203,6 +397,14 @@ export function evaluateAdjustments(
       });
     }
   }
+
+  // ── Règle 1 ter : le lendemain d'une séance clef réalisée ────────────────
+  // Réalisée un autre jour que prévu, une séance clef emporte ses voisines :
+  // son lendemain réel reçoit ce que le planificateur pose après elle, et ce
+  // qui protégeait l'ancienne date est libéré. Rien n'est reconstruit. Après un
+  // test maximal, le décrassage est le choix par défaut, test couru à sa date
+  // ou non ; le repos ne l'emporte que le jour même, sur ce que le corps dit.
+  for (const adj of afterKeySessions(state, upcoming)) push(adj);
 
   // Les jours d'absence sortent du plan pour toutes les règles suivantes : une
   // séance retirée n'a pas à être allégée, ni à décaler celle qui la suit.
@@ -463,8 +665,34 @@ export async function applyAdjustments(
     history: withHistory(session.history, { at, by: origin, text }),
   });
 
+  const plan = await db.getActivePlan(athleteId);
+  // Une séance qui change de semaine prend la phase de celle qui l'accueille.
+  const weekOf = (date: string) => {
+    const weekStart = mondayOf(date);
+    const weeks = plan?.weeks ?? [];
+    const phase = weeks.filter((w) => w.weekStart <= weekStart).at(-1)?.phase ?? weeks[0]?.phase ?? 'base';
+    return { weekStart, phase };
+  };
+
   for (const adj of adjustments) {
     const session = byId.get(adj.sessionId);
+
+    // Un lendemain de séance clef resté vide, sans protection à y déplacer : la
+    // séance s'écrit.
+    if (adj.action === 'recover' && adj.insert) {
+      if (!plan || session) continue;
+      model ??= await currentModel(athleteId);
+      const written = presentDecided(
+        {
+          id: adj.sessionId, athleteId, date: adj.date, status: 'planned',
+          ...recoveryContent(adj.recovery ?? 'recovery', undefined, model),
+          decision: decided(adj.reason), rationale: adj.reason,
+        },
+        { model },
+      );
+      await db.insertSession(plan.plan.id, written, weekOf(adj.date));
+      continue;
+    }
     if (!session) continue;
 
     switch (adj.action) {
@@ -560,13 +788,48 @@ export async function applyAdjustments(
         }
         break;
 
+      case 'recover': {
+        // Le lendemain d'une séance clef, à son jour : la séance facile qui
+        // l'occupait, ou la protection de l'ancienne date qui y passe.
+        model ??= await currentModel(athleteId);
+        const date = adj.newDate ?? adj.date;
+        const content = recoveryContent(adj.recovery ?? 'recovery', session, model);
+        const presented = presentDecided(
+          { ...session, ...content, date, decision: decided(adj.reason), rationale: adj.reason },
+          { model },
+        );
+        await db.updateSession(adj.sessionId, {
+          ...content,
+          plannedDistanceM: content.plannedDistanceM ?? null,
+          directives: content.directives ?? null,
+          successCriteria: content.successCriteria ?? null,
+          date,
+          ...(date !== session.date ? weekOf(date) : {}),
+          title: presented.title,
+          intent: presented.intent,
+          blocks: presented.blocks,
+          rationale: presented.rationale,
+          history: presented.history ?? null,
+          decision: presented.decision,
+        } as never);
+        break;
+      }
+
+      case 'free':
+        // Le jour ne protège plus rien : il n'impose plus rien.
+        await db.updateSession(adj.sessionId, {
+          status: 'cancelled',
+          ...told(session, adj.reason),
+          decision: decided(adj.reason),
+        });
+        break;
+
       case 'swap':
         await db.updateSession(adj.sessionId, { ...told(session, adj.reason), decision: decided(adj.reason) });
         break;
     }
   }
 
-  const plan = await db.getActivePlan(athleteId);
   if (plan) {
     await db.appendPlanRevision(plan.plan.id, {
       at: new Date().toISOString(),
@@ -575,7 +838,7 @@ export async function applyAdjustments(
       summary: `${adjustments.length} ajustement(s) automatique(s) : ${[...new Set(adjustments.map((a) => a.rule))].join(', ')}.`,
       changes: adjustments.map((a) => ({
         date: a.date,
-        before: byId.get(a.sessionId)?.title ?? a.sessionId,
+        before: a.insert ? '—' : byId.get(a.sessionId)?.title ?? a.sessionId,
         after:
           a.action === 'scale'
             ? `charge × ${a.factor}` +
@@ -587,7 +850,11 @@ export async function applyAdjustments(
                 ? 'retirée (absence déclarée)'
                 : a.action === 'drop_strength'
                   ? 'renforcement excentrique retiré'
-                  : a.action,
+                  : a.action === 'recover'
+                    ? recoveredAs(a)
+                    : a.action === 'free'
+                      ? 'libérée'
+                      : a.action,
         reason: a.reason,
       })),
     });
@@ -614,8 +881,18 @@ export function describeAdjustments(adjustments: Adjustment[]): string {
                 ? 'marquée manquée'
                 : a.action === 'withdraw'
                   ? 'retirée'
-                  : 'ajustée';
+                  : a.action === 'recover'
+                    ? recoveredAs(a)
+                    : a.action === 'free'
+                      ? 'libérée'
+                      : 'ajustée';
       return `- **${a.date}** — séance ${what}. ${a.reason}`;
     })
     .join('\n');
+}
+
+/** Ce que devient le lendemain d'une séance clef, en clair. */
+function recoveredAs(a: Adjustment): string {
+  const kind = a.recovery === 'rest' ? 'repos complet' : 'décrassage';
+  return a.insert ? `ajoutée : ${kind}` : a.newDate ? `déplacée au ${a.newDate} : ${kind}` : `réécrite : ${kind}`;
 }

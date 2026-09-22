@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Activity, ActivityAnalysis, ActivityStreams, PlannedSession, SessionBlock } from '@cairn/core';
+import {
+  PIERRE,
+  type Activity, type ActivityAnalysis, type ActivityStreams, type DailyCheckIn, type PlannedSession,
+  type SessionBlock, type TrainingPlan,
+} from '@cairn/core';
 import {
   matchPlannedSession, outcomeOf, sessionOutcome, type RealizedEffort,
 } from '@cairn/physiology';
@@ -102,14 +106,26 @@ describe('Rattachement à la veille ou au lendemain', () => {
 // ── La passe des sept derniers jours ─────────────────────────────────────────
 
 const store = vi.hoisted(() => ({
-  sessions: [] as (PlannedSession & { weekStart?: string })[],
+  sessions: [] as (PlannedSession & { weekStart?: string; phase?: string })[],
   activities: [] as Activity[],
   streams: new Map<string, ActivityStreams>(),
   analyses: new Map<string, ActivityAnalysis>(),
   updates: 0,
+  revisions: [] as TrainingPlan['revisionLog'],
 }));
 
 vi.mock('@cairn/db', () => ({
+  getLatestModel: async () => PIERRE_MODEL,
+  getActivePlan: async () => ({
+    plan: { id: 'plan' },
+    weeks: [{ weekStart: '2026-09-21', phase: 'build', sessions: store.sessions.map((s) => ({ ...s })) }],
+  }),
+  appendPlanRevision: async (_id: string, revision: TrainingPlan['revisionLog'][number]) => {
+    store.revisions.push(revision);
+  },
+  insertSession: async (_plan: string, s: PlannedSession, week: { weekStart: string; phase: string }) => {
+    store.sessions.push({ ...s, ...week });
+  },
   getActivity: async (id: string) => store.activities.find((a) => a.id === id) ?? null,
   getStreams: async (id: string) => {
     const streams = store.streams.get(id);
@@ -129,7 +145,7 @@ vi.mock('@cairn/db', () => ({
   },
 }));
 
-const { rematchRecent } = await import('@cairn/coach');
+const { applyAdjustments, evaluateAdjustments, rematchRecent } = await import('@cairn/coach');
 
 /** 20 min d'échauffement, 20 min à 14,3 km/h et 175 bpm, 21 min de retour : la forme du 21/09. */
 function testRun(): ActivityStreams {
@@ -169,6 +185,7 @@ beforeEach(() => {
   store.streams = new Map([['strava-2109', testRun()]]);
   store.analyses = new Map();
   store.updates = 0;
+  store.revisions = [];
 });
 
 describe('La passe de rattachement des sept derniers jours', () => {
@@ -201,5 +218,189 @@ describe('La passe de rattachement des sept derniers jours', () => {
     store.streams.set('strava-2309', testRun());
     expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-09-23')).toEqual([]);
     expect(store.analyses.has('strava-2309')).toBe(false);
+  });
+});
+
+// ── Les voisines d'une séance clef réalisée un autre jour ────────────────────
+
+/**
+ * La semaine réelle, relevée sur la base le 22/09 à midi : le test prévu le
+ * 22/09 couru la veille, et le « Repos complet » du 23/09 — posé comme
+ * lendemain du test à son ancienne date — resté en place. Le 22/09 est vide.
+ */
+const TEST_2109: PlannedSession = {
+  ...TEST, status: 'completed', date: '2026-09-21', plannedDate: '2026-09-22', completedActivityId: 'strava-2109',
+};
+const REST_2309: PlannedSession = { ...REST, id: 'ses_2309', date: '2026-09-23' };
+const DESCENTE: PlannedSession = endurance({
+  id: 'ses_2409', date: '2026-09-24', type: 'downhill', title: 'Descente technique 6 × 3 min', plannedLoad: 57,
+});
+const RANDO: PlannedSession = endurance({
+  id: 'ses_2709', date: '2026-09-27', type: 'long_trail', priority: 'key', title: 'Rando-course — 3 h · 680 m D+',
+  plannedLoad: 138, plannedDurationS: 10800,
+  decision: { at: '2026-09-18T17:47:59.066Z', by: 'coach', summary: 'Rando-course ramenée à 680 m D+.' },
+});
+const week = (): PlannedSession[] => [{ ...REST }, { ...TEST_2109 }, { ...REST_2309 }, DESCENTE, RANDO];
+
+/** Le point du jour du 22/09 : fatigue « moyen », courbatures « nettes ». */
+const CHECK_IN: DailyCheckIn = { date: '2026-09-22', athleteId: 'pierre', fatigue: 3, soreness: 3, sleepHours: 8.5 };
+
+const stateOn = (
+  date: string,
+  over: { verdict?: 'green' | 'amber' | 'red'; checkIn?: Partial<DailyCheckIn>; plan?: PlannedSession[] } = {},
+) =>
+  ({
+    today: {
+      date, ctl: 36, atl: 38, tsb: -2, mechanicalTsb: 2, acwr: 1.08, mechanicalAcwr: 0.76, rampRate: 1.3,
+      monotony: 0.9, tsbLabel: '', acwrLabel: '', acwrRisk: 'low',
+    },
+    readiness: { date, score: over.verdict === 'red' ? 32 : 56, verdict: over.verdict ?? 'amber', components: {}, recommendation: '' },
+    todayCheckIn: { ...CHECK_IN, date, ...over.checkIn },
+    absences: [], model: PIERRE_MODEL, profile: PIERRE, eccentricCircuitsDone: 0,
+    plan: over.plan ? { plan: { id: 'plan' }, weeks: [{ weekStart: '2026-09-21', sessions: over.plan }] } : null,
+  }) as never;
+
+describe('Une séance clef réalisée un autre jour emporte ses voisines', () => {
+  it('donne au lendemain réel le décrassage, et y déplace le repos posé pour l’ancienne date', () => {
+    const adj = evaluateAdjustments(stateOn('2026-09-22'), week());
+    expect(adj).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_2309', date: '2026-09-23', newDate: '2026-09-22', action: 'recover', recovery: 'recovery',
+        rule: 'day_after_key',
+      }),
+    ]);
+    expect(adj[0]!.reason).toMatch(
+      /^Test maximal prévu le 22\/09, couru le 21\/09 : son lendemain est un décrassage, qui soulage les courbatures/,
+    );
+    expect(adj[0]!.reason).toContain("Le repos posé le 23/09 pour protéger l'ancienne date passe au 22/09.");
+    // Le repos du 21/09 est passé : c'est le jour du test, rien ne s'y réécrit.
+    expect(adj.some((a) => a.sessionId === REST.id)).toBe(false);
+  });
+
+  it('ne laisse le repos l’emporter que le jour même, sur ce que le corps en dit', () => {
+    const kind = (state: never) => evaluateAdjustments(state, week())[0]?.recovery;
+    expect(kind(stateOn('2026-09-22', { checkIn: { fatigue: 5 } }))).toBe('rest');
+    expect(kind(stateOn('2026-09-22', { checkIn: { soreness: 5 } }))).toBe('rest');
+    expect(kind(stateOn('2026-09-22', { verdict: 'red' }))).toBe('rest');
+    expect(evaluateAdjustments(stateOn('2026-09-22', { checkIn: { fatigue: 5 } }), week())[0]!.reason).toContain(
+      'et le point du jour dit « vidé » : son lendemain est un repos complet',
+    );
+    // « Lourd » et des courbatures « fortes » ne sont ni « vidé » ni « sévères ».
+    expect(kind(stateOn('2026-09-22', { checkIn: { fatigue: 4, soreness: 4 } }))).toBe('recovery');
+    // La veille au soir, le point du jour du 21/09 ne dit rien du 22/09.
+    const eve = evaluateAdjustments(stateOn('2026-09-21', { checkIn: { fatigue: 5 } }), week());
+    expect(eve.find((a) => a.rule === 'day_after_key')?.recovery).toBe('recovery');
+  });
+
+  it('trouve la séance clef dans le plan quand le point du jour ne passe que ce qui vient', () => {
+    const upcoming = week().filter((s) => s.date >= '2026-09-22');
+    expect(evaluateAdjustments(stateOn('2026-09-22'), upcoming)).toEqual([]);
+    expect(evaluateAdjustments(stateOn('2026-09-22', { plan: week() }), upcoming)).toEqual([
+      expect.objectContaining({ sessionId: 'ses_2309', newDate: '2026-09-22', recovery: 'recovery' }),
+    ]);
+  });
+
+  it('libère le repos du 23/09 quand le lendemain est déjà passé', () => {
+    const adj = evaluateAdjustments(stateOn('2026-09-23'), week());
+    expect(adj).toEqual([
+      expect.objectContaining({ sessionId: 'ses_2309', action: 'free', rule: 'protection_freed' }),
+    ]);
+    expect(adj[0]!.reason).toBe(
+      'Libéré : la séance « Test maximal 20 min », prévue le 22/09, a été réalisée le 21/09 — ce repos ne protège plus rien.',
+    );
+  });
+
+  it('ne réécrit ni une séance décidée, ni une séance exigeante, et garde un jour qui protège encore', () => {
+    // Le coach a décidé du 22/09 : il reste à lui, et le 23/09 est libéré quand même.
+    const decided = endurance({
+      id: 'ses_2209', date: '2026-09-22', type: 'recovery', title: 'Décrassage',
+      decision: { at: '2026-09-21T19:00:00.000Z', by: 'coach', summary: 'Décrassage le 22/09.' },
+    });
+    expect(evaluateAdjustments(stateOn('2026-09-22'), [...week(), decided]).map((a) => [a.sessionId, a.action]))
+      .toEqual([['ses_2309', 'free']]);
+    // Un second test le 24/09 : le 23/09 en est la veille, il protège encore.
+    const second = { ...TEST, id: 'ses_test_2409', date: '2026-09-24' };
+    const kept = evaluateAdjustments(stateOn('2026-09-22'), [...week().filter((s) => s.id !== DESCENTE.id), second]);
+    expect(kept.filter((a) => a.sessionId === 'ses_2309' && a.action === 'free')).toEqual([]);
+  });
+
+  it('écrit le lendemain quand il est vide et qu’aucune protection ne peut y passer', () => {
+    // Prévu le samedi 26/09, couru le vendredi : le dimanche porte la rando-course, rien à déplacer.
+    const test = { ...TEST_2109, date: '2026-09-25', plannedDate: '2026-09-26' };
+    const adj = evaluateAdjustments(stateOn('2026-09-26'), [test, RANDO]);
+    expect(adj).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_test-lendemain', date: '2026-09-26', action: 'recover', recovery: 'recovery', insert: true,
+      }),
+    ]);
+  });
+
+  it('au lendemain d’un test couru à sa date, remplace le repos par le décrassage', () => {
+    const atItsDate = { ...TEST, status: 'completed' as const };
+    const adj = evaluateAdjustments(stateOn('2026-09-23'), [atItsDate, { ...REST_2309 }]);
+    expect(adj).toEqual([
+      expect.objectContaining({ sessionId: 'ses_2309', date: '2026-09-23', action: 'recover', recovery: 'recovery' }),
+    ]);
+    expect(adj[0]!.newDate).toBeUndefined();
+    // « Vidé » ce matin-là : le repos est déjà là.
+    expect(evaluateAdjustments(stateOn('2026-09-23', { checkIn: { fatigue: 5 } }), [atItsDate, { ...REST_2309 }]))
+      .toEqual([]);
+  });
+});
+
+describe('La semaine du 21/09, de la relève au plan', () => {
+  beforeEach(() => {
+    // Le test prévu le 22/09, le repos de sa veille et celui de son lendemain,
+    // la descente du 24/09 ; la sortie du 21/09 attend d'être rattachée.
+    store.sessions = [{ ...REST }, { ...TEST }, { ...REST_2309 }, { ...DESCENTE }].map((s) => ({
+      ...s, weekStart: '2026-09-21', phase: 'build',
+    }));
+  });
+
+  const onDay = (date: string) => store.sessions.filter((s) => s.date === date && s.status !== 'cancelled');
+
+  it('rattache le test à la veille, puis donne au 22/09 son décrassage et laisse le 23/09 libre', async () => {
+    await rematchRecent('pierre', PIERRE_MODEL, '2026-09-22');
+    const adjustments = evaluateAdjustments(stateOn('2026-09-22'), store.sessions.map((s) => ({ ...s })));
+    expect(await applyAdjustments('pierre', adjustments)).toBe(1);
+
+    const [lendemain] = onDay('2026-09-22');
+    expect(lendemain).toMatchObject({
+      id: 'ses_2309', type: 'recovery', status: 'planned', title: 'Décrassage — 45 min', priority: 'optional',
+      plannedDurationS: 2700, weekStart: '2026-09-21', decision: { by: 'rules' },
+    });
+    expect(lendemain!.plannedLoad).toBeGreaterThan(0);
+    expect(lendemain!.rationale).toMatch(
+      /^Ajustée par les règles de charge le \d\d\/\d\d — Test maximal prévu le 22\/09, couru le 21\/09 : son lendemain est un décrassage/,
+    );
+    expect(lendemain!.history?.at(-1)).toMatchObject({ by: 'rules' });
+    expect(onDay('2026-09-23')).toEqual([]);
+    expect(store.revisions.at(-1)?.changes).toEqual([
+      expect.objectContaining({ date: '2026-09-23', before: 'Repos complet', after: 'déplacée au 2026-09-22 : décrassage' }),
+    ]);
+
+    // Une seconde relève ne change plus rien.
+    expect(evaluateAdjustments(stateOn('2026-09-22'), store.sessions.map((s) => ({ ...s })))).toEqual([]);
+    // « Vidé » au point du jour suivant : le décrassage devient le repos.
+    const drained = evaluateAdjustments(stateOn('2026-09-22', { checkIn: { fatigue: 5 } }), store.sessions.map((s) => ({ ...s })));
+    await applyAdjustments('pierre', drained, 'readiness');
+    expect(onDay('2026-09-22')).toEqual([
+      expect.objectContaining({ id: 'ses_2309', type: 'rest', title: 'Repos complet', plannedLoad: 0, plannedDurationS: 0 }),
+    ]);
+  });
+
+  it('écrit la séance du lendemain quand le jour est vide', async () => {
+    store.sessions = [
+      { ...TEST_2109, date: '2026-09-25', plannedDate: '2026-09-26', weekStart: '2026-09-21', phase: 'build' },
+      { ...RANDO, weekStart: '2026-09-21', phase: 'build' },
+    ];
+    await applyAdjustments('pierre', evaluateAdjustments(stateOn('2026-09-26'), store.sessions.map((s) => ({ ...s }))));
+    expect(onDay('2026-09-26')).toEqual([
+      expect.objectContaining({
+        id: 'ses_test-lendemain', type: 'recovery', status: 'planned', weekStart: '2026-09-21', phase: 'build',
+        decision: expect.objectContaining({ by: 'rules' }),
+      }),
+    ]);
+    expect(store.revisions.at(-1)?.changes[0]).toMatchObject({ before: '—', after: 'ajoutée : décrassage' });
   });
 });

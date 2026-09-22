@@ -441,6 +441,24 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
     expect(['rest', 'recovery']).toContain(eve?.type ?? 'rest');
   });
 
+  it('pose un décrassage au lendemain du test maximal, et le repos de la semaine ailleurs', async () => {
+    // La reconstruction du 22/09 à 11 h 55 : le repos du 21/09 est passé, et le
+    // repos de la semaine tombait sur le 23/09, lendemain du test.
+    vi.setSystemTime(new Date('2026-09-22T09:55:00.000Z'));
+    store.plan!.weeks[0]!.sessions.unshift({
+      id: 'ses_qg1lrzstrqd', athleteId: 'pierre', date: '2026-09-21', type: 'rest', title: 'Repos complet',
+      intent: '', blocks: [], plannedLoad: 0, plannedMechanicalLoad: 0, plannedDurationS: 0, priority: 'support',
+      status: 'planned',
+    });
+    const days = byDate(await written());
+    expect(days.get('2026-09-23')).toMatchObject({ type: 'recovery' });
+    expect(days.get('2026-09-23')!.rationale).toMatch(
+      /^Décrassage : lendemain du test maximal du 22\/09 — il soulage les courbatures et ajoute du volume facile/,
+    );
+    const rest = [...days.values()].filter((s) => s.type === 'rest' && s.date > '2026-09-22' && s.date <= '2026-09-27');
+    expect(rest.map((s) => s.date)).toHaveLength(1);
+  });
+
   it('ne pose ni qualité ni sortie longue la veille ou le lendemain d\'une conservée', async () => {
     const days = byDate(await written());
     for (const kept of DECIDED_ON_2026_09_21) {

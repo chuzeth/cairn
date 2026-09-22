@@ -117,9 +117,9 @@ export default function PlanPage() {
 
       <div className="stack">
         {weeks.map(([weekStart, sessions]) => {
-          // Une séance retirée ne pèse plus rien : la compter dans le total de la
-          // semaine ferait lire une charge que personne n'attend plus.
-          const held = sessions.filter((s) => s.status !== 'withdrawn');
+          // Une séance retirée ou annulée ne pèse plus rien : la compter dans le
+          // total de la semaine ferait lire une charge que personne n'attend plus.
+          const held = sessions.filter((s) => s.status !== 'withdrawn' && s.status !== 'cancelled');
           const total = held.reduce((a, s) => a + s.plannedLoad, 0);
           const totalTime = held.reduce((a, s) => a + s.plannedDurationS, 0);
           const totalVert = held.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
@@ -156,7 +156,7 @@ export default function PlanPage() {
                           >
                             <div
                               className="plan-session"
-                              data-faded={s.status === 'missed' || s.status === 'withdrawn'}
+                              data-faded={s.status === 'missed' || s.status === 'withdrawn' || s.status === 'cancelled'}
                               style={{ borderLeftColor: TYPE_COLORS[s.type] ?? 'var(--border-strong)' }}
                             >
                               <div className="plan-name">{TYPE_LABELS[s.type] ?? s.type}</div>
@@ -177,6 +177,9 @@ export default function PlanPage() {
                               {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait
                                   annoncée. Le ton neutre est le fond de l'affaire. */}
                               {s.status === 'withdrawn' && <span className="plan-status" data-tone="mute">retirée</span>}
+                              {/* Annulée par les règles : un jour qui ne protège plus rien, ou une
+                                  séance dont il ne restait rien. */}
+                              {s.status === 'cancelled' && <span className="plan-status" data-tone="mute">annulée</span>}
                               {s.garmin && (
                                 <div className="plan-status plan-garmin" data-tone={GARMIN_TONE[s.garmin.tone]} title={s.garmin.label}>
                                   {s.garmin.short}
@@ -281,7 +284,9 @@ export default function PlanPage() {
 
                   {s.rationale && (
                     <div className="tiny faint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <strong>{s.status === 'withdrawn' ? 'Pourquoi retirée :' : 'Pourquoi ici :'}</strong>{' '}
+                      <strong>
+                        {s.status === 'withdrawn' ? 'Pourquoi retirée :' : s.status === 'cancelled' ? 'Pourquoi annulée :' : 'Pourquoi ici :'}
+                      </strong>{' '}
                       {s.rationale}
                     </div>
                   )}

@@ -2,7 +2,7 @@ import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
-  generateActivityInsight, loadAthleteState, rebuildPhysiologyModel, rematchRecent,
+  generateActivityInsight, loadAthleteState, rebuildPhysiologyModel, rematchRecent, type AthleteState,
 } from '@cairn/coach';
 import { StravaClient, StravaRateLimitError, ingestStreams, isRunLike, mapActivity } from '@cairn/strava';
 import { env } from './env.js';
@@ -35,6 +35,20 @@ export function stravaClientFor(athleteId: string): StravaClient {
       });
     },
   });
+}
+
+/** Les règles de charge sur le plan, de deux semaines en arrière à trois devant. */
+async function adjustPlan(
+  athleteId: string,
+  state: AthleteState,
+): Promise<{ adjustmentCount: number; adjustmentSummary?: string }> {
+  if (!state.plan) return { adjustmentCount: 0 };
+  const horizonFrom = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+  const horizonTo = new Date(Date.now() + 21 * 86_400_000).toISOString().slice(0, 10);
+  const upcoming = await db.listPlannedSessions(athleteId, horizonFrom, horizonTo);
+  const adjustments = evaluateAdjustments(state, upcoming);
+  const adjustmentCount = await applyAdjustments(athleteId, adjustments, 'new_activity');
+  return adjustmentCount > 0 ? { adjustmentCount, adjustmentSummary: describeAdjustments(adjustments) } : { adjustmentCount };
 }
 
 export interface IngestResult {
@@ -122,18 +136,8 @@ export async function ingestActivity(
   const analysis = streams ? await analyzeAndStore(athleteId, activity.id, model) : null;
 
   // ── Ajustement automatique du plan ────────────────────────────────────────
-  let adjustmentCount = 0;
-  let adjustmentSummary: string | undefined;
   const state = await loadAthleteState(athleteId);
-
-  if (state.plan) {
-    const horizonFrom = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
-    const horizonTo = new Date(Date.now() + 21 * 86_400_000).toISOString().slice(0, 10);
-    const upcoming = await db.listPlannedSessions(athleteId, horizonFrom, horizonTo);
-    const adjustments = evaluateAdjustments(state, upcoming);
-    adjustmentCount = await applyAdjustments(athleteId, adjustments, 'new_activity');
-    if (adjustmentCount > 0) adjustmentSummary = describeAdjustments(adjustments);
-  }
+  const { adjustmentCount, adjustmentSummary } = await adjustPlan(athleteId, state);
 
   // ── Analyse rédigée ───────────────────────────────────────────────────────
   let insightId: string | undefined;
@@ -256,9 +260,14 @@ export async function backfill(
 
     // Le rattachement des sept derniers jours se refait à chaque relève, qu'elle
     // ait importé ou non : une séance courue la veille ou le lendemain de sa
-    // date se reconnaît sans réimport.
+    // date se reconnaît sans réimport. Une séance qui vient d'en réaliser une
+    // autre emporte ses voisines : les règles les réévaluent tout de suite,
+    // comme après une activité importée.
     model ??= await db.getLatestModel(athleteId);
-    if (model) await rematchRecent(athleteId, model, new Date().toISOString().slice(0, 10));
+    if (model) {
+      const matched = await rematchRecent(athleteId, model, new Date().toISOString().slice(0, 10));
+      if (matched.length > 0) await adjustPlan(athleteId, await loadAthleteState(athleteId));
+    }
 
     progress.message = progress.rateLimited
       ? `Quota Strava presque atteint : ${progress.ingested} activité(s) importée(s). Relance l'import dans un quart d'heure pour continuer.`

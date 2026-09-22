@@ -239,7 +239,33 @@ function selectLongSession(input: WeekBuildInput): SessionTemplate | null {
 const QUALITY_TYPES: readonly SessionType[] = [
   'tempo', 'threshold', 'vo2max', 'hill_repeats', 'downhill', 'fartlek', 'race_pace',
 ];
-const isLongType = (t: SessionType) => t === 'long_run' || t === 'long_trail';
+export const isLongType = (t: SessionType) => t === 'long_run' || t === 'long_trail';
+
+/**
+ * Une séance exigeante : qualité, test maximal, sortie longue ou course. Son
+ * lendemain ne reçoit que du repos ou un décrassage — dans la semaine que le
+ * planificateur écrit, comme dans celle que les règles réévaluent sans la
+ * reconstruire.
+ */
+export function isHardSession(s: Pick<PlannedSession, 'type' | 'blocks'>, model: PhysiologyModel): boolean {
+  return lib.isMaximalTest(s, model) || QUALITY_TYPES.includes(s.type) || isLongType(s.type) || s.type === 'race';
+}
+
+/** Le décrassage du lendemain d'une séance exigeante, hors décharge. */
+export const RECOVERY_MIN = 45;
+
+/**
+ * Pourquoi le lendemain d'un test maximal est un décrassage.
+ *
+ * La règle laisse le choix entre repos et décrassage ; après un test, le
+ * décrassage l'emporte par défaut — il soulage les courbatures et ajoute du
+ * volume facile. Le repos ne se décide que le jour même, sur ce que le corps en
+ * dit (`adapt.ts`).
+ */
+const afterTestReason = (testDate: string): string =>
+  `lendemain du test maximal du ${testDate.slice(8, 10)}/${testDate.slice(5, 7)} — il soulage les courbatures ` +
+  `et ajoute du volume facile ; le repos ne le remplace que sur une disponibilité rouge, ou un point du jour ` +
+  `« vidé » ou « courbatures sévères »`;
 
 /** Ce que les séances conservées prennent à une semaine avant qu'elle ne s'écrive. */
 interface FixedPoints {
@@ -261,6 +287,8 @@ interface FixedPoints {
   easy: Map<number, string>;
   /** Lendemain d'une sortie longue conservée : le repos complet y vaut le plus. */
   afterLong: Set<number>;
+  /** Lendemain d'un test maximal : un décrassage, jamais le jour de repos de la semaine. */
+  afterTest: Set<number>;
 }
 
 /**
@@ -280,13 +308,13 @@ function fixedPoints(all: readonly PlannedSession[], weekStart: string, model: P
   const dow = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
   const out: FixedPoints = {
     byDay: new Map(), durationS: 0, load: 0, long: [], quality: [], holdsIntervals: false,
-    hard: [], near: new Set(), easy: new Map(), afterLong: new Set(),
+    hard: [], near: new Set(), easy: new Map(), afterLong: new Set(), afterTest: new Set(),
   };
 
   for (const s of all) {
     const test = lib.isMaximalTest(s, model);
     const quality = test || QUALITY_TYPES.includes(s.type);
-    const hard = quality || isLongType(s.type) || s.type === 'race';
+    const hard = isHardSession(s, model);
 
     if (inWeek(s.date)) {
       out.byDay.set(dow(s.date), s);
@@ -305,8 +333,12 @@ function fixedPoints(all: readonly PlannedSession[], weekStart: string, model: P
     const after = addDays(s.date, 1);
     for (const d of [before, after]) if (inWeek(d)) out.near.add(dow(d));
     if (inWeek(after)) {
-      out.easy.set(dow(after), `lendemain de « ${s.title} », on facilite la récupération sans ajouter de charge`);
+      out.easy.set(
+        dow(after),
+        test ? afterTestReason(s.date) : `lendemain de « ${s.title} », on facilite la récupération sans ajouter de charge`,
+      );
       if (isLongType(s.type)) out.afterLong.add(dow(after));
+      if (test) out.afterTest.add(dow(after));
     }
     if (test && inWeek(before)) {
       out.easy.set(dow(before), `veille du test maximal du ${s.date} : un effort maximal ne se mesure que reposé`);
@@ -398,7 +430,9 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   const hard = [...usedQualityDays, ...(longDay != null ? [longDay] : []), ...fixed.hard];
   const afterLong = new Set(fixed.afterLong);
   if (longDay != null) afterLong.add((longDay + 1) % 7);
-  const restDays = pickRestDays(remaining, hard, afterLong, restCount);
+  // Le lendemain d'un test maximal n'est pas candidat : le repos de la semaine
+  // se pose ailleurs, et ce jour-là reçoit son décrassage.
+  const restDays = pickRestDays(remaining.filter((d) => !fixed.afterTest.has(d)), hard, afterLong, restCount);
 
   for (const d of remaining) {
     if (restDays.includes(d)) {
@@ -411,7 +445,7 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
     const afterHard = usedQualityDays.includes(prev) || prev === longDay;
     const held = fixed.easy.get(d);
     if (afterHard || held) {
-      assigned.set(d, lib.recovery(model, spec.isDeload ? 30 : 45));
+      assigned.set(d, lib.recovery(model, spec.isDeload ? 30 : RECOVERY_MIN));
       reasons.set(
         d,
         held && !afterHard

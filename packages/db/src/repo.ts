@@ -681,40 +681,62 @@ export async function savePlan(plan: TrainingPlan, weeks: TrainingWeek[]): Promi
     });
 
   await db.delete(t.plannedSessions).where(eq(t.plannedSessions.planId, plan.id));
-  const rows = weeks.flatMap((w) =>
-    w.sessions.map((s) => ({
-      id: s.id,
-      planId: plan.id,
-      athleteId: plan.athleteId,
-      date: s.date,
-      plannedDate: s.plannedDate ?? null,
-      weekStart: w.weekStart,
-      phase: w.phase,
-      type: s.type,
-      title: s.title,
-      intent: s.intent,
-      blocks: s.blocks,
-      plannedLoad: s.plannedLoad,
-      plannedMechanicalLoad: s.plannedMechanicalLoad,
-      plannedDurationS: s.plannedDurationS,
-      plannedDistanceM: s.plannedDistanceM ?? null,
-      plannedElevationGainM: s.plannedElevationGainM ?? null,
-      priority: s.priority,
-      status: s.status,
-      completedActivityId: s.completedActivityId ?? null,
-      absenceId: s.absenceId ?? null,
-      rationale: s.rationale ?? null,
-      decision: s.decision ?? null,
-      successCriteria: s.successCriteria ?? null,
-      directives: s.directives ?? null,
-      history: s.history?.length ? s.history : null,
-    })),
-  );
+  const rows = weeks.flatMap((w) => w.sessions.map((s) => sessionRow(plan.id, plan.athleteId, s, w)));
   // SQLite plafonne le nombre de variables liées : on insère par lots.
   for (let i = 0; i < rows.length; i += 40) {
     const batch = rows.slice(i, i + 40);
     if (batch.length) await db.insert(t.plannedSessions).values(batch);
   }
+}
+
+/**
+ * Ajoute une séance au plan en place, dans sa semaine.
+ *
+ * Seules les règles de charge écrivent ainsi une séance hors reconstruction :
+ * le lendemain d'une séance clef réalisée un autre jour, quand il est vide.
+ */
+export async function insertSession(
+  planId: string,
+  s: PlannedSession,
+  week: Pick<TrainingWeek, 'weekStart' | 'phase'>,
+): Promise<void> {
+  await sessionColumns();
+  await getDb().insert(t.plannedSessions).values(sessionRow(planId, s.athleteId, s, week));
+}
+
+function sessionRow(
+  planId: string,
+  athleteId: string,
+  s: PlannedSession,
+  week: Pick<TrainingWeek, 'weekStart' | 'phase'>,
+): typeof t.plannedSessions.$inferInsert {
+  return {
+    id: s.id,
+    planId,
+    athleteId,
+    date: s.date,
+    plannedDate: s.plannedDate ?? null,
+    weekStart: week.weekStart,
+    phase: week.phase,
+    type: s.type,
+    title: s.title,
+    intent: s.intent,
+    blocks: s.blocks,
+    plannedLoad: s.plannedLoad,
+    plannedMechanicalLoad: s.plannedMechanicalLoad,
+    plannedDurationS: s.plannedDurationS,
+    plannedDistanceM: s.plannedDistanceM ?? null,
+    plannedElevationGainM: s.plannedElevationGainM ?? null,
+    priority: s.priority,
+    status: s.status,
+    completedActivityId: s.completedActivityId ?? null,
+    absenceId: s.absenceId ?? null,
+    rationale: s.rationale ?? null,
+    decision: s.decision ?? null,
+    successCriteria: s.successCriteria ?? null,
+    directives: s.directives ?? null,
+    history: s.history?.length ? s.history : null,
+  };
 }
 
 export async function getActivePlan(
