@@ -8,4 +8,5 @@ export * from './provenance.js';
 export * from './race.js';
 export * from './dates.js';
 export * from './annex.js';
+export * from './blocks.js';
 export * from './terrain.js';

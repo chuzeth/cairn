@@ -15,6 +15,24 @@
  * 1 840 s dure 30 min et des poussières ; l'annoncer à 31 min promet une minute
  * que la prescription ne contient pas.
  */
+/**
+ * Un nombre à la française : « 1,2 », « 16,9 ».
+ *
+ * Le point décimal est une convention de programmation ; Pierre lit une
+ * virgule. Écrire « 1.2 » dans une phrase qui lui est adressée, c'est lui faire
+ * relire le nombre pour vérifier qu'il n'a pas mal vu.
+ */
+export const decimal = (v: number, digits = 1): string =>
+  Number.isFinite(v) ? v.toFixed(digits).replace('.', ',') : '—';
+
+/**
+ * Un chiffre qui se lit signé : « +10,8 » et « −10,8 » ne décrivent pas le même
+ * jour. La décimale ne s'écrit que si elle existe — une cible entière s'écrit
+ * « +12 », et « +12,0 » ferait croire à une précision qu'elle n'a pas.
+ */
+export const signedDecimal = (v: number, digits = 1): string =>
+  `${v >= 0 ? '+' : '−'}${decimal(Math.abs(v), Number.isInteger(v) ? 0 : digits)}`;
+
 export function sessionDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
   const h = Math.floor(s / 3600);

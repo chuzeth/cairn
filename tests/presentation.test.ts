@@ -255,3 +255,37 @@ describe('Le « pourquoi » tient en une phrase, pour toutes les séances', () =
     }
   });
 });
+
+describe('Ce que Pierre lit lui parle de sa course, pas du modèle', () => {
+  const gap = {
+    raceDay: '18/10', target: 12, projected: 10.8, costS: 11, predictedS: 12_840,
+    atFloor: true, atCeiling: false, taperScale: 0.6, weeks: 4, taperWeeks: 2,
+    startCtl: 36, maxWeeklyHours: 8,
+  };
+  const [plain, mechanism] = lib.taperGapText(gap).split('\n\n') as [string, string];
+
+  it('dit d\'abord ce que ça change : onze secondes, et rien à faire', () => {
+    expect(plain).toBe(
+      "Tu seras un peu moins frais que l'idéal le 18/10 : 11 secondes sur 3 h 34. " +
+        'Alléger davantage te ferait perdre plus de forme que tu ne gagnerais de fraîcheur. Rien à faire.',
+    );
+  });
+
+  it('n\'emploie aucun terme interne, et écrit ses nombres à la française', () => {
+    for (const text of [plain, mechanism]) {
+      expect(text).not.toMatch(/TSB|CTL|ratio|profondeur nominale|l['’]athlète|charge chronique/i);
+      expect(text).not.toMatch(/\d+\.\d/);
+    }
+    // Le mécanisme complet reste lisible, à un geste : il dit le plancher, les
+    // semaines, la forme de fond de départ et le point qui manque.
+    expect(mechanism).toContain('son plancher');
+    expect(mechanism).toContain('forme de fond de 36 points');
+    expect(mechanism).toContain('il manque 1,2 point de fraîcheur');
+  });
+
+  it('ne compte pas en secondes un départ trop frais : c\'est le fond qui manque', () => {
+    const over = lib.taperGapText({ ...gap, target: 8, projected: 12, atFloor: false, atCeiling: true });
+    expect(over.split('\n\n')[0]).toContain('plus reposé que l\'idéal');
+    expect(over).not.toMatch(/secondes/);
+  });
+});

@@ -545,7 +545,7 @@ function Absence({ absence }: { absence: DeclaredAbsence }) {
       <blockquote className="m-quote">{absence.reason}</blockquote>
       <p className="m-after">
         {n == null ? '' : n > 0 ? `${n} séance${plural} retirée${plural} du plan : ni à faire, ni manquée${plural}. ` : ''}
-        Ta charge chronique baisse sur cette période : c&apos;est mesuré, et c&apos;était prévu.
+        Ta forme de fond baisse pendant ce temps : c&apos;est mesuré, et c&apos;était prévu.
       </p>
     </section>
   );
@@ -656,12 +656,19 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
               {missing.length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une moyenne.
             </p>
           )}
+          {/* Quatre chiffres du modèle, nommés par ce qu'ils veulent dire. Le
+              vocabulaire interne — charge chronique, TSB, ratio — reste au
+              coach et à l'écran de physiologie ; ici, il se traduit. */}
+          <p className="m-after">
+            Ta forme de fond, c&apos;est ce que tes dernières semaines ont construit ; ta fraîcheur,
+            ce qu&apos;il t&apos;en reste une fois la fatigue retombée.
+          </p>
           <div className="m-figures">
             {[
-              { name: 'Charge chronique', value: num(t.ctl), note: `${signed(t.rampRate, 1)} pts/semaine` },
-              { name: 'Fraîcheur métabolique', value: signed(t.tsb), note: t.tsbLabel },
-              { name: 'Fraîcheur mécanique', value: signed(t.mechanicalTsb), note: 'fatigue musculaire de descente' },
-              { name: 'Charge aiguë / chronique', value: num(t.acwr, 2), note: t.acwrLabel },
+              { name: 'Forme de fond', value: num(t.ctl), note: `${signed(t.rampRate, 1)} point${Math.abs(t.rampRate) >= 2 ? 's' : ''} par semaine` },
+              { name: 'Fraîcheur', value: signed(t.tsb), note: t.tsbLabel },
+              { name: 'Fraîcheur des jambes', value: signed(t.mechanicalTsb), note: 'ce que la descente a abîmé' },
+              { name: 'Ces 7 jours, contre tes 4 dernières semaines', value: num(t.acwr, 2), note: t.acwrLabel },
             ].map((f) => (
               <div className="m-figure" key={f.name}>
                 <span>{f.name}</span>

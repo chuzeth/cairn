@@ -1,9 +1,10 @@
 import type {
-  AppliedDirective, AthleteAmbition, AthleteConstraints, PhysiologyModel, PlannedSession,
+  AppliedDirective, AthleteAmbition, AthleteConstraints, CourseProfile, PhysiologyModel, PlannedSession,
   RaceGoal, SessionBlock, SessionType, TrainingDirective, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
+import { decimal, signedDecimal, writtenOn } from '@cairn/core';
 import {
-  ACWR_SPIKE, DURABILITY_MEASURABLE, interpretDurability, prescribedMechanicalLoad,
+  ACWR_SPIKE, DURABILITY_MEASURABLE, interpretDurability, predictRace, prescribedMechanicalLoad,
   projectFrom, projectLoadRatios, ratioExceedances, targetDistribution, targetRaceDayTsb,
   type DailyLoad, type LoadRatioExceedance,
 } from '@cairn/physiology';
@@ -19,7 +20,9 @@ import {
   FULL_ECCENTRIC_ROUNDS, descentAfter, descentReason, eccentricRoundsFor, eccentricVerdicts, progressionReason,
   roundsLabel,
 } from './eccentric.js';
-import { onTerrain, presentDecided, withConstruction } from './presentation.js';
+import {
+  firstParagraph, onTerrain, presentDecided, taperGapText, withConstruction,
+} from './presentation.js';
 import { carryDecisions, decisionOn, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
 import type { SessionTemplate } from './sessionLibrary.js';
@@ -1291,7 +1294,7 @@ function checkWeeklyVolume(
   };
 }
 
-const CHANNEL_FR = { metabolic: 'métabolique', mechanical: 'mécanique' } as const;
+const CHANNEL_FR = { metabolic: 'en course', mechanical: 'en descente' } as const;
 
 /** Dépassements de ratio en une phrase, filière par filière. */
 export function describeRatioExceedances(list: readonly LoadRatioExceedance[]): string {
@@ -1300,8 +1303,8 @@ export function describeRatioExceedances(list: readonly LoadRatioExceedance[]): 
       const days = list.filter((e) => e.channel === channel);
       if (days.length === 0) return null;
       return (
-        `${CHANNEL_FR[channel]} ${days.map((e) => `${e.value.toFixed(2)} le ${e.date}`).join(', ')} ` +
-        `(seuil ${days[0]!.limit})`
+        `${CHANNEL_FR[channel]}, ${days.map((e) => `${decimal(e.value, 2)} fois le ${writtenOn(e.date)}`).join(', ')} ` +
+        `(au-delà de ${decimal(days[0]!.limit, 1)}, le risque de blessure monte)`
       );
     })
     .filter(Boolean)
@@ -1474,50 +1477,27 @@ function solveTaperScale(attempt: (k: number) => PlanAttempt, target: number): P
 }
 
 /**
- * Explique un écart à la cible de TSB, quand il en reste un.
+ * Ce qu'un écart à la fraîcheur visée coûte sur la course, en secondes.
  *
- * Les deux directions ne se corrigent pas de la même façon : trop chargé, il
- * manque du temps ou l'affûtage bute sur son plancher ; trop frais, c'est la
- * charge disponible qui n'a pas suffi à construire la forme que la cible
- * suppose.
+ * La fraîcheur du jour J n'est pas une note : elle se convertit en temps par la
+ * prédiction, à modèle et parcours identiques. C'est ce chiffre-là — onze
+ * secondes sur trois heures et demie — qui dit à Pierre si l'écart mérite qu'on
+ * s'y arrête. Nul quand il partirait plus frais que visé : le temps qui lui
+ * manquerait alors vient du fond qu'il n'a pas construit, pas de cet écart.
  */
-function tsbShortfall(
-  gap: number,
+function costOfGap(
+  model: PhysiologyModel,
+  course: CourseProfile,
   target: number,
-  taperScale: number,
-  weeks: number,
-  taper: number,
-  startCtl: number,
-  maxWeeklyHours: number,
-): string {
-  const atFloor = taperScale <= TAPER_SCALE_BOUNDS.min + 1e-6;
-  const atCeiling = taperScale >= TAPER_SCALE_BOUNDS.max - 1e-6;
-  const depth = `L'affûtage est à ${Math.round(taperScale * 100)} % de sa profondeur nominale`;
-  const frame =
-    `${weeks} semaine${weeks > 1 ? 's' : ''} dont ${taper} d'affûtage, ` +
-    `charge chronique de départ ${Math.round(startCtl)}`;
-
-  if (gap < 0) {
-    return (
-      `Cible manquée par le bas : l'athlète prendrait le départ encore chargé. ` +
-      (atFloor
-        ? `${depth}, son plancher — en dessous, la charge chronique se perdrait plus vite que la ` +
-          `fatigue ne s'évacue, et la fraîcheur gagnée coûterait la forme. `
-        : `${depth}. `) +
-      `${frame} : il n'y a pas la place d'aller chercher les ${Math.abs(gap).toFixed(1)} points qui manquent.`
-    );
-  }
-  return (
-    `Cible dépassée par le haut : l'athlète prendrait le départ plus frais que visé, donc moins entraîné. ` +
-    (atCeiling
-      ? `${depth}, son plafond — au-delà, la fin de préparation ne serait plus un affûtage. `
-      : `${depth}. `) +
-    `${frame}, plafond de ${maxWeeklyHours} h par semaine : la charge disponible ne construit pas ` +
-    `la forme qu'un TSB de ${signed(target)} suppose.`
-  );
+  projected: number,
+): { costS: number; predictedS: number } {
+  if (projected >= target) return { costS: 0, predictedS: 0 };
+  const at = (tsb: number) => predictRace({ model, course, raceDayTsb: tsb, skipLimiters: true }).predictedTimeS;
+  const ideal = at(target);
+  return { costS: Math.max(0, at(projected) - ideal), predictedS: ideal };
 }
 
-const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
+const signed = (v: number) => signedDecimal(v);
 
 export function buildTrainingPlan(input: BuildPlanInput): {
   plan: TrainingPlan;
@@ -1657,15 +1637,19 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     shortfall:
       Math.abs(gap) <= TSB_TOLERANCE
         ? null
-        : tsbShortfall(
-            gap,
-            tsb.metabolic,
-            solved.taperScale,
-            fresh.length,
-            taperCount,
-            effectiveCtl,
-            input.constraints.maxWeeklyHours,
-          ),
+        : taperGapText({
+            raceDay: writtenOn(raceDate),
+            target: tsb.metabolic,
+            projected,
+            ...costOfGap(input.model, input.race.course, tsb.metabolic, projected),
+            atFloor: solved.taperScale <= TAPER_SCALE_BOUNDS.min + 1e-6,
+            atCeiling: solved.taperScale >= TAPER_SCALE_BOUNDS.max - 1e-6,
+            taperScale: solved.taperScale,
+            weeks: fresh.length,
+            taperWeeks: taperCount,
+            startCtl: effectiveCtl,
+            maxWeeklyHours: input.constraints.maxWeeklyHours,
+          }),
   };
 
   // ── Ratios de charge, sur ce que les séances produites pèsent ──────────────
@@ -1709,13 +1693,15 @@ export function buildTrainingPlan(input: BuildPlanInput): {
           at: now,
           trigger: 'initial',
           summary:
-            `Plan construit sur ${fresh.length} semaines jusqu'à « ${input.race.name} » (${input.race.date.slice(0, 10)}). ` +
-            `Départ de CTL ${Math.round(effectiveCtl)}. Cible de TSB à la veille de course (${eve}) : ` +
-            `${signed(tsb.metabolic)} ; les charges du plan y amènent ${signed(tsbCheck.projected)} ` +
-            `(écart ${signed(gap)}, affûtage à ${Math.round(solved.taperScale * 100)} % de sa profondeur nominale).` +
-            (tsbCheck.shortfall ? ` ⚠ ${tsbCheck.shortfall}` : '') +
+            `Plan construit sur ${fresh.length} semaines jusqu'à « ${input.race.name} », le ${writtenOn(raceDate)}. ` +
+            `Tu pars d'une forme de fond de ${Math.round(effectiveCtl)} points ; la veille de la course, ` +
+            `le plan t'amène à une fraîcheur de ${signed(tsbCheck.projected)} pour ${signed(tsb.metabolic)} visés ` +
+            `(écart ${signed(gap)} point, affûtage à ${Math.round(solved.taperScale * 100)} % de sa profondeur habituelle).` +
+            // Le journal dit l'essentiel de l'écart ; son compte complet est dans
+            // le plan, sous le pli de l'encart.
+            (tsbCheck.shortfall ? ` ⚠ ${firstParagraph(tsbCheck.shortfall)}` : '') +
             (ratioCheck.exceedances.length
-              ? ` ⚠ Ratio charge aiguë/chronique projeté au-delà de son seuil — ` +
+              ? ` ⚠ Sur une partie du plan, tu cours nettement plus que les semaines d'avant ne t'y ont préparé — ` +
                 `${describeRatioExceedances(ratioCheck.exceedances)}.`
               : '') +
             (volumeCheck.statement ? ` ⚠ ${volumeCheck.statement}` : '') +
@@ -1727,8 +1713,8 @@ export function buildTrainingPlan(input: BuildPlanInput): {
               ? ` Ambition portée au modèle : ${input.ambition.format.replace('_', ' ')}, depuis le ${input.ambition.since}.`
               : '') +
             (ctlIsAssumed
-              ? ` ⚠ Historique d'entraînement insuffisant : la charge de départ est estimée depuis ` +
-                `les ${input.constraints.maxWeeklyHours} h/semaine déclarées, et non mesurée. ` +
+              ? ` ⚠ Ton historique ne suffit pas : ta forme de fond de départ est estimée depuis ` +
+                `les ${input.constraints.maxWeeklyHours} h/semaine que tu as déclarées, elle n'est pas mesurée. ` +
                 `Synchronise Strava puis reconstruis le plan pour qu'il parte de ta charge réelle.`
               : ''),
           changes: [],

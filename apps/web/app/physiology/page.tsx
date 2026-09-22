@@ -134,7 +134,7 @@ export default function PhysiologyPage() {
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
         <Card>
-          <Metric label="Vitesse critique" value={num(m.criticalSpeedKmh, 2)} unit="km/h" note={`${m.criticalPace}/km · D' ${num(m.dPrimeM)} m`} tone="metabolic" />
+          <Metric label="Vitesse critique" value={num(m.criticalSpeedKmh, 2)} unit="km/h" note={`${m.criticalPace}/km · ${num(m.dPrimeM)} m au-dessus, en réserve`} tone="metabolic" />
           <Badge tone={PROVENANCE_TONE[m.provenance.criticalSpeedMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.criticalSpeedMs ?? 'default']}</Badge>
         </Card>
         <Card>
@@ -229,7 +229,7 @@ export default function PhysiologyPage() {
       {curves && Object.keys(curves.vitesse_graduee_par_duree_kmh).length > 2 && (
         <Card
           title="Courbe vitesse-durée"
-          hint={`Vitesse critique retenue ${num(curves.vitesse_critique.retenue_kmh, 2)} km/h · D' ${num(curves.vitesse_critique.d_prime_m)} m · ajustement ${curves.vitesse_critique.qualite_ajustement}`}
+          hint={`Vitesse critique retenue ${num(curves.vitesse_critique.retenue_kmh, 2)} km/h · ${num(curves.vitesse_critique.d_prime_m)} m de réserve au-dessus d'elle · ajustement ${curves.vitesse_critique.qualite_ajustement}`}
           style={{ marginBottom: 14 }}
         >
           <DurationCurve

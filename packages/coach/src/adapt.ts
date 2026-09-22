@@ -3,7 +3,7 @@ import type {
   SessionDecision,
 } from '@cairn/core';
 import * as db from '@cairn/db';
-import { directivesFor, sessionDuration } from '@cairn/core';
+import { decimal, directivesFor, sessionDuration, writtenOn } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
@@ -166,8 +166,8 @@ export function withdrawalsFor(
       absenceId: absence.id,
       rule: 'declared_absence',
       reason:
-        `Séance retirée : ${KIND_FR[absence.kind]} déclarée du ${absence.startDate} au ${absence.endDate}. ` +
-        `Motif de l'athlète : « ${absence.reason} » Une absence annoncée n'est pas une séance manquée.`,
+        `Séance retirée du plan, ni à faire ni manquée : tu as déclaré ${KIND_FR[absence.kind]} ` +
+        `du ${writtenOn(absence.startDate)} au ${writtenOn(absence.endDate)}. Tes mots : « ${absence.reason} »`,
     }));
 }
 
@@ -466,8 +466,9 @@ export function evaluateAdjustments(
         ...repetitionScaling(s, 0.6),
         rule: 'mechanical_fatigue',
         reason:
-          `TSB mécanique à ${state.today.mechanicalTsb.toFixed(0)} : les dégâts musculaires de la descente ne sont pas résorbés. ` +
-          `Volume de cette séance réduit de 40 % pour éviter d'empiler la contrainte excentrique${repsCut(s, 0.6)}.`,
+          `Séance allégée de 40 %${repsCut(s, 0.6)} : tes jambes n'ont pas fini de réparer les dégâts ` +
+          `de la dernière descente — leur fraîcheur est à ${decimal(state.today.mechanicalTsb, 0)}, et c'est ` +
+          `sous −22 qu'on cesse d'empiler du freinage.`,
       });
     }
   }
@@ -490,9 +491,9 @@ export function evaluateAdjustments(
         ...repetitionScaling(s, factor),
         rule: 'mechanical_acwr_spike',
         reason:
-          `Ratio charge aiguë/chronique excentrique à ${state.today.mechanicalAcwr.toFixed(2)} : au-delà de ` +
-          `${ACWR_SPIKE.mechanical}, les tissus encaissent plus de freinage que les semaines passées ne les y ont préparés. ` +
-          `Séance allégée de 25 %${roundsCut(s, factor)}${repsCut(s, factor)}.`,
+          `Séance allégée de 25 %${roundsCut(s, factor)}${repsCut(s, factor)} : ces sept derniers jours, tu as ` +
+          `freiné en descente ${decimal(state.today.mechanicalAcwr, 2)} fois ce que tes quatre dernières semaines ` +
+          `t'ont préparé à encaisser — au-delà de ${decimal(ACWR_SPIKE.mechanical, 1)}, les tissus lâchent avant les jambes.`,
       });
     }
   }
@@ -508,8 +509,9 @@ export function evaluateAdjustments(
         ...repetitionScaling(s, 0.75),
         rule: 'acwr_spike',
         reason:
-          `Ratio charge aiguë/chronique à ${state.today.acwr.toFixed(2)} : au-delà de 1,5, le risque de blessure augmente nettement. ` +
-          `Les séances secondaires des cinq prochains jours sont allégées de 25 %${repsCut(s, 0.75)}.`,
+          `Séances secondaires des cinq prochains jours allégées de 25 %${repsCut(s, 0.75)} : ces sept derniers ` +
+          `jours, tu as couru ${decimal(state.today.acwr, 2)} fois ce que tes quatre dernières semaines t'ont ` +
+          `préparé à encaisser — au-delà de 1,5, le risque de blessure augmente nettement.`,
       });
     }
   }
@@ -528,12 +530,12 @@ export function evaluateAdjustments(
         ...repetitionScaling(next, factor),
         rule: 'readiness_red',
         reason:
-          `Disponibilité à ${state.readiness.score}/100. ${state.readiness.recommendation} ` +
           // La durée annoncée est celle que l'allègement produira, écrite comme
           // l'écran l'écrira. Calculée à part, elle promettait 31 min là où la
           // séance enregistrée en affichait 30, et c'est la phrase qu'on croit.
           `Séance ramenée à ${sessionDuration(transformSession(next, change, state.model).plannedDurationS)} ` +
-          `en récupération${repsCut(next, factor)}.`,
+          `en récupération${repsCut(next, factor)} : ta disponibilité du jour est à ${state.readiness.score}/100. ` +
+          state.readiness.recommendation,
       });
     }
   }
@@ -549,8 +551,9 @@ export function evaluateAdjustments(
         ...repetitionScaling(s, 0.7),
         rule: 'ramp_too_fast',
         reason:
-          `La charge chronique progresse de ${state.today.rampRate.toFixed(1)} points par semaine, au-dessus du seuil prudentiel de 8. ` +
-          `Les séances facultatives sont allégées le temps que l'adaptation suive${repsCut(s, 0.7)}.`,
+          `Séances facultatives allégées le temps que ton corps suive${repsCut(s, 0.7)} : ta forme de fond monte de ` +
+          `${decimal(state.today.rampRate)} points par semaine, au-dessus des 8 qu'on s'autorise — ` +
+          `au-delà, c'est le tendon qui encaisse la progression.`,
       });
     }
   }

@@ -534,6 +534,8 @@ export interface SessionRow {
      */
     recovery?: {
       durationS: number; zone: string; active: boolean;
+      /** Elle sépare les répétitions au lieu de suivre chacune : pas de récupération après la dernière. */
+      betweenReps?: boolean;
       elevationGainM?: number; elevationLossM?: number;
       hrRange?: [number, number]; paceRange?: [string, string];
       provenance?: { hr?: string; speed?: string; vam?: string };

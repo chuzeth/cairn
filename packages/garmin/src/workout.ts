@@ -231,6 +231,14 @@ function itemsOf(block: SessionBlock, type: SessionType): WatchItem[] {
   if (block.circuit) return circuitItems(block, times);
   const steps: WatchStep[] = [mainStep(block, type)];
   if (block.recovery) steps.push(recoveryStep(block, type));
+  // Une récupération qui sépare les répétitions n'en suit pas la dernière : la
+  // montre répète le couple une fois de moins, et la dernière répétition se
+  // tient seule après le groupe. Sans quoi la montre demanderait de remonter
+  // une descente que la séance redescend.
+  if (block.recovery?.betweenReps && times > 1) {
+    const solo = mainStep(block, type);
+    return times > 2 ? [{ kind: 'repeat', times: times - 1, items: steps }, solo] : [...steps, solo];
+  }
   return times > 1 ? [{ kind: 'repeat', times, items: steps }] : steps;
 }
 

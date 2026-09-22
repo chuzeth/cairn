@@ -1058,6 +1058,14 @@ export interface SessionBlock {
     durationS: number;
     zone: ZoneKey;
     active: boolean;
+    /**
+     * La récupération sépare les répétitions au lieu de suivre chacune : il n'y
+     * en a pas après la dernière. C'est le cas d'une descente qui, sa dernière
+     * descendue, ne remonte plus et rentre par le bas de la montée — compter
+     * une remontée de plus lui donnait 43 m de D+ que personne ne monte, et
+     * autant de minutes.
+     */
+    betweenReps?: boolean;
     elevationGainM?: number;
     elevationLossM?: number;
     /**

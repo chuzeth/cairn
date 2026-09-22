@@ -1,5 +1,5 @@
 import type { ParameterProvenance, PhysiologyModel, SessionBlock, SessionType } from '@cairn/core';
-import { PROVENANCE_FR, sessionDuration, weakestProvenance } from '@cairn/core';
+import { PROVENANCE_FR, recoveryTimes, sessionDuration, weakestProvenance } from '@cairn/core';
 import { easyClimbRate, verticalCapacity, type VerticalBound, type VerticalCapacity } from '@cairn/physiology';
 
 /**
@@ -206,6 +206,7 @@ export function verticalSegments(blocks: readonly SessionBlock[]): VerticalSegme
   let lossM = 0;
   blocks.forEach((b, i) => {
     const repeat = b.repeat ?? 1;
+    const rests = recoveryTimes(b);
     const r = b.recovery;
     const work = { s: b.durationS ?? 0, gain: b.elevationGainM ?? 0, loss: b.elevationLossM ?? 0 };
     const rest = { s: r?.durationS ?? 0, gain: r?.elevationGainM ?? 0, loss: r?.elevationLossM ?? 0 };
@@ -229,9 +230,9 @@ export function verticalSegments(blocks: readonly SessionBlock[]): VerticalSegme
         ...(b.where ? { grade: b.where.grade } : {}),
       });
     }
-    clockS += repeat * (work.s + rest.s);
-    gainM += repeat * (work.gain + rest.gain);
-    lossM += repeat * (work.loss + rest.loss);
+    clockS += repeat * work.s + rests * rest.s;
+    gainM += repeat * work.gain + rests * rest.gain;
+    lossM += repeat * work.loss + rests * rest.loss;
   });
   return out;
 }

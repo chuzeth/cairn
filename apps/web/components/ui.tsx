@@ -250,8 +250,10 @@ export const READINESS_SOURCE_LABEL: Record<ReadinessSource, string> = {
 };
 
 const BASIS_ROWS = [
-  ['tsbMetabolic', 'Fraîcheur métabolique'],
-  ['tsbMechanical', 'Fraîcheur mécanique'],
+  // Les mêmes mots qu'en bas de l'écran du matin : deux noms pour la même chose,
+  // et c'est deux chiffres qu'on croit lire.
+  ['tsbMetabolic', 'Fraîcheur'],
+  ['tsbMechanical', 'Fraîcheur des jambes'],
   ['subjective', 'Ressenti déclaré'],
   ['autonomic', 'Système autonome'],
 ] as const;

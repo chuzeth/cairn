@@ -120,7 +120,8 @@ export function reserveSegments(
       if (work > 0) {
         out.push({ block: i, part: 'work', label: b.label, rep, repeat, durationS: work, speedMs: speed });
       }
-      if (b.recovery && b.recovery.durationS > 0) {
+      // Une récupération qui sépare les répétitions ne suit pas la dernière.
+      if (b.recovery && b.recovery.durationS > 0 && !(b.recovery.betweenReps && rep === repeat)) {
         out.push({
           block: i,
           part: 'recovery',

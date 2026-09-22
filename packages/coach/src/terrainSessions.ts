@@ -112,6 +112,17 @@ function describeLaying(before: PlannedSession, after: PlannedSession, model: Pa
   if (was && !was.effort && now?.effort) {
     parts.push('La descente se pilote à l\'effort et à la technique, plus à la FC ni à une allure à plat.');
   }
+  // L'accès n'était compté nulle part : l'échauffement monte au haut, et la
+  // dernière descente rentre par le bas au lieu de remonter.
+  const up = after.blocks[0]?.elevationGainM ?? 0;
+  const down = after.blocks[after.blocks.length - 1]?.elevationLossM ?? 0;
+  if (up > 0 && down > 0 && (before.blocks[0]?.elevationGainM ?? 0) === 0) {
+    parts.push(
+      `L'accès compte, maintenant : ${up} m pour rejoindre le haut, et ${down} m par le bas de la montée ` +
+        `pour rentrer après la dernière descente, que tu ne remontes pas. ` +
+        `${after.plannedElevationGainM ?? up} m dans chaque sens, au lieu de ${before.plannedElevationGainM ?? 0}.`,
+    );
+  }
   if (before.plannedDurationS !== after.plannedDurationS) {
     parts.push(`Séance de ${sessionDuration(before.plannedDurationS)} à ${sessionDuration(after.plannedDurationS)}.`);
   }

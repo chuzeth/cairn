@@ -3,7 +3,8 @@ import type {
   StrengthCircuit, StrengthExercise, TerrainStretch, ZoneKey,
 } from '@cairn/core';
 import {
-  PROVENANCE_FR, annexOf, climbsBack, describeMovement, mapUrl, sessionDuration, stretchSpan, weakestProvenance,
+  PROVENANCE_FR, annexOf, climbsBack, describeMovement, mapUrl, recoveryTimes, sessionDuration, stretchSpan,
+  weakestProvenance,
 } from '@cairn/core';
 import {
   ACTIVE_RECOVERY_INTENSITY, ECCENTRIC_MOVEMENTS, FLAT_RUNNING_COST, buildZones, easyClimbRate, eccentricStrengthLoad,
@@ -13,7 +14,7 @@ import {
 import { describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit } from './plausibility.js';
 import { checkReserve, describeReserve, describeShortfall } from './reserve.js';
 import {
-  climbFor, describeClimbChoice, descentStretch, hillStretch, trailStretch, type TerrainHint,
+  climbFor, describeClimbChoice, descentAccess, descentStretch, hillStretch, trailStretch, type TerrainHint,
 } from './terrain.js';
 
 /**
@@ -282,7 +283,7 @@ function estimateLoad(model: PhysiologyModel, blocks: SessionBlock[]): number {
     tss += reps * (dur / 3600) * intensity ** 2 * 100;
     if (b.recovery) {
       const rIntensity = b.recovery.active ? ACTIVE_RECOVERY_INTENSITY : 0.2;
-      tss += reps * (b.recovery.durationS / 3600) * rIntensity ** 2 * 100;
+      tss += recoveryTimes(b) * (b.recovery.durationS / 3600) * rIntensity ** 2 * 100;
     }
   }
   return Math.round(tss);
@@ -438,7 +439,8 @@ export function circuitDurationS(c: StrengthCircuit): number {
  */
 export function elevationGainOf(blocks: readonly SessionBlock[]): number {
   return blocks.reduce(
-    (a, b) => a + (b.repeat ?? 1) * ((b.elevationGainM ?? 0) + (b.recovery?.elevationGainM ?? 0)),
+    (a, b) =>
+      a + (b.repeat ?? 1) * (b.elevationGainM ?? 0) + recoveryTimes(b) * (b.recovery?.elevationGainM ?? 0),
     0,
   );
 }
@@ -446,16 +448,17 @@ export function elevationGainOf(blocks: readonly SessionBlock[]): number {
 /** Dénivelé négatif d'un contenu, tel que ses blocs le déclarent — récupérations comprises. */
 export function elevationLossOf(blocks: readonly SessionBlock[]): number {
   return blocks.reduce(
-    (a, b) => a + (b.repeat ?? 1) * ((b.elevationLossM ?? 0) + (b.recovery?.elevationLossM ?? 0)),
+    (a, b) =>
+      a + (b.repeat ?? 1) * (b.elevationLossM ?? 0) + recoveryTimes(b) * (b.recovery?.elevationLossM ?? 0),
     0,
   );
 }
 
 export function totalDuration(blocks: readonly SessionBlock[]): number {
-  return blocks.reduce((a, b) => {
-    const reps = b.repeat ?? 1;
-    return a + reps * ((b.durationS ?? 0) + (b.recovery?.durationS ?? 0));
-  }, 0);
+  return blocks.reduce(
+    (a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0) + recoveryTimes(b) * (b.recovery?.durationS ?? 0),
+    0,
+  );
 }
 
 /**
@@ -892,7 +895,7 @@ function totalDistance(blocks: readonly SessionBlock[]): number {
       : b.where && ((r.elevationGainM ?? 0) > 0 || (r.elevationLossM ?? 0) > 0)
         ? b.where.lengthM
         : r.durationS * (r.active ? r.speedRangeMs?.[1] ?? 2.4 : 0.5);
-    return a + reps * (work + rec);
+    return a + reps * work + recoveryTimes(b) * rec;
   }, 0);
 }
 
@@ -1712,6 +1715,12 @@ const DESCENT_STOP = 'Arrête dès que le contrôle se dégrade.';
 export const WARMUP_TO_TOP = "Échauffement jusqu'au haut de la montée";
 
 /**
+ * Le retour au calme d'une descente posée : la dernière descente laisse au
+ * demi-tour, et il reste le bas de la montée à descendre pour rentrer.
+ */
+export const COOLDOWN_TO_FOOT = 'Retour au calme, du demi-tour au pied';
+
+/**
  * Pente d'une remontée qu'aucun tronçon ne situe : celle d'une descente
  * technique ordinaire. C'est une valeur par défaut, et elle se déclare comme
  * telle dans la provenance de la remontée.
@@ -1759,6 +1768,8 @@ interface DescentSpec {
   where: TerrainStretch | null;
   /** Ce qu'une première descente doit à la séance qui la suit (`firstDescentNote`). */
   exposure?: string;
+  /** La dernière descente ne remonte pas : la remontée sépare les descentes. */
+  lastGoesDown?: boolean;
 }
 
 /**
@@ -1778,6 +1789,7 @@ function descentBlock(c: Ctx, d: DescentSpec): SessionBlock {
   b.recovery = d.where
     ? climbBack(c, d.dropM, d.where.grade, d.where.provenance)
     : climbBack(c, d.dropM, DEFAULT_DESCENT_GRADE, 'default');
+  if (d.lastGoesDown) b.recovery.betweenReps = true;
   return b;
 }
 
@@ -1830,6 +1842,10 @@ export function downhillSession(
  * le tronçon où elle se court, la remontée qui se marche, la consigne d'effort —,
  * et la durée de la séance suit la remontée. `null` quand la séance n'a pas de
  * descente répétée à poser.
+ *
+ * L'accès en fait partie : l'échauffement monte la montée entière, et la
+ * dernière descente ne remonte pas — elle continue par le bas de la montée
+ * jusqu'au pied. Ces mètres-là se montent et se descendent comme les autres.
  */
 export function layDescent(
   session: TransformableSession & Pick<PlannedSession, 'title'>,
@@ -1847,17 +1863,37 @@ export function layDescent(
   if (!rep) return null;
   const dropM = rep.elevationLossM as number;
   const where = descentStretch(terrain, dropM);
+  const access = where ? descentAccess(terrain, dropM) : null;
+  // Le dernier bloc couru ramène au pied quand l'accès est connu : c'est lui qui
+  // porte ce qu'il reste à descendre sous le demi-tour.
+  const back = access
+    ? located.reduce((last, b, k) => (k > i && !b.kind && !b.circuit ? k : last), -1)
+    : -1;
   const laid = located.map((b, k): SessionBlock => {
     if (k === i) {
       return descentBlock(c, {
         label: rep.label, zone: rep.zone, repeat: rep.repeat ?? 1, durationS: rep.durationS as number, dropM,
         where, ...(rep.cadenceTargetSpm ? { cadenceTargetSpm: rep.cadenceTargetSpm } : {}),
         ...(exposure ? { exposure } : {}),
+        // La dernière descente ne remonte pas : la séance rentre par le bas.
+        ...(access ? { lastGoesDown: true } : {}),
       });
     }
-    // L'échauffement mène au haut de la montée quand la descente y est posée.
-    if (k === 0 && k < i && /^échauffement$/iu.test(b.label.trim()) && where) return { ...b, label: WARMUP_TO_TOP };
-    if (k === 0 && b.label === WARMUP_TO_TOP && !where) return { ...b, label: 'Échauffement' };
+    // L'échauffement mène au haut de la montée quand la descente y est posée, et
+    // la monte : c'est la montée entière.
+    if (k === 0 && k < i && /^échauffement$/iu.test(b.label.trim()) && where) {
+      return { ...b, label: WARMUP_TO_TOP, ...(access ? { elevationGainM: access.upM, where: access.up } : {}) };
+    }
+    if (k === 0 && b.label === WARMUP_TO_TOP) {
+      if (where) return { ...b, ...(access ? { elevationGainM: access.upM, where: access.up } : {}) };
+      const bare = { ...b, label: 'Échauffement' };
+      delete bare.elevationGainM;
+      delete bare.where;
+      return bare;
+    }
+    if (k === back && access) {
+      return { ...b, label: COOLDOWN_TO_FOOT, elevationLossM: access.downM, where: access.down };
+    }
     return b;
   });
   const blocks = snapToHumanGrid(laid);
@@ -2025,7 +2061,8 @@ export function renderSession(
     // sa durée par ce qu'elle est — une estimation, la montre attend le tour.
     const rec = b.recovery
       ? (climbsBack(b.recovery)
-          ? ` — remontée en marchant, environ ${formatBlockDuration(b.recovery.durationS)} (bouton tour en haut)`
+          ? ` — remontée en marchant${b.recovery.betweenReps ? ' entre les descentes' : ''}, environ ` +
+            `${formatBlockDuration(b.recovery.durationS)} (bouton tour en haut)`
           : ` — récup ${formatBlockDuration(b.recovery.durationS)} ${b.recovery.active ? 'active' : 'passive'}`) +
         recPace +
         recHr +

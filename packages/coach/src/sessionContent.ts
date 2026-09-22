@@ -79,7 +79,7 @@ const WRITABLE_RECOVERY_FIELDS: Record<
   Exclude<keyof Recovery, DerivedBlockField | 'hrRange' | 'speedRangeMs'>,
   true
 > = {
-  durationS: true, zone: true, active: true, elevationGainM: true, elevationLossM: true,
+  durationS: true, zone: true, active: true, betweenReps: true, elevationGainM: true, elevationLossM: true,
 };
 const WRITABLE_CIRCUIT_FIELDS: Record<keyof StrengthCircuit, true> = { rounds: true, exercises: true };
 const WRITABLE_EXERCISE_FIELDS: Record<keyof StrengthExercise, true> = { movement: true, reps: true };
@@ -361,6 +361,11 @@ function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[]): Recov
     zone,
     active: r.active === undefined ? true : boolean(r.active, `${at}.active`),
   };
+  // Une récupération qui sépare les répétitions n'en suit pas la dernière : la
+  // durée, le dénivelé et la charge de la séance la comptent une fois de moins.
+  if (r.betweenReps !== undefined && boolean(r.betweenReps, `${at}.betweenReps`)) {
+    recovery.betweenReps = true;
+  }
   // La remontée d'une descente, la descente d'une côte : une récupération qui
   // franchit du dénivelé le déclare, et son temps se contrôle comme un autre.
   if (r.elevationGainM !== undefined) {

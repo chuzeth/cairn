@@ -3,8 +3,8 @@ import type {
   RaceGoal, SessionBlock,
 } from '@cairn/core';
 import {
-  anchorRelativeDates, localDate, sessionDuration, courseFromLapFormat, courseHasUnknown, describeLapFormat, directivesFor, isLapCourse,
-  lapsForHours, targetLaps,
+  anchorRelativeDates, localDate, sessionDuration, signedDecimal, courseFromLapFormat, courseHasUnknown,
+  describeLapFormat, directivesFor, isLapCourse, lapsForHours, targetLaps,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
@@ -482,8 +482,8 @@ function refuseUnknownKeys(name: string, input: Record<string, unknown>): void {
   );
 }
 
-/** Un TSB se lit signé : « 8,8 » et « −8,8 » ne décrivent pas le même athlète. */
-const signedTsb = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
+/** Une fraîcheur se lit signée : « 8,8 » et « −8,8 » ne décrivent pas le même jour. */
+const signedTsb = (v: number) => signedDecimal(v);
 
 export interface ToolResult {
   content: unknown;
@@ -595,7 +595,9 @@ export async function executeTool(
     case 'get_fitness_state': {
       const state = await loadAthleteState(athleteId);
       return {
-        summary: `CTL ${Math.round(state.today.ctl)} · TSB ${state.today.tsb > 0 ? '+' : ''}${Math.round(state.today.tsb)} · disponibilité ${state.readiness.score}/100`,
+        summary:
+          `Forme de fond ${Math.round(state.today.ctl)} · fraîcheur ${signedTsb(Math.round(state.today.tsb))} · ` +
+          `disponibilité ${state.readiness.score}/100`,
         content: {
           date: state.today.date,
           metabolique: {
@@ -1273,10 +1275,11 @@ export async function executeTool(
       const ctlIsAssumed = start.ctl < assumed * 0.45;
 
       const verdict =
-        `TSB projeté à la veille ${signedTsb(tsbCheck.projected)} pour une cible de ` +
-        `${signedTsb(tsbCheck.target)}${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)})`}` +
+        `fraîcheur la veille de la course ${signedTsb(tsbCheck.projected)} pour ${signedTsb(tsbCheck.target)} visés` +
+        `${tsbCheck.onTarget ? '' : ` (écart ${signedTsb(tsbCheck.gap)} point)`}` +
         (ratioCheck.exceedances.length
-          ? ` — ⚠ ratio de charge au-delà de son seuil : ${describeRatioExceedances(ratioCheck.exceedances)}`
+          ? ` — ⚠ tu y courrais nettement plus que les semaines d'avant ne t'y préparent : ` +
+            `${describeRatioExceedances(ratioCheck.exceedances)}`
           : '') +
         (volumeCheck.statement ? ` — ⚠ ${volumeCheck.statement}` : '');
 

@@ -1,7 +1,7 @@
 import type {
   DecisionOrigin, PhysiologyModel, PlannedSession, SessionBlock, SessionHistoryEntry,
 } from '@cairn/core';
-import { anchorRelativeDates, sessionDuration, writtenOn } from '@cairn/core';
+import { anchorRelativeDates, decimal, sessionDuration, signedDecimal, writtenOn } from '@cairn/core';
 import { DURABILITY_MEASURABLE } from '@cairn/physiology';
 import { firstDescentNote } from './eccentric.js';
 import { locateVertical } from './plausibility.js';
@@ -23,6 +23,118 @@ import type { TerrainHint } from './terrain.js';
  *
  * Module pur : ni base, ni réseau.
  */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Les mots de Pierre
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Pierre lit Cairn sans en connaître le vocabulaire. Ce qui s'adresse à lui
+ * passe donc par ici, pour que les mêmes règles s'appliquent partout d'un coup :
+ *
+ *  · on lui parle à lui, à la deuxième personne — jamais « l'athlète » ;
+ *  · d'abord ce que ça change pour lui — des secondes sur sa course, des minutes
+ *    sur sa séance, un geste à faire —, puis le pourquoi en une phrase ;
+ *  · aucun terme interne sans sa traduction : un chiffre du modèle s'écrit avec
+ *    ce qu'il signifie ;
+ *  · les nombres s'écrivent à la française.
+ *
+ * Le mécanisme complet n'est pas perdu pour autant : il tient dans un second
+ * paragraphe, séparé par une ligne vide, que l'écran range sous un pli. Rien
+ * n'est retiré au modèle — c'est l'ordre de lecture qui change.
+ */
+
+/** Ce qu'un écart coûte sur une course : « 11 secondes », « 3 minutes ». */
+export const raceTime = (seconds: number): string => {
+  const s = Math.round(Math.abs(seconds));
+  if (s < 120) return `${s} seconde${s > 1 ? 's' : ''}`;
+  const min = Math.round(s / 60);
+  return `${min} minute${min > 1 ? 's' : ''}`;
+};
+
+/** Ce que « fraîcheur » veut dire, dit une fois, là où le chiffre apparaît. */
+export const FRESHNESS_MEANS =
+  'ta forme de fond moins la fatigue des derniers jours — plus le nombre est haut, plus tu pars reposé';
+
+/**
+ * Un texte en deux temps : ce que ça change, puis le mécanisme.
+ *
+ * La ligne vide n'est pas une mise en page, c'est la coupure que l'écran lit
+ * pour ranger le second sous un pli — et que le coach lit, lui, en entier.
+ */
+export const twoParts = (plain: string, mechanism: string): string => `${plain}\n\n${mechanism}`;
+
+/** Ce qu'un texte en deux temps dit d'abord. */
+export const firstParagraph = (text: string): string => text.split('\n\n')[0] ?? text;
+
+export interface TaperGap {
+  /** Le jour de la course, tel qu'il s'écrit : « 18/10 ». */
+  raceDay: string;
+  /** Fraîcheur visée à la veille de la course, et celle que le plan y amène. */
+  target: number;
+  projected: number;
+  /** Ce que l'écart coûte sur la course, s, et le temps prédit, s. Nuls si personne ne l'a mesuré. */
+  costS: number;
+  predictedS: number;
+  /** L'affûtage bute sur l'une de ses bornes. */
+  atFloor: boolean;
+  atCeiling: boolean;
+  /** Profondeur retenue, en multiple de la profondeur habituelle. */
+  taperScale: number;
+  weeks: number;
+  taperWeeks: number;
+  /** Forme de fond au départ du plan, en points. */
+  startCtl: number;
+  maxWeeklyHours: number;
+}
+
+/**
+ * L'écart à la fraîcheur visée, dit à Pierre.
+ *
+ * Ce qu'il en retient tient en trois phrases : ce qu'il perdra le jour J en
+ * secondes, pourquoi on ne va pas le chercher, et ce qu'il a à faire — rien,
+ * le plus souvent. Le compte complet — profondeur d'affûtage, semaines, forme
+ * de fond de départ, points de fraîcheur manquants — le suit, à un geste.
+ *
+ * Une cible manquée par le haut ne se dit pas en secondes : le jour J, plus de
+ * fraîcheur ne coûte pas de temps, c'est le fond qui manque, et le temps qu'il
+ * coûte n'est pas dans cet écart-là.
+ */
+export function taperGapText(g: TaperGap): string {
+  const depth = `L'affûtage est à ${Math.round(g.taperScale * 100)} % de sa profondeur habituelle`;
+  const frame =
+    `${g.weeks} semaine${g.weeks > 1 ? 's' : ''} dont ${g.taperWeeks} d'affûtage, ` +
+    `en partant d'une forme de fond de ${Math.round(g.startCtl)} points`;
+  const scale =
+    `${signedDecimal(g.projected)} contre ${signedDecimal(g.target)} visés — la fraîcheur, c'est ${FRESHNESS_MEANS}.`;
+
+  if (g.projected < g.target) {
+    const cost = g.costS > 0 && g.predictedS > 0
+      ? ` : ${raceTime(g.costS)} sur ${sessionDuration(g.predictedS)}`
+      : '';
+    const why = g.atFloor
+      ? 'Alléger davantage te ferait perdre plus de forme que tu ne gagnerais de fraîcheur.'
+      : "D'ici là, il n'y a pas assez de semaines pour aller chercher le reste.";
+    const floor = g.atFloor
+      ? ", son plancher : en dessous, ta forme de fond se perdrait plus vite que la fatigue ne s'évacue, " +
+        'et la fraîcheur gagnée coûterait la forme.'
+      : '.';
+    const missing = Math.abs(g.target - g.projected);
+    return twoParts(
+      `Tu seras un peu moins frais que l'idéal le ${g.raceDay}${cost}. ${why} Rien à faire.`,
+      `${depth}${floor} ${frame} : il manque ${decimal(missing)} point${missing >= 2 ? 's' : ''} de ` +
+        `fraîcheur, ${scale}`,
+    );
+  }
+  return twoParts(
+    `Le ${g.raceDay}, tu partiras plus reposé que l'idéal, mais moins entraîné : tes ` +
+      `${g.maxWeeklyHours} h par semaine ne laissent pas la place de construire plus de fond d'ici là. ` +
+      `Rien à faire, sinon courir davantage chaque semaine — et ça se décide, ça ne se rattrape pas.`,
+    `${depth}${g.atCeiling ? ", son plafond — au-delà, la fin de préparation ne serait plus un affûtage" : ''}. ` +
+      `${frame}, ${g.maxWeeklyHours} h par semaine au plus : cette charge ne construit pas le fond qu'une ` +
+      `fraîcheur de ${signedDecimal(g.target)} suppose. ${scale}`,
+  );
+}
 
 export interface PresentationContext {
   model: PhysiologyModel;

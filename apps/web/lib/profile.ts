@@ -110,14 +110,16 @@ export interface SessionProfile {
  * Déplie les blocs en segments de temps réels.
  *
  * Une répétition et sa récupération alternent autant de fois que le bloc se
- * répète, récupération comprise après la dernière : c'est ainsi que la durée
- * prévue de la séance se retrouve, et la contredire décalerait l'abscisse.
+ * répète, récupération comprise après la dernière — sauf celle qui ne fait que
+ * séparer les répétitions : c'est ainsi que la durée prévue de la séance se
+ * retrouve, et la contredire décalerait l'abscisse.
  */
 export function legsOf(session: Pick<SessionRow, 'blocks'>): Leg[] {
   const blocks = session.blocks ?? [];
   const last = blocks.length - 1;
+  const rests = (b: Block) => Math.max(1, b.repeat ?? 1) - (b.recovery?.betweenReps ? 1 : 0);
   const span = (b: Block) =>
-    ((b.durationS ?? 0) + (b.recovery?.durationS ?? 0)) * Math.max(1, b.repeat ?? 1);
+    (b.durationS ?? 0) * Math.max(1, b.repeat ?? 1) + (b.recovery?.durationS ?? 0) * rests(b);
   const total = blocks.reduce((a, b) => a + span(b), 0);
   const brief = (b: Block) => total > 0 && span(b) < total * MAX_WARMUP_SHARE;
   const warmup =
@@ -145,7 +147,7 @@ export function legsOf(session: Pick<SessionRow, 'blocks'>): Leg[] {
         block: i, durationS, zone: b.zone, recovery: false, flat,
         gainM: b.elevationGainM ?? 0, lossM: b.elevationLossM ?? 0,
       });
-      if (r && r.durationS > 0) {
+      if (r && r.durationS > 0 && !(r.betweenReps && k === n - 1)) {
         legs.push({
           block: i, durationS: r.durationS, zone: r.zone, recovery: true, flat,
           gainM: recGain, lossM: recLoss,

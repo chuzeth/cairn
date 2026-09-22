@@ -19,6 +19,39 @@ import {
  */
 const signed = (v: number) => `${v > 0 ? '+' : ''}${num(v, Number.isInteger(v) ? 0 : 1)}`;
 
+/**
+ * L'écart à la fraîcheur visée : ce qu'il change pour Pierre, et le mécanisme
+ * sous un pli.
+ *
+ * Onze secondes sur trois heures et demie ne font pas un encart d'alerte. Cet
+ * écart-là se lit comme une note, à la place qu'il mérite ; son compte complet
+ * — profondeur d'affûtage, semaines, points de fraîcheur — attend celui qui
+ * veut le lire, et le second paragraphe du texte est exactement ça.
+ */
+function TaperGap({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [plain, ...rest] = text.split('\n\n');
+  return (
+    <div className="banner" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+      <p className="small" style={{ margin: 0 }}>{plain}</p>
+      {rest.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="link-button tiny"
+            style={{ alignSelf: 'flex-start' }}
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? 'Masquer le détail' : 'Le détail'}
+          </button>
+          {open && <p className="tiny faint" style={{ margin: 0 }}>{rest.join(' ')}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Les tons de l'état Garmin, dans ceux que la grille connaît déjà. */
 const GARMIN_TONE = { good: 'done', warn: 'off', mute: 'mute' } as const;
 
@@ -86,10 +119,12 @@ export default function PlanPage() {
         <div>
           <h1 className="page-title">Plan d'entraînement</h1>
           <p className="page-sub">
-            TSB visé le jour de la course : {signed(data.plan.targetRaceDayTsb)}
-            {/* La cible seule est une intention. Ce que le plan en fait se mesure. */}
+            {/* La cible seule est une intention. Ce que le plan en fait se mesure.
+                Et un chiffre du modèle s'écrit avec ce qu'il signifie. */}
+            Fraîcheur le jour de la course — ta forme de fond moins la fatigue des derniers
+            jours : {signed(data.plan.targetRaceDayTsb)} visés
             {data.plan.projectedRaceDayTsb != null && (
-              <> · le plan y amène {signed(data.plan.projectedRaceDayTsb)}</>
+              <>, {signed(data.plan.projectedRaceDayTsb)} avec ce plan</>
             )}
             {' · '}{num(data.sessions.length)} séances sur {num(weeks.length)} semaines
           </p>
@@ -98,15 +133,7 @@ export default function PlanPage() {
       </div>
 
       {data.plan.raceDayTsbShortfall && (
-        <div className="banner" data-tone="warn" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 9 }}>
-          <strong>
-            La cible d’affûtage n’est pas atteinte
-            {data.plan.projectedRaceDayTsb != null && (
-              <> : {signed(data.plan.projectedRaceDayTsb)} au lieu de {signed(data.plan.targetRaceDayTsb)}</>
-            )}
-          </strong>
-          <p className="tiny faint" style={{ margin: 0 }}>{data.plan.raceDayTsbShortfall}</p>
-        </div>
+        <TaperGap text={data.plan.raceDayTsbShortfall} />
       )}
 
       {data.absences.map((a) => (

@@ -705,6 +705,48 @@ export function descentStretch(terrain: TerrainHint | undefined, dropM: number):
 }
 
 /**
+ * Ce qu'une descente posée sur une montée coûte pour y aller et pour en
+ * revenir : l'accès, du pied au haut, et le bas de la montée, du demi-tour au
+ * pied.
+ *
+ * L'échauffement monte au haut — c'est la montée entière — et, la dernière
+ * descente faite, on est au demi-tour : il reste à descendre ce que la montée
+ * a de plus bas que lui. Ces mètres-là se courent comme les autres ; tant
+ * qu'aucun bloc ne les portait, la séance annonçait 468 m quand elle en
+ * montait 511.
+ */
+export function descentAccess(
+  terrain: TerrainHint | undefined,
+  dropM: number,
+): { up: TerrainStretch; down: TerrainStretch; upM: number; downM: number } | null {
+  const climb = climbForRepeats(terrain, dropM);
+  const foot = climb?.latest.start;
+  const top = climb?.latest.top;
+  if (!climb || !foot || !top) return null;
+  const turn = pointBelowTop(climb.latest.profile, dropM);
+  // Ce que la montée monte est ce qu'elle annonce — le dénivelé médian de ses
+  // passages, celui que la séance nomme juste à côté. Prendre celui du dernier
+  // passage écrirait 120 m sous un tronçon qui en dit 121.
+  const upM = Math.round(climb.gainM);
+  const downM = upM - Math.round(dropM);
+  // Ce qui reste sous le demi-tour, sur la montée telle qu'elle s'annonce : le
+  // tronçon de descente et le bas se recomposent alors en une montée, et non en
+  // deux mesures qui ne se rejoignent pas.
+  const lowerM = turn ? climb.lengthM - turn.lengthM : 0;
+  if (!turn || downM <= 0 || lowerM <= 0) return null;
+  return {
+    // L'accès, c'est la montée entière : elle se dit avec les chiffres qu'elle
+    // annonce, les mêmes que ceux d'une rando-course qui la monte.
+    up: stretchOf(climb, terrain?.home, [{ role: 'pied', at: foot }, { role: 'haut', at: top }],
+      climb.lengthM, upM),
+    down: stretchOf(climb, terrain?.home, [{ role: 'demi-tour', at: turn.at }, { role: 'pied', at: foot }],
+      lowerM, downM),
+    upM,
+    downM,
+  };
+}
+
+/**
  * Le tronçon d'une côte : du pied jusqu'au point où l'on a monté ce que la
  * répétition monte. Ce qu'elle monte dépend de la pente — à puissance égale, on
  * monte plus vite une pente plus raide —, et la pente, du tronçon : `gainAt`

@@ -3,8 +3,9 @@ import type { ActivityStreams, PlannedSession, SessionBlock } from '@cairn/core'
 import { mapUrl } from '@cairn/core';
 import { easyClimbRate } from '@cairn/physiology';
 import {
-  DESCENT_EFFORT, WARMUP_TO_TOP, descentStretch, detectClimbs, downhillSession, groupRecurring, onTerrain,
-  parseSessionBlocks, pointBelowTop, totalDuration, type ClimbOccurrence, type TerrainHint,
+  COOLDOWN_TO_FOOT, DESCENT_EFFORT, WARMUP_TO_TOP, descentStretch, detectClimbs, downhillSession,
+  elevationGainOf, elevationLossOf, groupRecurring, onTerrain, parseSessionBlocks, pointBelowTop, totalDuration,
+  type ClimbOccurrence, type TerrainHint,
 } from '@cairn/coach';
 import { prescribe, type WatchItem, type WatchStep } from '@cairn/garmin';
 import { DECIDED_ON_2026_09_21, PIERRE_MODEL } from './fixtures/pierre.js';
@@ -121,13 +122,30 @@ describe('La descente du 24/09 se lit comme une séance qu\'on court', () => {
 
   it('garde ce qui a été prescrit : six descentes de 78 m, trois minutes chacune', () => {
     expect(rep).toMatchObject({ repeat: 6, elevationLossM: 78, durationS: 180, cadenceTargetSpm: 180 });
-    expect(laid!.title).toMatch(/^Descente technique 6 × 3 min — .* · 468 m D−$/);
+    expect(laid!.title).toMatch(/^Descente technique 6 × 3 min — .* · 511 m D−$/);
   });
 
   it('se court du haut au demi-tour, et l\'échauffement mène au haut', () => {
     expect(rep.where).toMatchObject({ from: { role: 'haut' }, to: { role: 'demi-tour' }, lengthM: 400 });
     expect(rep.distanceM).toBe(400);
     expect(laid!.blocks[0]!.label).toBe(WARMUP_TO_TOP);
+  });
+
+  it('compte l\'accès : l\'échauffement monte la montée entière, 121 m', () => {
+    const warmup = laid!.blocks[0]!;
+    expect(warmup.elevationGainM).toBe(121);
+    expect(warmup.where).toMatchObject({ from: { role: 'pied' }, to: { role: 'haut' }, lengthM: 880 });
+  });
+
+  it('ne remonte pas après la dernière descente : elle rentre par le bas, 43 m', () => {
+    const back = laid!.blocks[laid!.blocks.length - 1]!;
+    expect(rep.recovery!.betweenReps).toBe(true);
+    expect(back).toMatchObject({ label: COOLDOWN_TO_FOOT, elevationLossM: 43 });
+    expect(back.where).toMatchObject({ from: { role: 'demi-tour' }, to: { role: 'pied' }, grade: 0.09 });
+    // 121 m d'accès, cinq remontées de 78 m ; six descentes de 78 m, 43 m pour rentrer.
+    expect(elevationGainOf(laid!.blocks)).toBe(511);
+    expect(elevationLossOf(laid!.blocks)).toBe(511);
+    expect(laid!.plannedElevationGainM).toBe(511);
   });
 
   it('remonte en marchant, le temps que la marche facile y prend', () => {
@@ -197,7 +215,11 @@ describe('Sur la montre, la remontée attend l\'athlète en haut', () => {
   const [down, up] = group.items as WatchStep[];
 
   it('la descente s\'arrête au demi-tour, la remontée au bouton du tour', () => {
-    expect(group.times).toBe(6);
+    // Cinq descentes remontent, la sixième non : elle se tient seule après le
+    // groupe, et c'est le retour au calme qui ramène au pied.
+    expect(group.times).toBe(5);
+    const at = p.workout.items.indexOf(group);
+    expect((p.workout.items[at + 1] as WatchStep).note).toBe(down!.note);
     expect(down!.end).toEqual({ type: 'distance', meters: 400 });
     expect(up!.end).toEqual({ type: 'lap' });
     expect(down!.target).toEqual({ type: 'none' });

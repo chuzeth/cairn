@@ -156,7 +156,10 @@ export function recoveryText(r: NonNullable<SessionRow['blocks'][number]['recove
   if (!climbsBack(r)) return `récup ${prime(r.durationS)} ${r.active ? 'active' : 'passive'}`;
   // La durée repose sur la marche facile du modèle : elle porte sa provenance.
   const from = r.provenance?.vam ? ` (${PROVENANCE_SHORT[r.provenance.vam] ?? r.provenance.vam})` : '';
-  return `remontée en marchant, environ ${prime(r.durationS)}${from}, tour en haut`;
+  // Entre les descentes, pas après la dernière : celle-là, tu ne la remontes
+  // pas, tu rentres par le bas.
+  const when = r.betweenReps ? ' entre les descentes' : '';
+  return `remontée en marchant${when}, environ ${prime(r.durationS)}${from}, tour en haut`;
 }
 
 /** « vite mais maîtrisé » : la tête d'une consigne d'effort, avant ses points de technique. */

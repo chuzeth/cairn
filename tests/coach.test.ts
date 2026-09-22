@@ -349,9 +349,13 @@ describe('Le plan est mesuré contre la cible qu\'il se donne', () => {
     expect(tsbCheck.gap).toBeLessThan(0);
     expect(tsbCheck.shortfall).toContain('plancher');
     expect(plan.raceDayTsbShortfall).toBe(tsbCheck.shortfall);
-    // Et le journal du plan le porte, avec les deux nombres.
-    expect(plan.revisionLog[0]!.summary).toContain('veille de course');
-    expect(plan.revisionLog[0]!.summary).toContain(`${tsbCheck.projected.toFixed(1)}`);
+    // Ce que Pierre lit d'abord : des secondes sur sa course, et rien à faire.
+    expect(tsbCheck.shortfall!.split('\n\n')[0]).toMatch(
+      /^Tu seras un peu moins frais que l'idéal le \d\d\/\d\d : \d+ secondes sur \d h \d\d\./,
+    );
+    // Et le journal du plan le porte, avec les deux nombres, à la française.
+    expect(plan.revisionLog[0]!.summary).toContain('la veille de la course');
+    expect(plan.revisionLog[0]!.summary).toContain(`${tsbCheck.projected.toFixed(1).replace('.', ',')}`);
   });
 
   it('dit aussi l\'écart dans l\'autre sens : plus frais que visé, donc moins entraîné', () => {
@@ -1280,8 +1284,11 @@ describe('Ratios de charge du plan écrit', () => {
       expect(e.value).toBeGreaterThan(e.limit);
       expect(e.date >= ratioCheck.from && e.date <= ratioCheck.to).toBe(true);
     }
-    // Le journal du plan le dit, avec la date et la valeur.
-    expect(plan.revisionLog[0]!.summary).toContain(`mécanique ${mechanical[0]!.value.toFixed(2)} le ${mechanical[0]!.date}`);
+    // Le journal du plan le dit, avec la date et la valeur, dans les mots de Pierre.
+    const [, month, day] = mechanical[0]!.date.split('-') as [string, string, string];
+    expect(plan.revisionLog[0]!.summary).toContain(
+      `en descente, ${mechanical[0]!.value.toFixed(2).replace('.', ',')} fois le ${day}/${month}`,
+    );
   });
 });
 

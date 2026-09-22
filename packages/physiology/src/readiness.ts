@@ -1,6 +1,7 @@
 import type {
   AbsenceKind, DailyCheckIn, PmcSeries, ReadinessScore, ReadinessSource,
 } from '@cairn/core';
+import { decimal } from '@cairn/core';
 import { clamp, mean } from './units.js';
 
 /**
@@ -340,7 +341,9 @@ function recommend(
   if (ctx.fatigue != null && ctx.fatigue >= 4) reasons.push('fatigue perçue élevée');
   if (ctx.tsbMech < -12) reasons.push('fatigue musculaire élevée (charge excentrique récente)');
   if (ctx.tsbM < -25) reasons.push('charge métabolique très supérieure à la récupération');
-  if (ctx.acwr > 1.5) reasons.push(`pic de charge marqué (ACWR ${ctx.acwr.toFixed(2)})`);
+  if (ctx.acwr > 1.5) {
+    reasons.push(`pic de charge marqué : ces 7 jours pèsent ${decimal(ctx.acwr, 2)} fois tes 4 dernières semaines`);
+  }
   if (ctx.soreness != null && ctx.soreness >= 4) reasons.push('courbatures importantes déclarées');
   if (ctx.sleep != null && ctx.sleep < 6) reasons.push(`sommeil court (${ctx.sleep} h)`);
 
@@ -363,7 +366,7 @@ function recommend(
       `Rien à faire aujourd'hui : une absence déclarée couvre la journée. Le score est haut parce ` +
         `que tu ne t'entraînes pas — c'est la fraîcheur de l'arrêt, pas celle de la forme.${blind}`,
       `Rien à faire aujourd'hui : une absence déclarée couvre la journée${because}. La fraîcheur que ` +
-        `tu lis vient de l'arrêt, pas de la forme : ta charge chronique baisse pendant ce temps, ` +
+        `tu lis vient de l'arrêt, pas de la forme : ta forme de fond baisse pendant ce temps, ` +
         `et c'était prévu.${blind}`,
       `Rien à faire aujourd'hui : une absence déclarée couvre la journée. Le score reste bas malgré ` +
         `l'arrêt${because} — c'est ce qu'il faut dire au coach avant de reprendre à la date prévue.${blind}`,
