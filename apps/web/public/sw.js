@@ -44,8 +44,9 @@ const SHELL_ROUTES = ['/', '/point', '/coach'];
  * disponibilité, `/api/plan` la séance du jour, `/health` le fait que Strava
  * réponde : l'écran du matin ne se rend pas sans les trois. C'est la date de
  * `/api/state` qu'il affiche — les autres la suivent d'une même requête.
+ * `/api/glossary` ne date de rien : c'est ce que ses mots veulent dire.
  */
-const KEPT = ['/api/state', '/api/plan', '/health'];
+const KEPT = ['/api/state', '/api/plan', '/health', '/api/glossary'];
 
 /** La date du relevé, portée du cache jusqu'à l'écran. */
 const RECORDED_AT = 'x-cairn-recorded-at';

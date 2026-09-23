@@ -46,9 +46,11 @@ const FLAT_IMPACT_PER_M = 1 / 2500;
 const DESCENT_SEVERITY = 1.25;
 
 /**
- * Intensité d'une récupération active, en part de la vitesse au SV2 : celle à
- * laquelle la charge prévue la compte. Une durée de récupération qui en
- * supposerait une autre ferait décrire le même segment par deux intensités.
+ * Intensité d'une remontée en marchant, en part de la vitesse au SV2 : celle
+ * dont `easyClimbRate` tire sa durée, et à laquelle la charge prévue la compte.
+ * Une durée qui en supposerait une autre ferait décrire le même segment par
+ * deux intensités. Les autres récupérations actives se trottinent sous le
+ * plafond de la Z1, et se comptent à l'allure que l'athlète y court.
  */
 export const ACTIVE_RECOVERY_INTENSITY = 0.55;
 
@@ -96,6 +98,15 @@ export function runningTss(
   const intensityFactor = ngs / thresholdSpeedMs;
   const tss = (durationS / 3600) * intensityFactor ** 2 * 100;
   return { tss, ngs, intensityFactor };
+}
+
+/**
+ * Charge d'un segment couru à vitesse à plat constante : la formule du rTSS,
+ * pour que ce qui est prévu se compte comme ce qui sera réalisé.
+ */
+export function steadyRunLoad(durationS: number, flatSpeedMs: number, thresholdSpeedMs: number): number {
+  if (!(durationS > 0) || !(flatSpeedMs > 0) || !(thresholdSpeedMs > 0)) return 0;
+  return (durationS / 3600) * (flatSpeedMs / thresholdSpeedMs) ** 2 * 100;
 }
 
 /** hrTSS — filet de sécurité quand la vitesse GPS est inexploitable (forêt dense, canyon). */

@@ -4,6 +4,7 @@ export * from './zones.js';
 export * from './mmp.js';
 export * from './criticalSpeed.js';
 export * from './load.js';
+export * from './easy.js';
 export * from './pmc.js';
 export * from './decoupling.js';
 export * from './vertical.js';

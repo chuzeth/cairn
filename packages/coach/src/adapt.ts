@@ -871,11 +871,12 @@ export function describeAdjustments(adjustments: Adjustment[]): string {
   if (adjustments.length === 0) return 'Aucun ajustement nécessaire : le plan tient tel quel.';
   return adjustments
     .map((a) => {
+      // Le facteur de la règle n'est pas ce que la séance perd : une descente
+      // ramenée à 45 % garde ses remontées à pied, et passait de 1 h 35 à 1 h 20
+      // sous un « allégée de 55 % ». Ce qu'elle devient est dans le motif.
       const what =
         a.action === 'scale'
-          ? (a.factor ?? 1) < 1
-            ? `allégée de ${Math.round((1 - (a.factor ?? 1)) * 100)} %`
-            : 'allégée'
+          ? 'allégée'
           : a.action === 'drop_strength'
             ? 'allégée de son renforcement'
             : a.action === 'move'

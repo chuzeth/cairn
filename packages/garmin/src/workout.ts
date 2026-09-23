@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  climbsBack, coordinates, describeMovement, sessionDuration, stretchSpan, type PlannedSession, type SessionBlock,
+  climbsBack, coordinates, describeMovement, itinerary, sessionDuration, type PlannedSession, type SessionBlock,
   type SessionType,
 } from '@cairn/core';
 
@@ -272,11 +272,15 @@ function mainStep(block: SessionBlock, type: SessionType): WatchStep {
   };
 }
 
-/** « Du haut au demi-tour, 405 m à 19 % ; demi-tour 45.766158, 4.825112. » */
+/**
+ * « Descends 3 min jusqu'à la rue François Vernay, fais demi-tour, remonte en
+ * marchant. Demi-tour : 45.765591, 4.827695. » — l'itinéraire de l'écran, et les
+ * coordonnées du bout : la montre n'ouvre pas de carte.
+ */
 function whereNote(block: SessionBlock): string {
   const w = block.where!;
-  const span = stretchSpan(w);
-  return `${span[0]!.toUpperCase()}${span.slice(1)} ; ${w.to.role} ${coordinates(w.to)}.`;
+  const role = `${w.to.role[0]!.toUpperCase()}${w.to.role.slice(1)}`;
+  return `${itinerary(block)} ${role} : ${coordinates(w.to)}.`;
 }
 
 /**

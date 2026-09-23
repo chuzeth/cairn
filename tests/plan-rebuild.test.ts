@@ -515,10 +515,11 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
     for (const date of ['2026-09-25', '2026-09-26', '2026-10-01', '2026-10-02']) {
       expect(carriesEccentricStrength(days.get(date)?.blocks ?? []), date).toBe(false);
     }
-    // La descente du 24/09 remonte désormais à pied — six fois 90 m — et prend
-    // le temps de la semaine : la veille de la rando-course est un repos, sans
-    // circuit à retirer ni à justifier.
-    expect(days.get('2026-09-26')?.type).toBe('rest');
+    // La veille de la rando-course reste facile et sans circuit. Comptés à
+    // l'allure réellement courue, décrassages et footings atteignent la charge
+    // de la semaine avant d'en prendre tout le temps : ce jour-là n'est plus
+    // forcément un repos.
+    expect(['rest', 'recovery', 'endurance']).toContain(days.get('2026-09-26')?.type);
     // « Séance conservée » est un mot du planificateur, pas de l'athlète.
     expect(days.get('2026-10-04')?.rationale).toMatch(/^Décrassage : lendemain de « Rando-course .* », on facilite/);
     for (const s of days.values()) expect(s.rationale ?? '', s.date).not.toMatch(/conserv/);

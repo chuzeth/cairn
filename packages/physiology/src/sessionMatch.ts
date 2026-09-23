@@ -1,7 +1,9 @@
 import type {
   PhysiologyModel, PlannedSession, SessionBlock, SessionCompliance, SessionType, SportType,
 } from '@cairn/core';
+import { isAnnex, recoveryTimes } from '@cairn/core';
 import { CS_FIT_MIN_S } from './criticalSpeed.js';
+import { checkHrCeiling, isEasyZone, type CeilingCheck, type HrHistogram } from './easy.js';
 
 /**
  * Rattachement d'une activité à la séance prescrite.
@@ -50,6 +52,11 @@ export interface RealizedEffort {
    * la courbe des vitesses. C'est elle qui dit si l'effort d'un test a été maximal.
    */
   bestEffortHr?: Record<string, number>;
+  /**
+   * Secondes de mouvement passées à chaque FC : ce qui dit si un plafond a été
+   * tenu. Absent quand la FC couvre trop peu de la sortie pour en juger.
+   */
+  hrSeconds?: HrHistogram;
 }
 
 /**
@@ -87,13 +94,31 @@ const logGap = (actual: number, planned: number): number =>
   actual > 0 && planned > 0 ? Math.abs(Math.log(actual / planned)) : SILENT_PRESCRIPTION_GAP;
 
 /**
+ * Ce que la séance prescrit de courir, s : sa durée sans ce qui s'y ajoute.
+ *
+ * Une activité ne porte que la course. « Décrassage 45 min + souplesse et
+ * respiration 20 min » comparé à 65 minutes faisait d'un décrassage couru
+ * 45 minutes une séance écourtée d'un tiers, et d'un footing suivi de son
+ * renforcement une séance remplacée. Sans blocs, la durée enregistrée.
+ */
+export function runDurationOf(session: Pick<PlannedSession, 'blocks' | 'plannedDurationS'>): number {
+  if (session.blocks.length === 0) return session.plannedDurationS;
+  return session.blocks
+    .filter((b) => !isAnnex(b))
+    .reduce(
+      (a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0) + recoveryTimes(b) * (b.recovery?.durationS ?? 0),
+      0,
+    );
+}
+
+/**
  * Distance entre l'effort réalisé et la prescription, en écarts logarithmiques
  * de durée et de charge : un facteur deux pèse autant dans un sens que dans
  * l'autre, et aucune des deux grandeurs n'écrase l'autre.
  */
 function divergence(session: PlannedSession, realized: RealizedEffort): number {
   return (
-    logGap(realized.durationS, session.plannedDurationS) +
+    logGap(realized.durationS, runDurationOf(session)) +
     logGap(realized.load, session.plannedLoad)
   );
 }
@@ -184,6 +209,7 @@ export function maximalTestProof(
 
 export interface SessionDeviations {
   loadPct: number;
+  /** Écart à la durée de course prescrite (`runDurationOf`). */
   durationPct: number;
   /** `null` quand la prescription ne cible pas d'allure, ou qu'aucun bloc n'a été détecté. */
   intensityPct: number | null;
@@ -204,9 +230,40 @@ export function deviationsFrom(session: PlannedSession, realized: RealizedEffort
   }
   return {
     loadPct: pct(realized.load, session.plannedLoad),
-    durationPct: pct(realized.durationS, session.plannedDurationS),
+    durationPct: pct(realized.durationS, runDurationOf(session)),
     intensityPct,
   };
+}
+
+/**
+ * Le plafond de FC d'une séance qui ne prescrit que lui et une durée — un
+ * décrassage, un footing, un footing prolongé —, ou `null`.
+ *
+ * Lu sur le contenu : tout ce qui s'y court est un bloc continu de zone facile,
+ * sans répétition, sans consigne d'effort ni vitesse ascensionnelle, et porte sa
+ * plage de FC. Une rando-course n'en est pas une : elle prescrit aussi son
+ * dénivelé.
+ */
+export function hrCeilingOf(session: Pick<PlannedSession, 'type' | 'blocks'>): number | null {
+  if (session.type === 'long_trail') return null;
+  const run = session.blocks.filter((b) => !isAnnex(b) && (b.durationS ?? 0) > 0);
+  const steadyEasy = (b: SessionBlock) =>
+    isEasyZone(b.zone) && b.hrRange != null && !b.effort && !b.recovery && (b.repeat ?? 1) <= 1 &&
+    b.vamTargetMh == null;
+  if (run.length === 0 || !run.every(steadyEasy)) return null;
+  return Math.max(...run.map((b) => (b.hrRange as [number, number])[1]));
+}
+
+/**
+ * Le plafond d'une séance facile, confronté à la FC de l'activité. `null` quand
+ * la séance n'en prescrit pas, ou que la FC manque pour en juger.
+ */
+export function ceilingCheckOf(
+  session: Pick<PlannedSession, 'type' | 'blocks'>,
+  realized: RealizedEffort,
+): CeilingCheck | null {
+  const ceiling = hrCeilingOf(session);
+  return ceiling != null && realized.hrSeconds ? checkHrCeiling(realized.hrSeconds, ceiling) : null;
 }
 
 /** La séance a-t-elle eu lieu, lue sur ce que cette activité a produit. */
@@ -216,7 +273,11 @@ export function outcomeOf(
   model: Pick<PhysiologyModel, 'vt2'>,
 ): SessionCompliance['outcome'] {
   const test = maximalTestProof(session, realized, model);
-  return sessionOutcome(deviationsFrom(session, realized), test ?? undefined);
+  return sessionOutcome(
+    deviationsFrom(session, realized),
+    test ?? undefined,
+    ceilingCheckOf(session, realized) ?? undefined,
+  );
 }
 
 /**
@@ -232,14 +293,21 @@ export function outcomeOf(
  * plus vite, une vitesse critique sous-estimée les font dévier sans que le test
  * cesse d'être le test — et une sortie de même durée et de même charge, sans
  * effort maximal, n'en est pas un.
+ *
+ * Une séance facile a eu lieu si son plafond de FC a été tenu, sur sa durée.
+ * Sa charge n'est pas davantage une consigne : c'est une estimation, et le
+ * décrassage du 22/09, couru à 133 bpm pour un plafond de 141, a été déclaré
+ * remplacé parce qu'elle était fausse.
  */
 export function sessionOutcome(
   deviations: SessionDeviations,
   maximalTest?: { proven: boolean },
+  ceiling?: { respected: boolean },
 ): SessionCompliance['outcome'] {
   const { loadPct, durationPct, intensityPct } = deviations;
   if (Math.abs(durationPct) > MATERIAL_DEVIATION_PCT.duration) return 'replaced';
   if (maximalTest) return maximalTest.proven ? 'fulfilled' : 'replaced';
+  if (ceiling) return ceiling.respected ? 'fulfilled' : 'replaced';
   const replaced =
     Math.abs(loadPct) > MATERIAL_DEVIATION_PCT.load ||
     (intensityPct != null && Math.abs(intensityPct) > MATERIAL_DEVIATION_PCT.intensity);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ECCENTRIC_MOVEMENT_TEXT, LAB_TEST_2025_07_24, PIERRE, buildDirectives, directivesFor,
-  sessionDuration, writtenOn,
+  sessionDuration, signedDecimal, writtenOn,
   type DeclaredAbsence, type PlannedSession, type RaceGoal, type TrainingWeek,
 } from '@cairn/core';
 import { DURABILITY_MEASURABLE, modelFromLabOnly, msToKmh, projectFrom } from '@cairn/physiology';
@@ -349,13 +349,19 @@ describe('Le plan est mesuré contre la cible qu\'il se donne', () => {
     expect(tsbCheck.gap).toBeLessThan(0);
     expect(tsbCheck.shortfall).toContain('plancher');
     expect(plan.raceDayTsbShortfall).toBe(tsbCheck.shortfall);
-    // Ce que Pierre lit d'abord : des secondes sur sa course, et rien à faire.
+    // Le coach lit l'écart en secondes, et sait qu'elles sont sous la précision
+    // de la prédiction : quelques secondes sur une course prédite à ±20 minutes.
     expect(tsbCheck.shortfall!.split('\n\n')[0]).toMatch(
-      /^Tu seras un peu moins frais que l'idéal le \d\d\/\d\d : \d+ secondes sur \d h \d\d\./,
+      /^Tu seras un peu moins frais que l'idéal le \d\d\/\d\d : \d+ secondes sur \d h \d\d, sous la précision de la prédiction \(±\d+ minutes\)\./,
     );
-    // Et le journal du plan le porte, avec les deux nombres, à la française.
-    expect(plan.revisionLog[0]!.summary).toContain('la veille de la course');
-    expect(plan.revisionLog[0]!.summary).toContain(`${tsbCheck.projected.toFixed(1).replace('.', ',')}`);
+    // Le journal du plan porte les deux nombres, à la française, et le
+    // mécanisme — qui a quitté l'écran ; pas les secondes, qu'aucun écran ne dit.
+    const journal = plan.revisionLog[0]!.summary;
+    expect(journal).toContain('la veille de la course');
+    expect(journal).toContain(signedDecimal(tsbCheck.projected));
+    expect(journal).toContain('son plancher');
+    expect(journal).toMatch(/\d+ % de sa profondeur habituelle/);
+    expect(journal).not.toMatch(/secondes/);
   });
 
   it('dit aussi l\'écart dans l\'autre sens : plus frais que visé, donc moins entraîné', () => {
@@ -547,6 +553,11 @@ describe('Règles d\'ajustement automatique', () => {
     expect(lib.transformSession(tomorrow, adj!.factor!, model).plannedDurationS).toBe(1800);
     expect(adj!.reason).toContain('ramenée à 30 min');
     expect(adj!.reason).not.toContain('31 min');
+    // Ce qui s'affiche dit ce que la séance devient, pas le facteur de la règle :
+    // une descente « allégée de 55 % » passait de 1 h 35 à 1 h 20.
+    const said = lib.describeAdjustments([adj!]);
+    expect(said).toContain('séance allégée. Séance ramenée à 30 min');
+    expect(said).not.toMatch(/allégée de \d+ %/);
   });
 
   it('protège la filière mécanique quand son ratio s\'emballe, circuit excentrique compris', () => {
@@ -1600,7 +1611,10 @@ describe('Le plafond horaire est une contrainte dure', () => {
       durabilityPctPerHour: 4.2,
       provenance: { ...model.provenance, durabilityPctPerHour: 'field' as const },
     };
-    const { volumeCheck } = plan(9, { model: measured });
+    // Huit heures, que chaque semaine de construction occupe à deux heures
+    // près. À neuf, les premières atteignent leur charge avant : le volume
+    // facile compté à l'allure courue coûte ce qu'il coûte.
+    const { volumeCheck } = plan(8, { model: measured });
     expect(volumeCheck.durabilityLimiting).toBe(true);
     expect(volumeCheck.underused).toHaveLength(0);
     expect(volumeCheck.statement).toBeNull();

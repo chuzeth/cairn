@@ -1,5 +1,7 @@
-import type { ActivityStreams, ParameterProvenance, TerrainPoint, TerrainStretch } from '@cairn/core';
+import type { ActivityStreams, ParameterProvenance, StretchGround, TerrainPoint, TerrainStretch } from '@cairn/core';
+import { stairsOf, streetName, withArticle } from '@cairn/core';
 import { computeGrade, mean, quantile } from '@cairn/physiology';
+import { distanceToTrack, groundBetween, nameOf, streetsOf, trackBetween, type MatchedTrack } from './ground.js';
 
 /**
  * Le terrain.
@@ -11,14 +13,15 @@ import { computeGrade, mean, quantile } from '@cairn/physiology';
  * part, pour qu'une prescription de dénivelé puisse désigner une montée réelle
  * au lieu d'un nombre de mètres.
  *
- * Tout ici est pur : un flux entre, un résultat sort. Ni base, ni réseau.
+ * Tout ici est pur : un flux entre, un résultat sort. Ni base, ni réseau. Le sol
+ * d'une montée arrive déjà calé sur OpenStreetMap (`ground.ts`), lu ailleurs.
  *
- * **Rien n'est nommé.** Nous n'avons pas de géocodage, et un toponyme inventé
- * serait une donnée fausse posée au milieu de données mesurées. Une montée
- * s'identifie par ses coordonnées, sa longueur, et les titres des activités où
- * elle apparaît — « KV de Rochefort » est un nom que Strava porte, pas un lieu
- * que nous aurions résolu. Ce qui est mesuré au GPS porte la provenance
- * `field` : c'est du terrain, jamais du laboratoire.
+ * **Rien n'est inventé.** Une montée se nomme par la voie qu'OpenStreetMap
+ * place sous sa trace, jamais par un toponyme deviné : sans voie relevée, elle
+ * s'identifie par ses chiffres et les titres des activités où elle apparaît —
+ * « KV de Rochefort » est un nom que Strava porte, pas un lieu que nous aurions
+ * résolu. Ce qui est mesuré au GPS porte la provenance `field` : c'est du
+ * terrain, jamais du laboratoire.
  */
 
 /** Dénivelé minimal pour qu'une montée compte comme telle, m. */
@@ -275,14 +278,23 @@ export interface RecurringClimb {
   activityNames: string[];
   occurrences: ClimbOccurrence[];
   provenance: ParameterProvenance;
+  /**
+   * Le chemin du dernier passage, calé sur les voies d'OpenStreetMap. Absent :
+   * personne ne l'a lu ; `null` : la lecture a échoué. Dans les deux cas, rien
+   * ne dit que la montée est sans marches.
+   */
+  ground?: MatchedTrack | null;
 }
 
 /**
  * Regroupe les montées de plusieurs sorties en montées récurrentes.
  *
- * Deux montées sont la même quand elles partent du même endroit à 80 m près et
- * que leurs longueurs sont comparables : le rayon seul confondrait la côte de
- * dix minutes et le col d'une heure qui commencent au même carrefour.
+ * Deux montées sont la même quand elles partent du même endroit à 80 m près,
+ * que leurs longueurs sont comparables et qu'elles suivent le même chemin : le
+ * rayon seul confondrait la côte de dix minutes et le col d'une heure qui
+ * commencent au même carrefour ; départ et longueur seuls réunissaient la
+ * montée Saint-Barthélémy et les escaliers de la montée Nicolas de Lange, qui
+ * partent tous deux du quai et montent tous deux à Fourvière.
  *
  * Une montée vue une seule fois n'est pas récurrente et ne sort pas d'ici.
  */
@@ -310,12 +322,32 @@ export function groupRecurring(climbs: readonly ClimbOccurrence[]): RecurringCli
     .sort((a, b) => b.passages - a.passages || b.gainM - a.gainM);
 }
 
-/** Même départ, longueur comparable. */
+/** Même départ, longueur comparable, même chemin. */
 function sameClimb(a: ClimbOccurrence, b: ClimbOccurrence): boolean {
   if (!a.start || !b.start) return false;
   if (haversineM(a.start, b.start) > SAME_START_M) return false;
   const ratio = Math.min(a.lengthM, b.lengthM) / Math.max(a.lengthM, b.lengthM);
-  return ratio >= SAME_LENGTH_RATIO;
+  return ratio >= SAME_LENGTH_RATIO && samePath(a, b);
+}
+
+/** Écart au-delà duquel un passage a quitté le chemin d'un autre, m : une rue plus loin. */
+export const SAME_PATH_M = 40;
+
+/**
+ * Le plus court des deux passages suit-il le chemin du plus long ? Lu au quart,
+ * à la moitié, aux trois quarts et au bout. Sans profil positionné — une trace
+ * sans GPS —, rien ne permet d'en douter.
+ */
+function samePath(a: ClimbOccurrence, b: ClimbOccurrence): boolean {
+  const [short, long] = a.lengthM <= b.lengthM ? [a, b] : [b, a];
+  const path = long.profile.flatMap((p) => (p.at ? [p.at] : []));
+  const own = short.profile.filter((p) => p.at != null);
+  if (path.length < 2 || own.length < 2) return true;
+  const end = own[own.length - 1]!.d;
+  return [0.25, 0.5, 0.75, 1].every((f) => {
+    const p = own.find((q) => q.d >= f * end) ?? own[own.length - 1]!;
+    return distanceToTrack(p.at!, path) <= SAME_PATH_M;
+  });
 }
 
 function summarizeGroup(group: ClimbOccurrence[]): RecurringClimb {
@@ -518,41 +550,27 @@ export function climbFor(
   return { climb: best.c, passages: best.passages, gainM: best.total };
 }
 
-const COMPASS = ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'];
-
-/** La direction d'un point vu d'un autre, sur huit secteurs. */
-function bearingName(from: readonly [number, number], to: readonly [number, number]): string {
-  const toRad = Math.PI / 180;
-  const dLng = (to[1] - from[1]) * toRad;
-  const y = Math.sin(dLng) * Math.cos(to[0] * toRad);
-  const x =
-    Math.cos(from[0] * toRad) * Math.sin(to[0] * toRad) -
-    Math.sin(from[0] * toRad) * Math.cos(to[0] * toRad) * Math.cos(dLng);
-  const deg = (Math.atan2(y, x) / toRad + 360) % 360;
-  return COMPASS[Math.round(deg / 45) % 8] as string;
-}
-
 const metres = (m: number) =>
   m >= 1000 ? `${(Math.round(m / 100) / 10).toLocaleString('fr-FR')} km` : `${Math.round(m / 10) * 10} m`;
 const dayMonth = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
 
+/** La distance du pied au haut sur le chemin du dernier passage, m. */
+const topDistance = (climb: RecurringClimb): number =>
+  climb.latest.profile[climb.latest.profile.length - 1]?.d ?? climb.latest.lengthM;
+
 /**
- * La montée désignée comme l'athlète peut la retrouver : sa longueur, sa pente,
- * où elle part par rapport à son départ habituel, et la dernière sortie où il
- * l'a prise — sous le titre que Strava lui donne. Aucun toponyme : nous n'en
- * avons pas, et un nom inventé serait une donnée fausse au milieu de mesures.
+ * La montée désignée comme on la retrouve : par la voie qui la porte — « la
+ * montée Saint-Barthélémy » — quand OpenStreetMap en place une sous sa trace ;
+ * sinon par sa longueur, sa pente et la dernière sortie où l'athlète l'a prise,
+ * sous le titre que Strava lui donne. Jamais par sa position par rapport au
+ * domicile : « à 510 m à l'ouest de ton départ habituel », personne ne s'y
+ * repère.
  */
-export function describeClimb(climb: RecurringClimb, home?: readonly [number, number]): string {
-  const away = home ? haversineM(home, climb.start) : null;
-  const direction = home ? bearingName(home, climb.start) : '';
-  const where =
-    away == null
-      ? ''
-      : away < 100
-        ? ', au départ de chez toi'
-        : `, à ${metres(away)} ${/^(est|ouest)$/.test(direction) ? `à l'${direction}` : `au ${direction}`} de ton départ habituel`;
+export function describeClimb(climb: RecurringClimb): string {
+  const name = climb.ground ? nameOf(climb.ground, 0, topDistance(climb)) : null;
+  if (name) return withArticle(streetName(name));
   return (
-    `ta montée de ${metres(climb.lengthM)} à ${Math.round(climb.grade * 100)} % (${climb.gainM} m)${where}, ` +
+    `ta montée de ${metres(climb.lengthM)} à ${Math.round(climb.grade * 100)} % (${climb.gainM} m), ` +
     `courue lors de ${climb.outings} sorties — la dernière le ${dayMonth(climb.lastDate)} (« ${climb.latest.activityName} »)`
   );
 }
@@ -566,46 +584,101 @@ export function describeClimb(climb: RecurringClimb, home?: readonly [number, nu
 export function describeClimbChoice(choice: ClimbChoice, prescribedM: number): string {
   const { climb, passages, gainM } = choice;
   const total = gainM === prescribedM ? '' : `, ${gainM} m en tout`;
+  const named = climb.ground ? nameOf(climb.ground, 0, topDistance(climb)) : null;
+  const which = named ? describeClimb(climb) : `ta montée de ${metres(climb.lengthM)}`;
   return (
-    `Les ${prescribedM} m, c'est ${passages} passage${passages > 1 ? 's' : ''} de ta montée de ` +
-    `${metres(climb.lengthM)}, du pied au haut : ${climb.gainM} m par passage${total}.`
+    `Les ${prescribedM} m, c'est ${passages} passage${passages > 1 ? 's' : ''} de ${which}, ` +
+    `du pied au haut : ${climb.gainM} m par passage${total}.`
   );
 }
 
 /** La montée entière, du pied au haut : celle que les passages d'une rando-course parcourent. */
-export function trailStretch(choice: ClimbChoice, home?: readonly [number, number]): TerrainStretch | null {
+export function trailStretch(choice: ClimbChoice): TerrainStretch | null {
   const { climb } = choice;
   const top = climb.latest.top;
   if (!top) return null;
-  return {
-    climb: describeClimb(climb, home),
-    from: { role: 'pied', at: climb.latest.start ?? climb.start },
-    to: { role: 'haut', at: top },
-    lengthM: climb.lengthM,
-    grade: climb.grade,
-    provenance: 'field',
-  };
+  return stretchOf(
+    climb,
+    [{ role: 'pied', at: climb.latest.start ?? climb.start }, { role: 'haut', at: top }],
+    climb.lengthM,
+    climb.gainM,
+    [0, topDistance(climb)],
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Les répétitions : un tronçon de montée, situé par son dénivelé
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Une montée écartée d'une séance rapide, et ce qui l'écarte. */
+export interface SkippedClimb {
+  /** La montée, désignée comme les séances la désignent. */
+  climb: string;
+  reason: 'escalier' | 'sol inconnu';
+  /** Marches du tronçon écarté, quand OpenStreetMap les compte. */
+  steps?: number;
+  /** Longueur d'escalier du tronçon écarté, m. */
+  stairsM?: number;
+}
+
 /**
- * La montée où se courent des répétitions de `meters` chacune, s'il y en a une.
- *
- * Même exigence que pour la rando-course — deux sorties au moins, près du départ
- * habituel —, et une de plus : le dernier passage, dont on donnera le chemin,
- * doit porter les mètres d'une répétition. Entre deux qui conviennent, celle que
- * l'athlète prend le plus souvent : c'est celle qu'il connaît, et une descente
- * technique se court sur un terrain connu.
+ * Part d'un tronçon rapide qu'on accepte hors de toute voie connue : le GPS
+ * s'écarte parfois de trente mètres entre deux immeubles, un escalier jamais
+ * cartographié ne se devine pas au-delà.
  */
-export function climbForRepeats(terrain: TerrainHint | undefined, meters: number): RecurringClimb | null {
-  if (!terrain || !(meters > 0)) return null;
+const FAST_OFF_SHARE = 0.25;
+
+/**
+ * Ce qui écarte un tronçon d'une séance rapide — descente, côte, fractionné :
+ * des marches, ou un sol qu'on n'a pas pu lire. Rien ne descend vite un
+ * escalier, et un tronçon dont on ne sait pas s'il en porte n'est pas un
+ * tronçon sans marches. `null` quand il convient.
+ */
+function fastRefusal(climb: RecurringClimb, fromD: number, toD: number): SkippedClimb | null {
+  if (!climb.ground) return { climb: describeClimb(climb), reason: 'sol inconnu' };
+  const g = groundBetween(climb.ground, fromD, toD);
+  const stairs = stairsOf(g);
+  if (stairs.lengthM > 0) {
+    return {
+      climb: describeClimb(climb),
+      reason: 'escalier',
+      stairsM: Math.round(stairs.lengthM),
+      ...(stairs.steps > 0 ? { steps: stairs.steps } : {}),
+    };
+  }
+  if ((g.offM ?? 0) > FAST_OFF_SHARE * Math.abs(toD - fromD)) return { climb: describeClimb(climb), reason: 'sol inconnu' };
+  return null;
+}
+
+/**
+ * Ce qu'une séance rapide dit des montées qu'elle n'a pas prises : l'escalier
+ * qu'elle évite, ou le sol qu'elle n'a pas pu lire. Posée ailleurs, elle nomme
+ * la première écartée — celle que l'athlète court le plus. Posée nulle part,
+ * elle dit où se courir. Vide quand rien n'a été écarté.
+ */
+export function skippedNote(skipped: readonly SkippedClimb[], placed: boolean, what: 'descentes' | 'côtes'): string {
+  const first = skipped[0];
+  if (!first) return '';
+  const why = (s: SkippedClimb) =>
+    s.reason === 'escalier'
+      ? `qui passe par ${s.steps ? `un escalier de ${s.steps} marches` : 'un escalier'}`
+      : `dont le sol n'a pas pu être lu sur OpenStreetMap`;
+  const rule =
+    what === 'descentes'
+      ? 'on ne descend pas vite sur des marches'
+      : 'une côte ne se court pas sur des marches';
+  if (placed) return `Pas sur ${first.climb}, ${why(first)} : ${rule}.`;
+  if (skipped.every((s) => s.reason === 'sol inconnu')) {
+    return (
+      `Le sol de tes montées n'a pas pu être lu sur OpenStreetMap : cours ces ${what} sur une route ou un ` +
+      `chemin sans marches.`
+    );
+  }
+  const others = skipped.length - 1;
   return (
-    candidates(terrain)
-      .filter((c) => c.latest.gainM >= meters)
-      .sort((a, b) => b.outings - a.outings || b.lastDate.localeCompare(a.lastDate))[0] ?? null
+    `Aucune de tes montées ne s'y prête — ${first.climb}, ${why(first)}` +
+    `${others > 0 ? `, et ${others} autre${others > 1 ? 's' : ''}` : ''} : cours ces ${what} sur une route ou ` +
+    `un chemin sans marches.`
   );
 }
 
@@ -619,10 +692,52 @@ function candidates(terrain: TerrainHint): RecurringClimb[] {
   );
 }
 
+/** Entre deux montées qui conviennent, celle que l'athlète prend le plus souvent : c'est celle qu'il connaît. */
+const byHabit = (a: RecurringClimb, b: RecurringClimb) => b.outings - a.outings || b.lastDate.localeCompare(a.lastDate);
+
 /** Un point du profil, et la longueur qui le sépare du bout d'où l'on part. */
 interface Located {
   at: [number, number];
   lengthM: number;
+}
+
+/** La montée d'une descente, son haut et son demi-tour — sur le chemin du dernier passage. */
+interface DescentPick {
+  climb: RecurringClimb;
+  top: [number, number];
+  turn: Located;
+  /** Distance du pied au haut, m, sur ce chemin. */
+  topD: number;
+}
+
+/**
+ * La montée où se courent des descentes de `dropM` chacune, et celles qu'il a
+ * fallu écarter pour elle.
+ *
+ * Deux sorties au moins, près du départ habituel ; un dernier passage qui porte
+ * les mètres d'une descente ; et un tronçon, du haut au demi-tour, sans marches
+ * et sur un sol relu. Entre deux qui conviennent, celle que l'athlète prend le
+ * plus souvent : une descente technique se court sur un terrain connu.
+ */
+export function descentPick(
+  terrain: TerrainHint | undefined,
+  dropM: number,
+): { pick: DescentPick | null; skipped: SkippedClimb[] } {
+  const skipped: SkippedClimb[] = [];
+  if (!terrain || !(dropM > 0)) return { pick: null, skipped };
+  for (const climb of candidates(terrain).filter((c) => c.latest.gainM >= dropM).sort(byHabit)) {
+    const top = climb.latest.top;
+    const turn = pointBelowTop(climb.latest.profile, dropM);
+    if (!top || !turn || turn.lengthM <= 0) continue;
+    const topD = topDistance(climb);
+    const refusal = fastRefusal(climb, topD, topD - turn.lengthM);
+    if (refusal) {
+      skipped.push(refusal);
+      continue;
+    }
+    return { pick: { climb, top, turn, topD }, skipped };
+  }
+  return { pick: null, skipped };
 }
 
 /**
@@ -673,35 +788,50 @@ function interpolate(
   return { at: [round6(at[0]), round6(at[1])], lengthM: way === 'down' ? origin - d : d - origin };
 }
 
-const stretchOf = (
+/**
+ * Le tronçon d'une montée entre deux de ses points : ses bouts, sa longueur et
+ * sa pente, et — lus sur le chemin du dernier passage, de `range[0]` vers
+ * `range[1]` — son tracé, son sol et ses voies dans l'ordre où on les court.
+ */
+function stretchOf(
   climb: RecurringClimb,
-  home: TerrainHint['home'],
   ends: [TerrainPoint, TerrainPoint],
   lengthM: number,
   meters: number,
-): TerrainStretch => ({
-  climb: describeClimb(climb, home),
-  from: ends[0],
-  to: ends[1],
-  lengthM: Math.round(lengthM),
-  grade: Math.round((meters / lengthM) * 1000) / 1000,
-  provenance: 'field',
-});
+  range: [number, number],
+): TerrainStretch {
+  const [fromD, toD] = range;
+  const track = trackBetween(climb.latest.profile, fromD, toD);
+  const g = climb.ground ? groundBetween(climb.ground, fromD, toD) : null;
+  const ground: StretchGround | null = g
+    ? { runs: g.runs, ...(g.offM ? { offM: g.offM } : {}), readAt: g.readAt }
+    : null;
+  const streets = ground ? streetsOf(ground) : [];
+  return {
+    climb: describeClimb(climb),
+    from: ends[0],
+    to: ends[1],
+    lengthM: Math.round(lengthM),
+    grade: Math.round((meters / lengthM) * 1000) / 1000,
+    provenance: 'field',
+    ...(streets.length > 0 ? { streets } : {}),
+    ...(ground ? { ground } : {}),
+    ...(track.length >= 2 ? { track } : {}),
+  };
+}
 
 /**
  * Le tronçon d'une descente de `dropM` : du haut de la montée jusqu'au point où
  * l'on a descendu ces mètres, là où l'on fait demi-tour. Sa pente est celle de
  * ce tronçon, pas celle de la montée : 78 m sous le haut de la montée de 942 m
- * à 13 %, c'est 405 m à 19 %.
+ * à 13 %, c'est 405 m à 19 %. Jamais sur des marches (`descentPick`).
  */
 export function descentStretch(terrain: TerrainHint | undefined, dropM: number): TerrainStretch | null {
-  const climb = climbForRepeats(terrain, dropM);
-  const top = climb?.latest.top;
-  if (!climb || !top) return null;
-  const turn = pointBelowTop(climb.latest.profile, dropM);
-  if (!turn || turn.lengthM <= 0) return null;
+  const { pick } = descentPick(terrain, dropM);
+  if (!pick) return null;
+  const { climb, top, turn, topD } = pick;
   const ends: [TerrainPoint, TerrainPoint] = [{ role: 'haut', at: top }, { role: 'demi-tour', at: turn.at }];
-  return stretchOf(climb, terrain?.home, ends, turn.lengthM, dropM);
+  return stretchOf(climb, ends, turn.lengthM, dropM, [topD, topD - turn.lengthM]);
 }
 
 /**
@@ -719,11 +849,10 @@ export function descentAccess(
   terrain: TerrainHint | undefined,
   dropM: number,
 ): { up: TerrainStretch; down: TerrainStretch; upM: number; downM: number } | null {
-  const climb = climbForRepeats(terrain, dropM);
-  const foot = climb?.latest.start;
-  const top = climb?.latest.top;
-  if (!climb || !foot || !top) return null;
-  const turn = pointBelowTop(climb.latest.profile, dropM);
+  const { pick } = descentPick(terrain, dropM);
+  const foot = pick?.climb.latest.start;
+  if (!pick || !foot) return null;
+  const { climb, top, turn, topD } = pick;
   // Ce que la montée monte est ce qu'elle annonce — le dénivelé médian de ses
   // passages, celui que la séance nomme juste à côté. Prendre celui du dernier
   // passage écrirait 120 m sous un tronçon qui en dit 121.
@@ -732,15 +861,19 @@ export function descentAccess(
   // Ce qui reste sous le demi-tour, sur la montée telle qu'elle s'annonce : le
   // tronçon de descente et le bas se recomposent alors en une montée, et non en
   // deux mesures qui ne se rejoignent pas.
-  const lowerM = turn ? climb.lengthM - turn.lengthM : 0;
-  if (!turn || downM <= 0 || lowerM <= 0) return null;
+  const lowerM = climb.lengthM - turn.lengthM;
+  if (downM <= 0 || lowerM <= 0) return null;
   return {
     // L'accès, c'est la montée entière : elle se dit avec les chiffres qu'elle
     // annonce, les mêmes que ceux d'une rando-course qui la monte.
-    up: stretchOf(climb, terrain?.home, [{ role: 'pied', at: foot }, { role: 'haut', at: top }],
-      climb.lengthM, upM),
-    down: stretchOf(climb, terrain?.home, [{ role: 'demi-tour', at: turn.at }, { role: 'pied', at: foot }],
-      lowerM, downM),
+    up: stretchOf(climb, [{ role: 'pied', at: foot }, { role: 'haut', at: top }], climb.lengthM, upM, [0, topD]),
+    down: stretchOf(
+      climb,
+      [{ role: 'demi-tour', at: turn.at }, { role: 'pied', at: foot }],
+      lowerM,
+      downM,
+      [topD - turn.lengthM, 0],
+    ),
     upM,
     downM,
   };
@@ -751,17 +884,16 @@ export function descentAccess(
  * répétition monte. Ce qu'elle monte dépend de la pente — à puissance égale, on
  * monte plus vite une pente plus raide —, et la pente, du tronçon : `gainAt`
  * dit les mètres d'une répétition pour une pente, et le tronçon se resserre
- * jusqu'à ce que les deux s'accordent.
+ * jusqu'à ce que les deux s'accordent. Jamais sur des marches ; les montées
+ * écartées pour cela sont rendues avec le tronçon retenu.
  */
-export function hillStretch(
+export function hillPick(
   terrain: TerrainHint | undefined,
   gainAt: (grade: number) => number,
-): { stretch: TerrainStretch; gainM: number } | null {
-  if (!terrain) return null;
-  const ordered = candidates(terrain).sort(
-    (a, b) => b.outings - a.outings || b.lastDate.localeCompare(a.lastDate),
-  );
-  for (const climb of ordered) {
+): { found: { stretch: TerrainStretch; gainM: number } | null; skipped: SkippedClimb[] } {
+  const skipped: SkippedClimb[] = [];
+  if (!terrain) return { found: null, skipped };
+  for (const climb of candidates(terrain).sort(byHabit)) {
     const foot = climb.latest.start;
     if (!foot) continue;
     let grade = climb.grade;
@@ -779,16 +911,32 @@ export function hillStretch(
       grade = next;
     }
     if (!found) continue;
+    const refusal = fastRefusal(climb, 0, found.at.lengthM);
+    if (refusal) {
+      skipped.push(refusal);
+      continue;
+    }
     return {
-      stretch: stretchOf(
-        climb,
-        terrain.home,
-        [{ role: 'pied', at: foot }, { role: 'demi-tour', at: found.at.at }],
-        found.at.lengthM,
-        found.gainM,
-      ),
-      gainM: found.gainM,
+      found: {
+        stretch: stretchOf(
+          climb,
+          [{ role: 'pied', at: foot }, { role: 'demi-tour', at: found.at.at }],
+          found.at.lengthM,
+          found.gainM,
+          [0, found.at.lengthM],
+        ),
+        gainM: found.gainM,
+      },
+      skipped,
     };
   }
-  return null;
+  return { found: null, skipped };
+}
+
+/** Le tronçon d'une côte, sans ce qui a été écarté pour lui (`hillPick`). */
+export function hillStretch(
+  terrain: TerrainHint | undefined,
+  gainAt: (grade: number) => number,
+): { stretch: TerrainStretch; gainM: number } | null {
+  return hillPick(terrain, gainAt).found;
 }

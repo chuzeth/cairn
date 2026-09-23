@@ -4,8 +4,8 @@ import { mapUrl } from '@cairn/core';
 import { easyClimbRate } from '@cairn/physiology';
 import {
   COOLDOWN_TO_FOOT, DESCENT_EFFORT, WARMUP_TO_TOP, descentStretch, detectClimbs, downhillSession,
-  elevationGainOf, elevationLossOf, groupRecurring, onTerrain, parseSessionBlocks, pointBelowTop, totalDuration,
-  type ClimbOccurrence, type TerrainHint,
+  elevationGainOf, elevationLossOf, groupRecurring, matchTrack, onTerrain, parseSessionBlocks, pointBelowTop,
+  totalDuration, type ClimbOccurrence, type OsmWay, type TerrainHint,
 } from '@cairn/coach';
 import { prescribe, type WatchItem, type WatchStep } from '@cairn/garmin';
 import { DECIDED_ON_2026_09_21, PIERRE_MODEL } from './fixtures/pierre.js';
@@ -55,8 +55,18 @@ const passages = (dates: string[]): ClimbOccurrence[] =>
     date,
   }));
 
+/** La rue que suit la trace, telle qu'OpenStreetMap la donne : de l'asphalte, sans une marche. */
+const STREET: OsmWay = {
+  id: 1,
+  tags: { highway: 'residential', name: 'Montée des Essais', surface: 'asphalt' },
+  geometry: [[45.7644 + 20 / 111_320, 4.8291], [45.7644 - 1100 / 111_320, 4.8291]],
+};
+
 const TERRAIN: TerrainHint = {
-  climbs: groupRecurring(passages(['2026-08-10', '2026-08-11', '2026-08-17'])),
+  climbs: groupRecurring(passages(['2026-08-10', '2026-08-11', '2026-08-17'])).map((c) => ({
+    ...c,
+    ground: matchTrack(c.latest.profile, [STREET], '2026-09-23T12:00:00.000Z'),
+  })),
   home: [45.7644, 4.8356],
 };
 
@@ -104,10 +114,11 @@ describe('Le demi-tour se situe sur le profil de la montée', () => {
     const w = descentStretch(TERRAIN, 78)!;
     expect(w).toMatchObject({ from: { role: 'haut' }, to: { role: 'demi-tour' }, lengthM: 400, grade: 0.195 });
     expect(w.provenance).toBe('field');
-    expect(w.climb).toMatch(
-      /^ta montée de 880 m à 14 % \(121 m\), à \d+ m à l'ouest de ton départ habituel, courue lors de 3 sorties — la dernière le 17\/08 \(« Trail dans l’après-midi »\)$/,
-    );
-    expect(mapUrl(w.to)).toMatch(/^https:\/\/maps\.apple\.com\/\?ll=45\.\d{6},4\.829100&q=demi-tour$/);
+    expect(w.climb).toBe('la montée des Essais');
+    expect(w.ground!.runs).toEqual([
+      { kind: 'route', lengthM: 400, name: 'montée des Essais', surface: 'asphalte', way: 1 },
+    ]);
+    expect(mapUrl(w.to)).toMatch(/^https:\/\/maps\.apple\.com\/place\?coordinate=45\.\d{6},4\.829100&name=Demi-tour$/);
   });
 
   it('ne désigne rien quand aucune montée ne porte le dénivelé d\'une descente', () => {
@@ -228,7 +239,7 @@ describe('Sur la montre, la remontée attend l\'athlète en haut', () => {
 
   it('la note dit l\'effort, le tronçon et le demi-tour, jamais une FC ni une allure', () => {
     expect(down!.note).toContain(DESCENT_EFFORT);
-    expect(down!.note).toContain('Du haut au demi-tour, 400 m à 20 %');
+    expect(down!.note).toContain('Descends 3 min, fais demi-tour, remonte en marchant entre les descentes. Demi-tour : 45.');
     expect(down!.note).not.toMatch(/FC|allure à plat/);
     expect(up!.note).toMatch(/^Remontée en marchant jusqu'au haut : FC sous 141, 78 m D\+, environ \d+ min\. Tour en haut/);
   });

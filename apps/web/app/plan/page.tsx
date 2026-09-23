@@ -11,6 +11,8 @@ import {
 import {
   AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory, WhereLine,
 } from '@/components/ui';
+import { Term } from '@/components/Term';
+import { SessionMap } from '@/components/SessionMap';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -20,35 +22,22 @@ import {
 const signed = (v: number) => `${v > 0 ? '+' : ''}${num(v, Number.isInteger(v) ? 0 : 1)}`;
 
 /**
- * L'écart à la fraîcheur visée : ce qu'il change pour Pierre, et le mécanisme
- * sous un pli.
+ * La fraîcheur du jour de la course, dite à la précision de ce qui la mesure.
  *
- * Onze secondes sur trois heures et demie ne font pas un encart d'alerte. Cet
- * écart-là se lit comme une note, à la place qu'il mérite ; son compte complet
- * — profondeur d'affûtage, semaines, points de fraîcheur — attend celui qui
- * veut le lire, et le second paragraphe du texte est exactement ça.
+ * Huit secondes sur une course prédite à ±23 minutes ne font ni un encart, ni
+ * deux chiffres dont on lirait la différence : sous cette précision, le plan
+ * amène à la cible, et c'est ce qui s'écrit. L'encart n'existe que pour un écart
+ * que la prédiction sait mesurer — et il n'en dit que ce que ça change ; son
+ * mécanisme, profondeur d'affûtage et plancher, est au journal du plan.
  */
-function TaperGap({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const [plain, ...rest] = text.split('\n\n');
+function RaceDayLine({ raceDay }: { raceDay: NonNullable<PlanResponse['raceDay']> }) {
+  const freshness = <Term k="fraicheur">Fraîcheur</Term>;
+  if (raceDay.projected == null) return <>{freshness} visée le jour de la course : {signed(raceDay.target)}</>;
+  if (!raceDay.notice) return <>{freshness} visée le jour de la course : {signed(raceDay.target)}, et ce plan t&apos;y amène</>;
   return (
-    <div className="banner" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
-      <p className="small" style={{ margin: 0 }}>{plain}</p>
-      {rest.length > 0 && (
-        <>
-          <button
-            type="button"
-            className="link-button tiny"
-            style={{ alignSelf: 'flex-start' }}
-            aria-expanded={open}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open ? 'Masquer le détail' : 'Le détail'}
-          </button>
-          {open && <p className="tiny faint" style={{ margin: 0 }}>{rest.join(' ')}</p>}
-        </>
-      )}
-    </div>
+    <>
+      {freshness} le jour de la course : {signed(raceDay.target)} visés, {signed(Math.round(raceDay.projected))} avec ce plan
+    </>
   );
 }
 
@@ -119,21 +108,20 @@ export default function PlanPage() {
         <div>
           <h1 className="page-title">Plan d'entraînement</h1>
           <p className="page-sub">
-            {/* La cible seule est une intention. Ce que le plan en fait se mesure.
-                Et un chiffre du modèle s'écrit avec ce qu'il signifie. */}
-            Fraîcheur le jour de la course — ta forme de fond moins la fatigue des derniers
-            jours : {signed(data.plan.targetRaceDayTsb)} visés
-            {data.plan.projectedRaceDayTsb != null && (
-              <>, {signed(data.plan.projectedRaceDayTsb)} avec ce plan</>
-            )}
-            {' · '}{num(data.sessions.length)} séances sur {num(weeks.length)} semaines
+            {/* La cible seule est une intention. Ce que le plan en fait se mesure —
+                à la précision de la prédiction près. Et un chiffre du modèle
+                s'écrit avec ce qu'il signifie, à un tap. */}
+            {data.raceDay && <><RaceDayLine raceDay={data.raceDay} />{' · '}</>}
+            {num(data.sessions.length)} séances sur {num(weeks.length)} semaines
           </p>
         </div>
         <Link href="/coach" className="btn">Ajuster avec le coach</Link>
       </div>
 
-      {data.plan.raceDayTsbShortfall && (
-        <TaperGap text={data.plan.raceDayTsbShortfall} />
+      {data.raceDay?.notice && (
+        <div className="banner">
+          <p className="small" style={{ margin: 0 }}>{data.raceDay.notice}</p>
+        </div>
       )}
 
       {data.absences.map((a) => (
@@ -160,7 +148,7 @@ export default function PlanPage() {
               key={weekStart}
               style={isCurrent ? { borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)' } : undefined}
               title={`Semaine du ${frDate(weekStart, { long: true })}`}
-              hint={`${num(total)} points · ${duration(totalTime)} · ${num(totalVert)} m D+`}
+              hint={<>{num(total)} <Term k="points">points de charge</Term> · {duration(totalTime)} · {num(totalVert)} m D+</>}
               action={isCurrent ? <Badge tone="good">en cours</Badge> : undefined}
             >
               <div className="plan-week">
@@ -187,10 +175,10 @@ export default function PlanPage() {
                               style={{ borderLeftColor: TYPE_COLORS[s.type] ?? 'var(--border-strong)' }}
                             >
                               <div className="plan-name">{TYPE_LABELS[s.type] ?? s.type}</div>
+                              {/* La durée seule : un « 85 » sans ce qu'il compte ne dirait
+                                  rien, et la charge de la séance se lit en l'ouvrant. */}
                               {s.type !== 'rest' && (
-                                <div className="plan-figures">
-                                  {duration(s.plannedDurationS)} · {num(s.plannedLoad)}
-                                </div>
+                                <div className="plan-figures">{duration(s.plannedDurationS)}</div>
                               )}
                               {s.status === 'completed' && <span className="plan-status" data-tone="done">✓ faite</span>}
                               {/* Faite la veille ou le lendemain : elle est à son jour réel, et dit celui du plan. */}
@@ -230,18 +218,20 @@ export default function PlanPage() {
                 <div key={s.id} style={{ marginTop: 14, padding: 14, background: 'var(--bg-inset)', borderRadius: 8, border: '1px solid var(--border)' }}>
                   <div className="row-between" style={{ marginBottom: 8 }}>
                     <strong>{s.title}</strong>
-                    <div className="row" style={{ gap: 6 }}>
-                      <Badge tone={s.priority === 'key' ? 'good' : undefined}>{s.priority === 'key' ? 'séance clef' : s.priority === 'support' ? 'soutien' : 'facultative'}</Badge>
-                      <Badge tone="metabolic">{num(s.plannedLoad)} pts</Badge>
-                      {s.plannedMechanicalLoad > 0 && <Badge tone="mechanical">{num(s.plannedMechanicalLoad)} méca</Badge>}
-                    </div>
+                    <Badge tone={s.priority === 'key' ? 'good' : undefined}>{s.priority === 'key' ? 'séance clef' : s.priority === 'support' ? 'soutien' : 'facultative'}</Badge>
+                  </div>
+                  <div className="small faint" style={{ marginBottom: 8 }}>
+                    {num(s.plannedLoad)} <Term k="points">points de charge</Term>
+                    {s.plannedMechanicalLoad > 0 && (
+                      <> · {num(s.plannedMechanicalLoad)} de <Term k="mecanique">charge mécanique</Term></>
+                    )}
                   </div>
                   <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
                   <GarminLine status={s.garmin} />
 
                   {s.blocks.some((b) => b.circuit) && (
                     <div className="tiny faint" style={{ marginTop: 6 }}>
-                      Une part de ces {num(s.plannedMechanicalLoad)} points méca vient du renforcement excentrique :
+                      Une part de ces {num(s.plannedMechanicalLoad)} points de charge mécanique vient du renforcement excentrique :
                       aucun flux d’activité ne le porte, le réalisé mesuré y affichera 0.
                     </div>
                   )}
@@ -261,6 +251,10 @@ export default function PlanPage() {
                       <div className="tiny faint" style={{ marginTop: 3 }}>« {c.origin.quote} » — {originLabel(c.origin)}</div>
                     </div>
                   ))}
+
+                  <div style={{ marginTop: 12 }}>
+                    <SessionMap blocks={s.blocks} />
+                  </div>
 
                   <div className="stack" style={{ gap: 8, marginTop: 12 }}>
                     {s.blocks.map((b, i) => (
@@ -305,7 +299,7 @@ export default function PlanPage() {
                         {b.effort && <div className="small" style={{ marginTop: 3 }}>{b.effort}</div>}
                         {b.where && (
                           <div className="tiny" style={{ marginTop: 3 }}>
-                            <WhereLine where={b.where} /> — sur {b.where.climb}.
+                            <WhereLine block={b} />
                           </div>
                         )}
                         {b.circuit && (

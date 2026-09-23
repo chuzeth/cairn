@@ -340,6 +340,21 @@ export interface PhysiologyModel {
   descentSkill?: number;
 
   /**
+   * Ce que l'athlète court réellement sous le plafond de FC de chaque zone
+   * facile, lu dans ses sorties récentes.
+   *
+   * C'est sur elle que se compte la charge prévue de tout ce qui se court sous
+   * un plafond : une séance facile se prescrit par une FC, pas par une allure.
+   * Comptée au milieu d'une bande qui commence à 0 km/h, elle valait l'allure
+   * de la marche — 8 points prévus pour le décrassage du 22/09, couru à
+   * 9,2 km/h et 133 bpm, qui en a coûté 41. Sa provenance est sous
+   * `easySpeeds.Z1` et `easySpeeds.Z2`. Une zone sans allure mesurée — moins
+   * de deux sorties, ou un modèle construit avant qu'on la mesure — se compte à
+   * la vitesse du plafond de la zone, déclarée par défaut (`easySpeedOf`).
+   */
+  easySpeeds?: Partial<Record<EasyZone, EasySpeed>>;
+
+  /**
    * État de la preuve qui soutient la vitesse critique. Sans elle, un athlète ne
    * peut pas savoir si son chiffre repose sur un effort maximal récent ou sur
    * trois mois de footings réguliers — les deux produisent le même r².
@@ -351,6 +366,13 @@ export interface PhysiologyModel {
     lastProofAgeDays: number | null;
     /** Part du chiffre effectivement empruntée au test de laboratoire. */
     weightLab: number;
+    /**
+     * L'effort maximal le plus long de la fenêtre d'ajustement — le plus proche
+     * de l'asymptote : c'est lui qui dit à l'athlète pourquoi son seuil n'est
+     * plus celui du laboratoire. Vitesse graduée telle que l'ajustement l'a lue,
+     * m/s. `null` sans effort prouvé ; absent d'un modèle construit avant.
+     */
+    proof?: { durationS: number; speedMs: number; ageDays: number } | null;
   };
 
   /** Confiance dans le modèle (0–1), pondérée par la fraîcheur et le volume de données. */
@@ -360,6 +382,25 @@ export interface PhysiologyModel {
 }
 
 export type ParameterProvenance = 'lab' | 'field' | 'blended' | 'default';
+
+/** Les zones qui se prescrivent par un plafond de FC. */
+export type EasyZone = 'Z1' | 'Z2';
+
+/** La vitesse à laquelle l'athlète court quand il tient un plafond de FC. */
+export interface EasySpeed {
+  /** Plafond de FC sous lequel la vitesse a été lue, bpm. */
+  hrCeiling: number;
+  /**
+   * Vitesse graduée normalisée des sorties qui ont tenu ce plafond, m/s : la
+   * grandeur que mesure la charge réalisée, pour que prévu et réalisé se
+   * comparent.
+   */
+  speedMs: number;
+  /** Vitesse au sol de ces mêmes sorties, m/s — celle qui fait la distance. */
+  groundSpeedMs: number;
+  /** Sorties qui l'établissent. Zéro : c'est la valeur par défaut. */
+  runs: number;
+}
 
 export interface AthleteProfile {
   id: string;
@@ -975,26 +1016,74 @@ export interface TargetProvenance {
 /**
  * Un point d'une montée de l'athlète, relevé sur une de ses traces.
  *
- * Il n'a pas de nom : Cairn n'a pas de géocodage, et un toponyme inventé serait
- * une donnée fausse au milieu de mesures. Il a un rôle dans la séance et des
- * coordonnées, par lesquelles il s'ouvre sur une carte.
+ * Il a un rôle dans la séance et des coordonnées, par lesquelles il s'ouvre sur
+ * une carte. Son adresse vient d'un géocodage inverse (Nominatim, sur
+ * OpenStreetMap) : un nom résolu, jamais inventé. Sans elle, le point ne se dit
+ * que par son rôle.
  */
 export interface TerrainPoint {
   role: 'pied' | 'haut' | 'demi-tour';
   /** Latitude, longitude. */
   at: [number, number];
+  /** « 43 montée Saint-Barthélémy » — le numéro n'y est que s'il est sur la voie du point. */
+  address?: string;
+}
+
+/**
+ * Ce qu'on a sous les pieds, en quatre mots.
+ *
+ * `route` : une voie revêtue, trottoir compris. `chemin` : un chemin large ou
+ * une allée. `sentier` : une trace étroite ou non revêtue. `escalier` : des
+ * marches — on ne les descend pas vite.
+ */
+export type GroundKind = 'route' | 'chemin' | 'sentier' | 'escalier';
+
+/** Une portion d'un tronçon courue sur une même voie OpenStreetMap, dans le sens de la course. */
+export interface GroundRun {
+  kind: GroundKind;
+  /** Longueur courue sur cette voie, m. */
+  lengthM: number;
+  /** Le nom de la voie ; celui de la rue qu'il longe, pour un trottoir sans nom. */
+  name?: string;
+  /** Revêtement, en clair : « asphalte », « pavés »… */
+  surface?: string;
+  /** Marches, quand OpenStreetMap les compte. */
+  steps?: number;
+  /** Trottoirs de la voie : `both`, `left`, `right`, `separate`, `no` ; `sidewalk` quand on court sur le trottoir lui-même. */
+  sidewalk?: string;
+  /** La voie OpenStreetMap (way), pour qui veut vérifier. */
+  way: number;
+}
+
+/**
+ * Le sol d'un tronçon, lu sur OpenStreetMap le long de la trace de l'athlète.
+ *
+ * Absent, il n'a pas pu être relevé : rien ne dit alors que le tronçon est sans
+ * marches, et une séance rapide ne s'y pose pas.
+ */
+export interface StretchGround {
+  runs: GroundRun[];
+  /** Longueur du tronçon qu'aucune voie OpenStreetMap ne porte à 30 m près, m : son sol n'est pas connu. */
+  offM?: number;
+  /** Quand les voies ont été lues sur OpenStreetMap, ISO. */
+  readAt: string;
 }
 
 /**
  * Le tronçon d'une montée réelle où se court un bloc.
  *
  * Il dit ce qu'une séance de terrain doit dire pour se courir sans rien
- * deviner : quelle montée, d'où à où, sur quelle longueur, à quelle pente. Le
- * dénivelé d'une répétition est celui du bloc. Mesuré sur une trace de
- * l'athlète — un endroit où il est passé —, il est de provenance `field`.
+ * deviner : quelle montée, d'où à où, par quelles rues, sur quel sol, sur quelle
+ * longueur, à quelle pente. Le dénivelé d'une répétition est celui du bloc.
+ * Mesuré sur une trace de l'athlète — un endroit où il est passé —, il est de
+ * provenance `field` ; son sol et ses noms viennent d'OpenStreetMap.
  */
 export interface TerrainStretch {
-  /** La montée, désignée comme l'athlète peut la retrouver : ses chiffres, la dernière sortie où il l'a prise. */
+  /**
+   * La montée, désignée comme on la retrouve : « la montée Saint-Barthélémy »
+   * quand une voie la nomme, sinon ses chiffres et la dernière sortie où
+   * l'athlète l'a prise. Jamais une position relative à son domicile.
+   */
   climb: string;
   from: TerrainPoint;
   to: TerrainPoint;
@@ -1003,6 +1092,12 @@ export interface TerrainStretch {
   /** Pente moyenne du tronçon, fraction positive. */
   grade: number;
   provenance: ParameterProvenance;
+  /** Les voies du tronçon, dans l'ordre où on les court. */
+  streets?: string[];
+  /** Le sol, voie par voie. */
+  ground?: StretchGround;
+  /** Le tracé réel, du départ au bout : la trace GPS de l'athlète, allégée. */
+  track?: [number, number][];
 }
 
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */

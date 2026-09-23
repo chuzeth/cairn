@@ -17,6 +17,8 @@ import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale, unweighed,
   Waiting, WhereLine,
 } from '@/components/ui';
+import { Glossed, Term } from '@/components/Term';
+import { SessionMap } from '@/components/SessionMap';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -308,7 +310,7 @@ function Session({ session }: { session: SessionRow }) {
               {b.effort && <span className="m-faint"> · {nbsp(effortHead(b.effort))}</span>}
               {(b.where || shape(b)) && (
                 <span className="m-block-note">
-                  {b.where && <WhereLine where={b.where} />}
+                  {b.where && <WhereLine block={b} />}
                   {b.where && shape(b) && ' · '}
                   {shape(b) && nbsp(shape(b))}
                 </span>
@@ -324,14 +326,20 @@ function Session({ session }: { session: SessionRow }) {
         ))}
       </div>
 
+      {/* Où courir : le tracé réel sur le fond d'OpenStreetMap, chaque point
+          clé par son adresse, et le chemin à pied jusqu'au départ. */}
+      <SessionMap blocks={session.blocks} />
+
       {/* Ce que la montre porte de cette séance, relu sur Garmin : jamais
           « envoyée » sans relecture. */}
       <GarminLine status={session.garmin} />
 
       <div className="m-session-foot">
         <span className="m-faint">
-          {num(session.plannedLoad)} pts
-          {session.plannedMechanicalLoad > 0 && ` · ${num(session.plannedMechanicalLoad)} méca`}
+          {num(session.plannedLoad)} <Term k="points">points de charge</Term>
+          {session.plannedMechanicalLoad > 0 && (
+            <> · {num(session.plannedMechanicalLoad)} de <Term k="mecanique">charge mécanique</Term></>
+          )}
         </span>
         <span className="m-foot-more">
           {hasSaid && (
@@ -389,10 +397,10 @@ const spoken = (session: SessionRow) =>
     .map((b) => `${b.repeat ? `${num(b.repeat)} fois ` : ''}${duration(b.durationS)} ${blockLabel(b.label)}`)
     .join(', ');
 
-/** La cible cardiaque, dite comme on la lit sur la montre. */
+/** La cible cardiaque, dite comme on la lit sur la montre — avec son unité : seule, « 130–150 » ne dit pas ce qu'elle mesure. */
 function hrText(b: SessionRow['blocks'][number]): string {
   if (!b.hrRange) return '';
-  return b.hrRange[0] > 0 ? `${num(b.hrRange[0])}–${num(b.hrRange[1])}` : `sous ${num(b.hrRange[1])}`;
+  return b.hrRange[0] > 0 ? `${num(b.hrRange[0])}–${num(b.hrRange[1])} bpm` : `sous ${num(b.hrRange[1])} bpm`;
 }
 
 /**
@@ -593,7 +601,6 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
   const question = QUESTIONS[0];
   const answer = result?.checkIn?.fatigue ?? queued ?? state.checkIn?.fatigue ?? null;
   const missing = unweighed(readiness).map((k) => MISSING_LABEL[k]);
-  const delta = readiness.score - before.score;
   const verdict = VERDICT[readiness.verdict];
   const [lead, rest] = verdictLead(readiness.recommendation, verdict.word);
   const t = state.today;
@@ -630,13 +637,18 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
           </svg>
         </div>
         <div>
+          {/* Le chiffre de gauche dit ce qu'il est : seul, « 50 » ne veut rien dire. */}
+          <p className="m-label m-avail-what">
+            Ta <Term k="disponibilite">disponibilité</Term> du jour, sur 100
+          </p>
           <p className="m-verdict">
             {lead && <strong>{lead}</strong>}
             {nbsp(rest)}
           </p>
-          {delta !== 0 && (
-            <p className="m-after">
-              {delta > 0 ? '+' : '−'}{Math.abs(delta)} depuis ta réponse.
+          {/* Ce que la réponse a changé : la disponibilité avant et après, et la séance. */}
+          {result?.effect && (
+            <p className="m-after m-effect">
+              <Glossed text={nbsp(result.effect)} terms={['disponibilite']} />
             </p>
           )}
           <button type="button" className="m-more" aria-expanded={basis} onClick={() => setBasis((b) => !b)}>
@@ -658,19 +670,16 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
           )}
           {/* Quatre chiffres du modèle, nommés par ce qu'ils veulent dire. Le
               vocabulaire interne — charge chronique, TSB, ratio — reste au
-              coach et à l'écran de physiologie ; ici, il se traduit. */}
-          <p className="m-after">
-            Ta forme de fond, c&apos;est ce que tes dernières semaines ont construit ; ta fraîcheur,
-            ce qu&apos;il t&apos;en reste une fois la fatigue retombée.
-          </p>
+              coach et à l'écran de physiologie ; ici, il se traduit, et chaque
+              mot se définit d'un tap. */}
           <div className="m-figures">
             {[
-              { name: 'Forme de fond', value: num(t.ctl), note: `${signed(t.rampRate, 1)} point${Math.abs(t.rampRate) >= 2 ? 's' : ''} par semaine` },
-              { name: 'Fraîcheur', value: signed(t.tsb), note: t.tsbLabel },
-              { name: 'Fraîcheur des jambes', value: signed(t.mechanicalTsb), note: 'ce que la descente a abîmé' },
-              { name: 'Ces 7 jours, contre tes 4 dernières semaines', value: num(t.acwr, 2), note: t.acwrLabel },
+              { key: 'ctl', name: <Term k="forme">Forme de fond</Term>, value: num(t.ctl), note: `${signed(t.rampRate, 1)} point${Math.abs(t.rampRate) >= 2 ? 's' : ''} par semaine` },
+              { key: 'tsb', name: <Term k="fraicheur">Fraîcheur</Term>, value: signed(t.tsb), note: t.tsbLabel },
+              { key: 'mech', name: <><Term k="fraicheur">Fraîcheur</Term> des jambes</>, value: signed(t.mechanicalTsb), note: 'ce que la descente a abîmé' },
+              { key: 'acwr', name: 'Ces 7 jours, contre tes 4 dernières semaines', value: num(t.acwr, 2), note: t.acwrLabel },
             ].map((f) => (
-              <div className="m-figure" key={f.name}>
+              <div className="m-figure" key={f.key}>
                 <span>{f.name}</span>
                 <span className="m-figure-value">{f.value}</span>
                 <span className="m-faint">{f.note}</span>
@@ -725,12 +734,6 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
         </div>
       )}
 
-      {result && (
-        <p className="m-after">
-          Ton ressenti pèse {num(readiness.weights.subjective * 100)} % de ta disponibilité
-          {before.weights.subjective === 0 ? ", là où il n'en pesait rien." : '.'}
-        </p>
-      )}
     </section>
   );
 }

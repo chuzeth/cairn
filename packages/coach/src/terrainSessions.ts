@@ -2,6 +2,7 @@ import type { PlannedSession, SessionBlock } from '@cairn/core';
 import { climbsBack, sessionDuration, stretchSpan } from '@cairn/core';
 import * as db from '@cairn/db';
 import { easyClimbRate } from '@cairn/physiology';
+import { withAddresses, withGround } from './geo.js';
 import { addDays } from './periodization.js';
 import { onTerrain, withHistory } from './presentation.js';
 import { currentModel } from './state.js';
@@ -57,13 +58,15 @@ export async function readTerrain(athleteId: string, from: string, to: string) {
 }
 
 /**
- * Ce que le planificateur sait du terrain : les montées récurrentes de l'année
- * et le départ habituel. C'est par lui qu'une séance de terrain nomme sa montée.
+ * Ce que le planificateur sait du terrain : les montées récurrentes de l'année,
+ * le sol de celles qu'une séance peut désigner — lu sur OpenStreetMap, gardé en
+ * base —, et le départ habituel. C'est par lui qu'une séance de terrain nomme sa
+ * montée, et qu'une séance rapide évite ses marches.
  */
 export async function terrainHint(athleteId: string, today = iso(new Date())): Promise<TerrainHint> {
   const { climbs, outings } = await readTerrain(athleteId, addDays(today, -365), today);
   const home = homeGrounds(outings)[0]?.center;
-  return { climbs: groupRecurring(climbs), ...(home ? { home } : {}) };
+  return { climbs: await withGround(groupRecurring(climbs), home), ...(home ? { home } : {}) };
 }
 
 /** Séances de descente faites jusqu'à `today` : sans aucune, la prochaine est une première. */
@@ -88,6 +91,10 @@ const readable = (s: PlannedSession) =>
 const repOf = (s: PlannedSession): SessionBlock | undefined =>
   s.blocks.find((b) => (b.elevationLossM ?? 0) > 0 && climbsBack(b.recovery));
 
+/** Ce que la descente dit des montées écartées pour leurs marches (`skippedNote`), s'il y en a. */
+const skippedOf = (b?: SessionBlock): string =>
+  b?.notes?.match(/(?:Pas sur |Aucune de tes montées |Le sol de tes montées )[^:]*:[^.]*\./)?.[0] ?? '';
+
 /**
  * Ce que la pose a changé à une descente, en clair : où elle se court, ce que
  * dure la remontée et pourquoi, ce que dure la séance.
@@ -98,7 +105,9 @@ function describeLaying(before: PlannedSession, after: PlannedSession, model: Pa
   const parts: string[] = [];
   if (now?.where && JSON.stringify(now.where) !== JSON.stringify(was?.where)) {
     parts.push(`Posée sur ${now.where.climb} : ${stretchSpan(now.where)}.`);
+    if (was?.where && was.where.climb !== now.where.climb && skippedOf(now)) parts.push(skippedOf(now));
   }
+  if (was?.where && !now?.where) parts.push(`Plus posée sur une montée. ${skippedOf(now)}`.trim());
   const gain = now?.recovery?.elevationGainM ?? 0;
   if (was?.recovery && now?.recovery && gain > 0 && was.recovery.durationS !== now.recovery.durationS) {
     const rate = Math.round(easyClimbRate(model, now.where?.grade ?? 0.15).vamMh);
@@ -144,7 +153,11 @@ export async function layPlanOnTerrain(
 
   const model = await currentModel(athleteId);
   const terrain = await terrainHint(athleteId, today);
-  const laid = onTerrain(upcoming, { model, terrain, today, descentsDone: await countDescents(athleteId, today) });
+  // Les adresses des bouts de chaque tronçon, avant de comparer : une séance
+  // qu'on vient de poser se compare à celle qu'on a écrite, adresses comprises.
+  const laid = await withAddresses(
+    onTerrain(upcoming, { model, terrain, today, descentsDone: await countDescents(athleteId, today) }),
+  );
 
   const at = new Date().toISOString();
   const changes: { date: string; before: string; after: string; reason: string }[] = [];
@@ -171,7 +184,7 @@ export async function layPlanOnTerrain(
       date: before.date,
       before: before.title,
       after: after.title,
-      reason: text || 'Montée désignée : du pied au haut, chaque bout ouvert sur la carte.',
+      reason: text || 'Montée nommée par sa voie, son sol et ses adresses lus sur OpenStreetMap, son tracé sur la carte.',
     });
   }
 

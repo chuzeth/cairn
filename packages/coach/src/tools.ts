@@ -8,10 +8,10 @@ import {
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  ACWR_SPIKE, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, formatClock, formatDuration,
-  formatPace, goalProbability, hrProvenanceOf, interpretAcwr, interpretDurability, msToKmh,
-  predictLapRace, predictRace, quantile, speedProvenanceOf, summarizeForCoach, targetRaceDayTsb,
-  verticalCapacity,
+  ACWR_SPIKE, EASY_SPEED_WINDOW_DAYS, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, easySpeedOf,
+  formatClock, formatDuration, formatPace, goalProbability, hrProvenanceOf, interpretAcwr, interpretDurability,
+  isEasyZone, msToKmh, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad, summarizeForCoach,
+  targetRaceDayTsb, verticalCapacity,
   type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
@@ -27,6 +27,7 @@ import {
   groupRecurring, homeGrounds, type RecurringClimb,
 } from './terrain.js';
 import { countDescents, readTerrain, terrainHint } from './terrainSessions.js';
+import { withAddresses } from './geo.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
   eccentricStrengthOf, renderSession, sessionTotals, transformSession,
@@ -538,6 +539,9 @@ export async function executeTool(
               lecture: interpretDurability(model.durabilityPctPerHour),
             },
             aisance_descente: model.descentSkill ?? 1,
+            // Ce que l'athlète court sous chaque plafond facile : la charge prévue
+            // de tout ce qui s'y court en dépend.
+            allure_sous_plafond: (['Z1', 'Z2'] as const).map((zone) => easyPaceRow(model, zone)),
             confiance: model.confidence,
             provenance: model.provenance,
           },
@@ -668,6 +672,9 @@ export async function executeTool(
             ],
             provenance: { fc: hrProvenanceOf(z), vitesse: speedProvenanceOf(z) },
             resume: describeZone(z),
+            // La bande de vitesse ne dit pas ce que l'athlète court sous le
+            // plafond : c'est cette allure-là qui compte la charge prévue.
+            ...(isEasyZone(z.key) ? { allure_sous_plafond: easyPaceRow(state.model, z.key) } : {}),
           })),
         },
       };
@@ -1200,6 +1207,10 @@ export async function executeTool(
       // d'allure spécifique avec elle.
       let estimatedRaceDurationS: number;
       let racePaceMs: number | undefined;
+      // La charge de la course : le temps couru, à l'intensité que la prédiction
+      // y tient — à plat, comme se compte la charge réalisée.
+      let raceLoad: number;
+      const vt2 = state.model.vt2.speedMs;
 
       if (isLapCourse(race.course)) {
         const laps = targetLaps(race);
@@ -1222,6 +1233,8 @@ export async function executeTool(
         // d'une course continue de même distance.
         racePaceMs =
           lapPrediction.runningTimeS > 0 ? lapPrediction.distanceM / lapPrediction.runningTimeS : undefined;
+        // Le repos entre deux boucles ne se court pas.
+        raceLoad = steadyRunLoad(lapPrediction.runningTimeS, racePaceMs ?? 0, vt2);
       } else {
         const prediction = predictRace({
           model: state.model,
@@ -1232,6 +1245,11 @@ export async function executeTool(
         estimatedRaceDurationS = prediction.predictedTimeS;
         racePaceMs =
           prediction.predictedTimeS > 0 ? race.course.distanceM / prediction.predictedTimeS : undefined;
+        raceLoad = steadyRunLoad(
+          prediction.predictedTimeS,
+          prediction.predictedTimeS > 0 ? prediction.flatEquivalentDistanceM / prediction.predictedTimeS : 0,
+          vt2,
+        );
       }
 
       // La charge de départ est celle du **premier jour du plan**, pas celle
@@ -1253,6 +1271,7 @@ export async function executeTool(
         currentAtl: start.atl,
         estimatedRaceDurationS,
         racePaceMs,
+        raceLoad,
         startDate,
         // Le dossier au complet, pas seulement ses quatre nombres.
         directives: directivesFor(state.profile),
@@ -1401,7 +1420,11 @@ export async function executeTool(
         },
       ].slice(-40);
 
-      await db.savePlan(plan, weeks);
+      // Les bouts de chaque tronçon avec leur adresse : une séance de terrain se
+      // lit par ses rues, et c'est ce qui s'enregistre.
+      const addressed = [];
+      for (const w of weeks) addressed.push({ ...w, sessions: await withAddresses(w.sessions) });
+      await db.savePlan(plan, addressed);
 
       return {
         summary: `Plan reconstruit : ${runway} semaines jusqu'à « ${race.name} » — ${movement} — ${verdict}`,
@@ -1493,10 +1516,14 @@ export async function executeTool(
       // se dit par la première phrase de ce qui l'a fixé.
       const presented =
         decided.status === 'planned' && decided.date >= localDate(at)
-          ? presentDecided(decided, {
-              model,
-              terrain: decided.type === 'long_trail' ? await terrainHint(athleteId) : undefined,
-            })
+          ? (
+              await withAddresses([
+                presentDecided(decided, {
+                  model,
+                  terrain: decided.type === 'long_trail' ? await terrainHint(athleteId) : undefined,
+                }),
+              ])
+            )[0]!
           : {
               ...decided,
               rationale: firstSentence(said),
@@ -1819,6 +1846,24 @@ function ratioContent(exceedances: readonly LoadRatioExceedance[]) {
       ratio: e.value,
       seuil: e.limit,
     })),
+  };
+}
+
+/** L'allure facile d'une zone, dite avec ce sur quoi elle repose. */
+function easyPaceRow(model: PhysiologyModel, zone: 'Z1' | 'Z2') {
+  const e = easySpeedOf(model, zone);
+  return {
+    zone,
+    plafond_fc: e.hrCeiling,
+    vitesse_graduee_kmh: round2(msToKmh(e.speedMs)),
+    vitesse_au_sol_kmh: round2(msToKmh(e.groundSpeedMs)),
+    sorties: e.runs,
+    provenance: e.provenance,
+    lecture:
+      e.provenance === 'field'
+        ? `Moyenne de ${e.runs} sorties des ${EASY_SPEED_WINDOW_DAYS} derniers jours qui ont tenu ${e.hrCeiling} bpm, ` +
+          'pondérée par leur durée.'
+        : `Pas assez de sorties sous ${e.hrCeiling} bpm : valeur par défaut, la vitesse du plafond de la zone.`,
   };
 }
 

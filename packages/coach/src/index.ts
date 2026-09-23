@@ -7,6 +7,8 @@ export * from './eccentric.js';
 export * from './periodization.js';
 export * from './preserve.js';
 export * from './terrain.js';
+export * from './ground.js';
+export * from './geo.js';
 export * from './terrainSessions.js';
 export * from './planner.js';
 export * from './adapt.js';

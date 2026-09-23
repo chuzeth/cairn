@@ -348,6 +348,10 @@ export interface StateResponse {
   upcomingRaces: RaceRow[];
   hasPlan: boolean;
   labTest: Record<string, unknown> | null;
+  /** Pourquoi un paramètre n'est plus celui du test de laboratoire, en une ligne ; absent s'il ne s'en écarte pas. */
+  labGaps: Partial<Record<'vma' | 'vt2' | 'vt1' | 'hrMax' | 'hrRest', string>>;
+  /** À quoi sert le point du jour, dit avant qu'on y réponde. */
+  checkInPurpose: string;
   /** Ce que le planificateur lit du dossier, au-delà des quatre nombres. */
   directives: {
     id: string; kind: string; origin: DirectiveOriginRow; derived?: string;
@@ -416,7 +420,16 @@ export interface CheckInResult {
   /** Nombre de séances réajustées par les règles de charge après ce relevé. */
   adjustments: number;
   adjustmentSummary: string | null;
+  /** Ce que les réponses ont changé, en une phrase : la disponibilité avant et après, et la séance. */
+  effect: string;
 }
+
+/** Les mots techniques qui restent à l'écran — miroir de `GLOSSARY` dans `presentation.ts`. */
+export type GlossaryKey =
+  | 'points' | 'mecanique' | 'forme' | 'fatigue' | 'fraicheur' | 'disponibilite' | 'vitesseCritique' | 'vma'
+  | 'seuil';
+
+export type Glossary = Record<GlossaryKey, { term: string; definition: string }>;
 
 export interface RaceRow {
   id: string; name: string; date: string; priority: 'A' | 'B' | 'C';
@@ -492,6 +505,12 @@ export interface PlanResponse {
     raceDayTsbShortfall?: string;
     revisionLog: { at: string; trigger: string; summary: string }[];
   } | null;
+  /**
+   * La fraîcheur du jour de la course, telle que l'écran la dit. `notice` :
+   * ce qu'il y a à lire de l'écart à la cible — `null` quand il n'y en a pas,
+   * ou qu'il est sous la précision de la prédiction qui le chiffre.
+   */
+  raceDay: { target: number; projected: number | null; notice: string | null } | null;
   weekSummaries: string[];
   sessions: SessionRow[];
   absences: DeclaredAbsence[];

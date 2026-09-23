@@ -19,7 +19,7 @@ import {
   eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
   type ReadinessDay, ACWR_SPIKE, analyzeDurability, buildPmcSeries, durabilityFactor,
   projectLoadRatios, type DurabilitySample, predictLapRace, describeZone, zoneForGradedSpeed,
-  wPrimeAfter,
+  wPrimeAfter, vmaSources, interpolateCurve, VMA_EFFORT_S, FIELD_VMA_UPLIFT,
 } from '@cairn/physiology';
 
 const LAB_DATE = '2025-07-24';
@@ -518,6 +518,68 @@ describe('Vitesse critique', () => {
     const bal = wPrimeBalance([...hard, ...easy], cs, dp);
     expect(bal[39]!).toBeLessThan(dp);
     expect(bal[159]!).toBeGreaterThan(bal[39]!);
+  });
+});
+
+describe('Ce qui écarte un paramètre de son test de laboratoire', () => {
+  // Un an et deux mois après le test : le labo ne pèse plus qu'un tiers.
+  const ASOF = '2026-09-22';
+  const durations = [120, 180, 300, 420, 600, 900, 1200];
+  const evidenceFrom = (curve: Record<string, number>, hr: Record<string, number>): FieldEvidence => ({
+    gradedSpeedCurve: curve,
+    gradedSpeedCurveHr: hr,
+    gradedSpeedCurveAgeDays: Object.fromEntries(durations.map((t) => [String(t), 1])),
+    observedMaxHrs: [],
+    restingHrs: [],
+    bodyMasses: [],
+    hrSpeedPairs: [],
+    durability: { pctPerHour: 3, pctPer1000mVert: 4, confidence: 0.5 },
+    vamCurve: {},
+    dataDays: 60,
+  });
+  const hyperbola = (cs: number, dp: number) =>
+    Object.fromEntries(durations.map((t) => [String(t), cs + dp / t]));
+  const atThreshold = Object.fromEntries(durations.map((t) => [String(t), LAB_TEST_2025_07_24.vt2.hr + 8]));
+
+  it('relit sur le modèle la VMA que dit le terrain, quand elle vient de la vitesse critique', () => {
+    // Des efforts courts moins bons que la vitesse critique ne le laisse attendre :
+    // c'est elle, extrapolée à 5 min 30, qui fait la VMA de terrain.
+    const curve = { ...hyperbola(3.9, 200), '300': 4.45, '420': 4.35 };
+    const m = buildPhysiologyModel(LAB_TEST_2025_07_24, evidenceFrom(curve, atThreshold), ASOF);
+    const src = vmaSources(m, LAB_TEST_2025_07_24);
+    expect(src.basis).toBe('critical_speed');
+    expect(src.labWeight).toBeCloseTo(labWeight(LAB_TEST_2025_07_24.date, ASOF), 10);
+    expect(src.fieldMs!).toBeCloseTo((m.criticalSpeedMs + m.dPrimeM / VMA_EFFORT_S) * FIELD_VMA_UPLIFT, 2);
+    // L'inverse est exact : le mélange refait la VMA du modèle.
+    expect(src.fieldMs! * (1 - src.labWeight) + LAB_TEST_2025_07_24.vmaMs * src.labWeight).toBeCloseTo(m.vmaMs, 3);
+  });
+
+  it('la relit quand elle vient du meilleur effort de 5 min 30', () => {
+    const curve = { ...hyperbola(3.9, 200), '300': 4.9, '420': 4.8 };
+    const m = buildPhysiologyModel(LAB_TEST_2025_07_24, evidenceFrom(curve, atThreshold), ASOF);
+    const src = vmaSources(m, LAB_TEST_2025_07_24);
+    expect(src.basis).toBe('effort');
+    expect(src.fieldMs!).toBeCloseTo(interpolateCurve(curve, VMA_EFFORT_S)! * FIELD_VMA_UPLIFT, 2);
+  });
+
+  it('ne relit rien d\'un modèle qui n\'est que le labo', () => {
+    expect(vmaSources(modelFromLabOnly(LAB_TEST_2025_07_24, LAB_DATE), LAB_TEST_2025_07_24).fieldMs).toBeNull();
+  });
+
+  it('retient l\'effort maximal le plus long, celui qui dit pourquoi le seuil a quitté le labo', () => {
+    const curve = hyperbola(3.9, 200);
+    const all = buildPhysiologyModel(LAB_TEST_2025_07_24, evidenceFrom(curve, atThreshold), ASOF);
+    expect(all.criticalSpeedEvidence!.proof).toEqual({
+      durationS: 1200, speedMs: Math.round(curve['1200']! * 1000) / 1000, ageDays: 1,
+    });
+    // Vingt minutes courues sous la FC du seuil ne prouvent rien : c'est le
+    // quart d'heure qui parle.
+    const easy = { ...atThreshold, '1200': LAB_TEST_2025_07_24.vt2.hr - 15 };
+    const shorter = buildPhysiologyModel(LAB_TEST_2025_07_24, evidenceFrom(curve, easy), ASOF);
+    expect(shorter.criticalSpeedEvidence!.proof!.durationS).toBe(900);
+    // Sans FC nulle part, aucun effort n'est prouvé.
+    const blind = buildPhysiologyModel(LAB_TEST_2025_07_24, evidenceFrom(curve, {}), ASOF);
+    expect(blind.criticalSpeedEvidence!.proof).toBeNull();
   });
 });
 

@@ -9,14 +9,16 @@ import { elevationChange, gradeAdjustedSpeed } from './grade.js';
 import { assessSeries, detectIntervals, inferSessionShape } from './intervals.js';
 import { computeTrainingLoad, energyExpenditure, fuelingTargets, type LoadSample } from './load.js';
 import { companionAtMeanMaximal, meanMaximal } from './mmp.js';
-import { cumulativeVertical } from './streams.js';
+import { cumulativeVertical, movingIndices } from './streams.js';
 import { buildZones, computeZoneDistribution } from './zones.js';
 import {
   VERTICAL_CURVE_DURATIONS, descentCurve, gradeProfile, vamCurve, verticalityIndex,
 } from './vertical.js';
 import { wPrimeBalance } from './criticalSpeed.js';
+import { movingHrHistogram, type CeilingCheck } from './easy.js';
 import {
-  deviationsFrom, matchPlannedSession, maximalEffortIndex, maximalTestProof, outcomeOf, type RealizedEffort,
+  MATERIAL_DEVIATION_PCT, ceilingCheckOf, deviationsFrom, hrCeilingOf, matchPlannedSession, maximalEffortIndex,
+  maximalTestProof, outcomeOf, runDurationOf, type RealizedEffort,
 } from './sessionMatch.js';
 import { formatDuration, mean, movingAverage } from './units.js';
 
@@ -57,10 +59,7 @@ export function analyzeActivity(
 
   // On ne conserve que les échantillons en mouvement : une pause de 8 min à un
   // ravitaillement ne doit ni diluer les moyennes ni compter comme de la zone 1.
-  const idx: number[] = [];
-  for (let i = 0; i < n; i++) {
-    if (streams.moving ? streams.moving[i] : (streams.velocity[i] ?? 0) > 0.5) idx.push(i);
-  }
+  const idx = movingIndices(streams);
 
   const loadSamples: LoadSample[] = idx.map((i) => ({
     dt: 1,
@@ -238,6 +237,8 @@ export function analyzeActivity(
       ...companionAtMeanMaximal(gapSeries, idx.map((i) => hr[i] ?? null), testDurations),
     },
   };
+  const hrSeconds = movingHrHistogram(idx.map((i) => hr[i]));
+  if (hrSeconds) realized.hrSeconds = hrSeconds;
   const match = matchPlannedSession(planned, realized, model);
   if (match) analysis.compliance = assessCompliance(match, realized, model);
 
@@ -379,11 +380,17 @@ function assessCompliance(
   // Deux questions distinctes, deux jeux de seuils : l'issue dit si c'est bien
   // la séance prescrite qui a eu lieu, le verdict note comment elle a été menée.
   const outcome = outcomeOf(planned, realized, model);
+  const ceiling = ceilingCheckOf(planned, realized);
+  const ceilingHr = hrCeilingOf(planned);
 
   let verdict: SessionCompliance['verdict'];
   let detail: string;
 
-  if (Math.abs(loadDev) <= 15 && Math.abs(durDev) <= 20 && (intensityDev == null || Math.abs(intensityDev) <= 4)) {
+  if (ceiling) {
+    // Une séance facile se juge sur ce qu'elle prescrit — sa durée et son
+    // plafond —, jamais sur sa charge, qui n'est qu'une estimation.
+    ({ verdict, detail } = ceilingVerdict(planned, realized, ceiling, durDev, outcome));
+  } else if (Math.abs(loadDev) <= 15 && Math.abs(durDev) <= 20 && (intensityDev == null || Math.abs(intensityDev) <= 4)) {
     verdict = 'on_target';
     detail = 'Séance exécutée conformément à la prescription.';
   } else if (intensityDev != null && Math.abs(intensityDev) > 8) {
@@ -403,15 +410,23 @@ function assessCompliance(
     detail = 'Écarts mineurs, séance globalement conforme.';
   }
 
-  if (outcome === 'replaced') {
+  if (outcome === 'replaced' && !ceiling) {
     const test = maximalTestProof(planned, realized, model);
     const why =
       test && !test.proven
         ? `aucun effort de ${formatDuration(test.effortS)} tenu au-dessus de ${Math.round(model.vt2.hr)} bpm, ` +
           `la FC du seuil 2${test.hr != null ? ` (${Math.round(test.hr)} bpm sur le meilleur)` : ''}`
-        : `${formatDuration(realized.durationS)} pour ${formatDuration(planned.plannedDurationS)} et ` +
+        : `${formatDuration(realized.durationS)} pour ${formatDuration(runDurationOf(planned))} et ` +
           `${Math.round(realized.load)} points de charge pour ${Math.round(planned.plannedLoad)} prévus`;
     detail = `Ce n'est pas la séance prescrite : ${why}. ${detail}`;
+  }
+
+  // Un plafond sans FC ne se vérifie pas : la séance le dit, plutôt que de
+  // laisser croire qu'il a été jugé.
+  if (ceilingHr != null && !ceiling) {
+    detail =
+      `Sans fréquence cardiaque, le plafond de ${ceilingHr} bpm ne se vérifie pas : la séance se juge sur sa ` +
+      `durée et sa charge. ${detail}`;
   }
 
   // Une séance réalisée un autre jour que prévu le dit d'abord.
@@ -430,6 +445,45 @@ function assessCompliance(
     verdict,
     detail,
   };
+}
+
+/**
+ * Le verdict d'une séance facile : son plafond de FC, puis sa durée courue.
+ * Une séance remplacée dit ce qu'elle n'a pas tenu ; une séance faite, ce
+ * qu'elle a tenu.
+ */
+function ceilingVerdict(
+  planned: PlannedSession,
+  realized: RealizedEffort,
+  ceiling: CeilingCheck,
+  durDev: number,
+  outcome: SessionCompliance['outcome'],
+): Pick<SessionCompliance, 'verdict' | 'detail'> {
+  const pct = (share: number) => `${Math.round(share * 100)} %`;
+  const n = ceiling.ceiling;
+  const durations = `${formatDuration(realized.durationS)} courues pour ${formatDuration(runDurationOf(planned))}`;
+  const above =
+    `FC au-dessus de ${n} bpm ${pct(ceiling.shareAbove)} du temps` +
+    (ceiling.shareFarAbove > 0 ? `, au-delà de ${n + 10} bpm ${pct(ceiling.shareFarAbove)}` : '') +
+    ` (moyenne ${Math.round(ceiling.meanHr)} bpm)`;
+
+  if (outcome === 'replaced') {
+    const why = [
+      ...(Math.abs(durDev) > MATERIAL_DEVIATION_PCT.duration ? [durations] : []),
+      ...(ceiling.respected ? [] : [above]),
+    ];
+    return {
+      verdict: ceiling.respected ? (durDev < 0 ? 'under' : 'over') : 'over',
+      detail: `Ce n'est pas la séance prescrite : ${why.join(', et ')}.`,
+    };
+  }
+  const held =
+    `FC moyenne ${Math.round(ceiling.meanHr)} bpm sous le plafond de ${n}` +
+    (ceiling.shareAbove > 0 ? `, dépassé ${pct(ceiling.shareAbove)} du temps` : '');
+  if (Math.abs(durDev) > 20) {
+    return { verdict: durDev < 0 ? 'under' : 'over', detail: `Plafond tenu (${held}), mais ${durations}.` };
+  }
+  return { verdict: 'on_target', detail: `Séance exécutée comme prescrite : ${durations}, ${held}.` };
 }
 
 /** Nom lisible de la séance, déduit de sa structure. */

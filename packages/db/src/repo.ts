@@ -1140,3 +1140,40 @@ export async function saveGarminSync(athleteId: string, patch: Partial<GarminSyn
     .values(values)
     .onConflictDoUpdate({ target: t.garminSync.athleteId, set: patch });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenStreetMap
+// ─────────────────────────────────────────────────────────────────────────────
+
+let geoReady: Promise<unknown> | null = null;
+
+/**
+ * Crée la table des réponses d'OpenStreetMap si elle manque — le service ne
+ * passe pas `db:push`. Une fois par processus ; un échec se retente à l'appel
+ * suivant.
+ */
+export function ensureGeoTables(): Promise<unknown> {
+  geoReady ??= (async () => {
+    for (const statement of createStatements(t.geoCache)) await getDb().run(sql.raw(statement));
+  })().catch((e) => {
+    geoReady = null;
+    throw e;
+  });
+  return geoReady;
+}
+
+/** Une réponse d'OpenStreetMap déjà obtenue, ou `null`. */
+export async function getGeo<T>(key: string): Promise<{ value: T; fetchedAt: string } | null> {
+  await ensureGeoTables();
+  const [row] = await getDb().select().from(t.geoCache).where(eq(t.geoCache.key, key));
+  return row ? { value: row.value as T, fetchedAt: row.fetchedAt } : null;
+}
+
+/** Garde une réponse d'OpenStreetMap, pour toujours. */
+export async function putGeo(key: string, value: unknown, fetchedAt = new Date().toISOString()): Promise<void> {
+  await ensureGeoTables();
+  await getDb()
+    .insert(t.geoCache)
+    .values({ key, value, fetchedAt })
+    .onConflictDoUpdate({ target: t.geoCache.key, set: { value, fetchedAt } });
+}

@@ -36,7 +36,7 @@ export interface CriticalSpeedFit {
  * vitesse critique, et le planificateur ne le compte pas comme un test.
  */
 export const CS_FIT_MIN_S = 120;
-const FIT_MAX_S = 1200;
+export const CS_FIT_MAX_S = 1200;
 
 /** Ajuste CS et D' par régression linéaire de la distance sur le temps. */
 export function fitCriticalSpeed(curve: MmpCurve): CriticalSpeedFit {
@@ -48,7 +48,7 @@ export function fitCriticalSpeed(curve: MmpCurve): CriticalSpeedFit {
         Number.isFinite(p.speedMs) &&
         p.speedMs > 0 &&
         p.durationS >= CS_FIT_MIN_S &&
-        p.durationS <= FIT_MAX_S,
+        p.durationS <= CS_FIT_MAX_S,
     )
     .map((p) => ({ ...p, distanceM: p.speedMs * p.durationS }))
     .sort((a, b) => a.durationS - b.durationS);
@@ -219,6 +219,8 @@ export interface MaximalEffortSupport {
   untestableS: number;
   /** Âge de la preuve la plus récente, en jours. `null` si aucun point n'est prouvé. */
   lastProofAgeDays: number | null;
+  /** Le point prouvé le plus long : l'effort maximal le plus proche de l'asymptote. */
+  longestProof: { durationS: number; speedMs: number; ageDays: number } | null;
 }
 
 /**
@@ -253,6 +255,7 @@ export function maximalEffortSupport(
   let testedS = 0;
   let untestableS = 0;
   let lastProofAgeDays: number | null = null;
+  let longestProof: MaximalEffortSupport['longestProof'] = null;
 
   for (const p of fit.points) {
     const hr = hrAtBest[String(p.durationS)];
@@ -266,6 +269,9 @@ export function maximalEffortSupport(
     const age = Math.max(0, ageDaysAtBest[String(p.durationS)] ?? 0);
     provenS += p.durationS * Math.pow(0.5, age / halfLifeDays);
     if (lastProofAgeDays == null || age < lastProofAgeDays) lastProofAgeDays = age;
+    if (longestProof == null || p.durationS > longestProof.durationS) {
+      longestProof = { durationS: p.durationS, speedMs: p.speedMs, ageDays: age };
+    }
   }
 
   return {
@@ -274,6 +280,7 @@ export function maximalEffortSupport(
     testedS,
     untestableS,
     lastProofAgeDays,
+    longestProof,
   };
 }
 

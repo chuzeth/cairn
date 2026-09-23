@@ -106,6 +106,13 @@ const ITEMS = Object.keys(SUBJECTIVE_WEIGHT) as Item[];
 const NEUTRAL = 60;
 
 /**
+ * Seuils du verdict : vert dès `green`, rouge sous `amber`. Exportés parce
+ * qu'on les dit à l'athlète — un seuil recopié dans une phrase finit par ne
+ * plus être celui qui décide.
+ */
+export const READINESS_VERDICT = { green: 68, amber: 45 } as const;
+
+/**
  * Chaque réponse ramenée sur 0–100, dans le sens « plus haut, mieux ».
  *
  * C'est la seule échelle absolue du fichier, et elle ne sert qu'à défaut de
@@ -256,7 +263,8 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
   };
   const assumedShare = sourcedWeight > 0 ? 0 : 1;
 
-  const verdict: ReadinessScore['verdict'] = score >= 68 ? 'green' : score >= 45 ? 'amber' : 'red';
+  const verdict: ReadinessScore['verdict'] =
+    score >= READINESS_VERDICT.green ? 'green' : score >= READINESS_VERDICT.amber ? 'amber' : 'red';
 
   return {
     date,

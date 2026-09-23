@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { frDate, get, num, post, type StateResponse } from '@/lib/api';
 import { Badge, Card, ErrorBox, Loading, Metric } from '@/components/ui';
 import { DurationCurve } from '@/components/charts';
+import { Term } from '@/components/Term';
 
 interface Curves {
   vitesse_graduee_par_duree_kmh: Record<string, number>;
@@ -16,6 +17,13 @@ const PROVENANCE_LABEL: Record<string, string> = {
   field: 'estimé depuis le terrain',
   blended: 'laboratoire + terrain',
   default: 'valeur par défaut',
+};
+/** La provenance d'une FC écrite à côté de sa valeur : « 171 bpm · FC du labo ». */
+const HR_FROM: Record<string, string> = {
+  lab: 'du labo',
+  field: 'du terrain',
+  blended: 'labo + terrain',
+  default: 'par défaut',
 };
 const PROVENANCE_TONE: Record<string, string | undefined> = {
   lab: 'good', field: 'metabolic', blended: undefined, default: 'watch',
@@ -75,6 +83,8 @@ export default function PhysiologyPage() {
 
   const m = state.model;
   const lab = state.labTest as Record<string, any> | null;
+  // Pourquoi un paramètre n'est plus celui du test : sous lui, en une ligne.
+  const gap = (line: string | undefined) => line && <p className="lab-gap">{line}</p>;
   const vamPoints = Object.entries(m.vamCurve ?? {})
     .map(([k, v]) => ({ durationS: Number(k), value: v }))
     .filter((p) => Number.isFinite(p.durationS) && p.value > 0);
@@ -134,20 +144,25 @@ export default function PhysiologyPage() {
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
         <Card>
-          <Metric label="Vitesse critique" value={num(m.criticalSpeedKmh, 2)} unit="km/h" note={`${m.criticalPace}/km · ${num(m.dPrimeM)} m au-dessus, en réserve`} tone="metabolic" />
+          <Metric label={<Term k="vitesseCritique">Vitesse critique</Term>} value={num(m.criticalSpeedKmh, 2)} unit="km/h" note={`${m.criticalPace}/km · ${num(m.dPrimeM)} m au-dessus, en réserve`} tone="metabolic" />
           <Badge tone={PROVENANCE_TONE[m.provenance.criticalSpeedMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.criticalSpeedMs ?? 'default']}</Badge>
         </Card>
         <Card>
-          <Metric label="VMA" value={num(m.vmaKmh, 1)} unit="km/h" note={`VO2max ${num(m.vo2maxRel, 1)} ml/kg/min`} />
+          <Metric label={<Term k="vma">VMA</Term>} value={num(m.vmaKmh, 1)} unit="km/h" note={`VO2max ${num(m.vo2maxRel, 1)} ml/kg/min`} />
           <Badge tone={PROVENANCE_TONE[m.provenance.vmaMs ?? 'default']}>{PROVENANCE_LABEL[m.provenance.vmaMs ?? 'default']}</Badge>
+          {gap(state.labGaps?.vma)}
         </Card>
         <Card>
-          <Metric label="Seuil 2 (anaérobie)" value={num(m.vt2Kmh, 1)} unit="km/h" note={`${num(m.vt2.hr)} bpm`} tone="watch" />
-          <Badge tone={PROVENANCE_TONE[m.provenance['vt2.hr'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt2.hr'] ?? 'default']}</Badge>
+          {/* Le badge dit d'où vient le chiffre affiché — la vitesse ; la FC dit
+              la sienne à côté d'elle. */}
+          <Metric label={<><Term k="seuil">Seuil 2</Term> (anaérobie)</>} value={num(m.vt2Kmh, 1)} unit="km/h" note={`${num(m.vt2.hr)} bpm · FC ${HR_FROM[m.provenance['vt2.hr'] ?? 'default']}`} tone="watch" />
+          <Badge tone={PROVENANCE_TONE[m.provenance['vt2.speedMs'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt2.speedMs'] ?? 'default']}</Badge>
+          {gap(state.labGaps?.vt2)}
         </Card>
         <Card>
-          <Metric label="Seuil 1 (aérobie)" value={num(m.vt1Kmh, 1)} unit="km/h" note={`${num(m.vt1.hr)} bpm`} />
-          <Badge tone={PROVENANCE_TONE[m.provenance['vt1.hr'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt1.hr'] ?? 'default']}</Badge>
+          <Metric label={<><Term k="seuil">Seuil 1</Term> (aérobie)</>} value={num(m.vt1Kmh, 1)} unit="km/h" note={`${num(m.vt1.hr)} bpm · FC ${HR_FROM[m.provenance['vt1.hr'] ?? 'default']}`} />
+          <Badge tone={PROVENANCE_TONE[m.provenance['vt1.speedMs'] ?? 'default']}>{PROVENANCE_LABEL[m.provenance['vt1.speedMs'] ?? 'default']}</Badge>
+          {gap(state.labGaps?.vt1)}
         </Card>
       </div>
 
@@ -216,7 +231,11 @@ export default function PhysiologyPage() {
           </div>
           <div className="grid grid-2">
             <Metric label="Aisance en descente" value={num(m.descentSkill ?? 1, 2)} note="1,00 = bon trailer de référence" tone={(m.descentSkill ?? 1) >= 1 ? 'good' : 'watch'} />
-            <Metric label="FC max / repos" value={`${num(m.hrMax)} / ${num(m.hrRest)}`} unit="bpm" note={`réserve ${num(m.hrMax - m.hrRest)} bpm`} />
+            <div>
+              <Metric label="FC max / repos" value={`${num(m.hrMax)} / ${num(m.hrRest)}`} unit="bpm" note={`réserve ${num(m.hrMax - m.hrRest)} bpm`} />
+              {gap(state.labGaps?.hrMax)}
+              {gap(state.labGaps?.hrRest)}
+            </div>
           </div>
           <p className="tiny faint" style={{ marginTop: 14, marginBottom: 0 }}>
             La durabilité mesure la vitesse à laquelle ton rendement s'effondre au fil de l'effort. C'est le

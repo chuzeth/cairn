@@ -1,8 +1,11 @@
 import type {
-  DecisionOrigin, PhysiologyModel, PlannedSession, SessionBlock, SessionHistoryEntry,
+  DecisionOrigin, LabTest, PhysiologyModel, PlannedSession, ReadinessScore, SessionBlock, SessionHistoryEntry,
 } from '@cairn/core';
 import { anchorRelativeDates, decimal, sessionDuration, signedDecimal, writtenOn } from '@cairn/core';
-import { DURABILITY_MEASURABLE } from '@cairn/physiology';
+import {
+  CS_FIT_MAX_S, CS_FIT_MIN_S, DURABILITY_MEASURABLE, READINESS_VERDICT, TAU_MECHANICAL, TAU_METABOLIC, VMA_EFFORT_S,
+  vmaSources,
+} from '@cairn/physiology';
 import { firstDescentNote } from './eccentric.js';
 import { locateVertical } from './plausibility.js';
 import * as lib from './sessionLibrary.js';
@@ -40,8 +43,9 @@ import type { TerrainHint } from './terrain.js';
  *  · les nombres s'écrivent à la française.
  *
  * Le mécanisme complet n'est pas perdu pour autant : il tient dans un second
- * paragraphe, séparé par une ligne vide, que l'écran range sous un pli. Rien
- * n'est retiré au modèle — c'est l'ordre de lecture qui change.
+ * paragraphe, séparé par une ligne vide, que le journal du plan et le coach
+ * lisent ; l'écran s'arrête au premier. Rien n'est retiré au modèle — c'est le
+ * lieu de lecture qui change.
  */
 
 /** Ce qu'un écart coûte sur une course : « 11 secondes », « 3 minutes ». */
@@ -52,15 +56,159 @@ export const raceTime = (seconds: number): string => {
   return `${min} minute${min > 1 ? 's' : ''}`;
 };
 
-/** Ce que « fraîcheur » veut dire, dit une fois, là où le chiffre apparaît. */
+/** Ce que « fraîcheur » veut dire, dans un texte qui n'a pas d'écran pour le déplier : le journal, le coach. */
 export const FRESHNESS_MEANS =
   'ta forme de fond moins la fatigue des derniers jours — plus le nombre est haut, plus tu pars reposé';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le vocabulaire
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COUNT = ['zéro', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix'];
+
+/** « la dernière semaine », « les six dernières semaines », « les cinq derniers jours ». */
+function lastSpan(days: number): string {
+  if (days % 7 === 0) {
+    const weeks = days / 7;
+    return weeks === 1 ? 'la dernière semaine' : `les ${COUNT[weeks] ?? weeks} dernières semaines`;
+  }
+  return days === 1 ? 'le dernier jour' : `les ${COUNT[days] ?? days} derniers jours`;
+}
+
+/**
+ * Les mots techniques qui restent à l'écran, et ce qu'ils veulent dire.
+ *
+ * Une table, une seule : l'écran la sert derrière un soulignement pointillé,
+ * là où le mot porte un chiffre. Chaque définition tient en une phrase, écrite
+ * pour qui n'a jamais lu de physiologie et exacte pour qui en a lu — ses
+ * nombres sont ceux du moteur, lus dans ses constantes : une définition qui
+ * les recopierait finirait par décrire un autre calcul que celui qui tourne.
+ * Le point d'ancrage de toutes les charges : une heure à ton seuil vaut 100
+ * points.
+ */
+export const GLOSSARY = {
+  points: {
+    term: 'Points de charge',
+    definition:
+      "Ce qu'une séance coûte à ton cœur et à ton souffle : une heure à ton seuil vaut 100 points, et " +
+      "l'intensité compte au carré — la même heure 10 % moins vite n'en vaut que 81.",
+  },
+  mecanique: {
+    term: 'Charge mécanique',
+    definition:
+      "Ce que tes muscles encaissent à freiner chaque appui, en descente surtout : 1 000 m de descente à " +
+      'pente et allure modérées valent environ 40 points, que le cœur, lui, sent à peine.',
+  },
+  forme: {
+    term: 'Forme de fond',
+    definition:
+      `Tes points de charge par jour, en moyenne sur ${lastSpan(TAU_METABOLIC.chronic)} environ, les plus ` +
+      "récents pesant davantage : ce que ton entraînement a construit, et qui ne bouge que lentement.",
+  },
+  fatigue: {
+    term: 'Fatigue',
+    definition:
+      `La même moyenne sur ${lastSpan(TAU_METABOLIC.acute)} environ : elle grimpe dès qu'une séance est dure, ` +
+      'et retombe en quelques jours de calme.',
+  },
+  fraicheur: {
+    term: 'Fraîcheur',
+    definition:
+      "Ta forme de fond moins ta fatigue : négative quand tu t'entraînes plus que tu ne récupères, positive " +
+      "quand tu es reposé — on la veut positive au départ d'une course ; celle des jambes fait le même calcul " +
+      `avec la charge mécanique, sur ${lastSpan(TAU_MECHANICAL.chronic)} et ${lastSpan(TAU_MECHANICAL.acute)}.`,
+  },
+  disponibilite: {
+    term: 'Disponibilité',
+    definition:
+      'Ta réserve du jour, sur 100 : ta fraîcheur, celle de tes jambes, ton ressenti et ta FC de repos ou ta ' +
+      'variabilité cardiaque, chacun à son poids — ce que tu ne relèves pas ne pèse rien —, moins une pénalité ' +
+      `quand ta charge s'emballe ; vert dès ${READINESS_VERDICT.green}, rouge sous ${READINESS_VERDICT.amber}.`,
+  },
+  vitesseCritique: {
+    term: 'Vitesse critique',
+    definition:
+      'La vitesse la plus haute où ton effort se stabilise encore : en dessous, tu tiens longtemps ; au-dessus, ' +
+      'chaque seconde puise dans une réserve de quelques centaines de mètres, vite épuisée — Cairn la calcule ' +
+      `sur tes meilleurs efforts de ${CS_FIT_MIN_S / 60} à ${CS_FIT_MAX_S / 60} minutes.`,
+  },
+  vma: {
+    term: 'VMA',
+    definition:
+      "Ta vitesse maximale aérobie, celle où ton cœur et tes poumons fournissent tout l'oxygène qu'ils " +
+      'peuvent : tu la tiens de 4 à 8 minutes à fond.',
+  },
+  seuil: {
+    term: 'Seuil',
+    definition:
+      "Deux repères de vitesse : sous le seuil 1, tu parles en courant et tiens des heures ; le seuil 2 est " +
+      "l'allure que tu tiens environ une heure à fond, au-delà de laquelle le souffle s'emballe — c'est lui " +
+      'qui fixe les points de charge.',
+  },
+} as const satisfies Record<string, { term: string; definition: string }>;
+
+export type GlossaryKey = keyof typeof GLOSSARY;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ce qui est sous la résolution du modèle
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Un écart plus petit que l'incertitude de ce qui le mesure ne s'affiche pas.
+ *
+ * Huit secondes sur une course que la prédiction place à ±23 minutes ne sont
+ * pas une information : les écrire, c'est prêter au modèle une précision qu'il
+ * n'a pas, et demander à Pierre de s'inquiéter d'un bruit.
+ */
+export const resolvable = (gap: number, uncertainty: number): boolean =>
+  Number.isFinite(gap) && Math.abs(gap) >= Math.abs(uncertainty);
+
+/** Ce qu'un écart à la fraîcheur visée coûte, et ce que mesure la prédiction qui le chiffre. */
+export interface RaceDayGapCost {
+  /** Ce que l'écart coûte sur la course, s. Nul quand il partirait plus frais que visé. */
+  costS: number;
+  /** Le temps prédit à la fraîcheur visée, s. */
+  predictedS: number;
+  /** Demi-largeur de l'intervalle à 80 % de cette prédiction, s. */
+  uncertaintyS: number;
+}
+
+/**
+ * Ce que l'écran dit de l'écart à la fraîcheur visée : sa première phrase, et
+ * rien quand l'écart est sous la résolution de la prédiction.
+ *
+ * Parti plus frais que visé, l'écart ne coûte pas de temps — c'est le fond qui
+ * manque, et la phrase dit ce qui se décide : les heures de la semaine. Le
+ * mécanisme, lui, ne s'affiche jamais ici : il est au journal du plan.
+ */
+export function raceDayNotice(
+  shortfall: string | null | undefined,
+  gap: { target: number; projected: number } & Pick<RaceDayGapCost, 'costS' | 'uncertaintyS'>,
+): string | null {
+  if (!shortfall) return null;
+  if (gap.projected >= gap.target) return firstParagraph(shortfall);
+  return resolvable(gap.costS, gap.uncertaintyS) ? firstParagraph(shortfall) : null;
+}
+
+/**
+ * Ce que le journal du plan garde d'un écart d'affûtage : ce que l'écran en
+ * dit, quand il en dit quelque chose, puis le mécanisme entier — profondeur
+ * d'affûtage, plancher, semaines, points de fraîcheur.
+ */
+export function taperGapJournal(
+  shortfall: string,
+  gap: { target: number; projected: number } & Pick<RaceDayGapCost, 'costS' | 'uncertaintyS'>,
+): string {
+  const mechanism = shortfall.split('\n\n').slice(1).join(' ');
+  return [raceDayNotice(shortfall, gap), mechanism].filter(Boolean).join(' ');
+}
 
 /**
  * Un texte en deux temps : ce que ça change, puis le mécanisme.
  *
- * La ligne vide n'est pas une mise en page, c'est la coupure que l'écran lit
- * pour ranger le second sous un pli — et que le coach lit, lui, en entier.
+ * La ligne vide n'est pas une mise en page, c'est la coupure : l'écran ne
+ * montre que le premier, le journal du plan garde le second, et le coach lit
+ * le tout.
  */
 export const twoParts = (plain: string, mechanism: string): string => `${plain}\n\n${mechanism}`;
 
@@ -76,6 +224,8 @@ export interface TaperGap {
   /** Ce que l'écart coûte sur la course, s, et le temps prédit, s. Nuls si personne ne l'a mesuré. */
   costS: number;
   predictedS: number;
+  /** Demi-largeur de l'intervalle à 80 % de la prédiction, s. Absente : inconnue. */
+  uncertaintyS?: number;
   /** L'affûtage bute sur l'une de ses bornes. */
   atFloor: boolean;
   atCeiling: boolean;
@@ -109,8 +259,13 @@ export function taperGapText(g: TaperGap): string {
     `${signedDecimal(g.projected)} contre ${signedDecimal(g.target)} visés — la fraîcheur, c'est ${FRESHNESS_MEANS}.`;
 
   if (g.projected < g.target) {
+    // Sous la résolution de la prédiction, l'écran ne dit rien de l'écart ;
+    // le coach, qui lit ce texte en entier, sait pourquoi.
+    const blur = g.uncertaintyS && !resolvable(g.costS, g.uncertaintyS)
+      ? `, sous la précision de la prédiction (±${raceTime(g.uncertaintyS)})`
+      : '';
     const cost = g.costS > 0 && g.predictedS > 0
-      ? ` : ${raceTime(g.costS)} sur ${sessionDuration(g.predictedS)}`
+      ? ` : ${raceTime(g.costS)} sur ${sessionDuration(g.predictedS)}${blur}`
       : '';
     const why = g.atFloor
       ? 'Alléger davantage te ferait perdre plus de forme que tu ne gagnerais de fraîcheur.'
@@ -134,6 +289,200 @@ export function taperGapText(g: TaperGap): string {
       `${frame}, ${g.maxWeeklyHours} h par semaine au plus : cette charge ne construit pas le fond qu'une ` +
       `fraîcheur de ${signedDecimal(g.target)} suppose. ${scale}`,
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le point du jour
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * À quoi sert le point du jour, dit avant l'envoi.
+ *
+ * Il ne décide rien lui-même : il entre dans la disponibilité, et c'est la
+ * règle du rouge (`adapt.ts`) qui allège, quand la séance qui vient est assez
+ * lourde pour qu'il y ait quelque chose à alléger — d'où « peuvent ».
+ */
+export const CHECK_IN_PURPOSE =
+  'Tes réponses entrent dans ta disponibilité du jour : si elles la font passer au rouge, sous ' +
+  `${READINESS_VERDICT.amber}, les règles de charge peuvent alléger ta prochaine séance.`;
+
+/** Ce qu'une séance est, avant et après un point du jour. */
+export interface SessionState {
+  type: string;
+  status: string;
+  date: string;
+  durationS: number;
+  load: number;
+}
+
+export interface CheckInEffect {
+  before: Pick<ReadinessScore, 'score' | 'verdict'>;
+  after: Pick<ReadinessScore, 'score' | 'verdict'>;
+  /** Le jour du point. */
+  today: string;
+  /**
+   * La prochaine séance que les règles pouvaient toucher — aujourd'hui ou
+   * demain —, telle qu'elle était et telle qu'elle est. `null` : aucune.
+   */
+  session: { before: SessionState; after: SessionState | null } | null;
+}
+
+const VERDICT_REACHED: Record<ReadinessScore['verdict'], string> = {
+  green: 'au vert',
+  amber: 'en vigilance',
+  red: 'au rouge',
+};
+
+/**
+ * Ce que les réponses ont changé, en une phrase : la disponibilité avant et
+ * après, et la séance — inchangée, ou allégée, et de combien.
+ */
+export function checkInEffect(e: CheckInEffect): string {
+  const reached = e.after.verdict !== e.before.verdict ? `, ${VERDICT_REACHED[e.after.verdict]}` : '';
+  const score = e.after.score === e.before.score
+    ? `Ta disponibilité reste à ${e.after.score}${reached}`
+    : `Ta disponibilité passe de ${e.before.score} à ${e.after.score}${reached}`;
+  if (!e.session) return `${score} ; aucune séance n'est prévue d'ici demain.`;
+
+  const { before, after } = e.session;
+  const which = `ta séance ${before.date === e.today ? 'du jour' : 'de demain'}`;
+  const changed = sessionChange(before, after);
+  return changed ? `${score} : ${which} ${changed}.` : `${score} ; ${which} ne change pas.`;
+}
+
+/** Ce qu'une séance est devenue, dit de ce qu'on en voit ; vide si rien n'a changé. */
+function sessionChange(before: SessionState, after: SessionState | null): string {
+  if (!after || after.status === 'cancelled' || after.status === 'withdrawn') return 'est annulée';
+  if (after.type === 'rest' && before.type !== 'rest') return 'devient un repos complet';
+  if (after.date !== before.date) return `passe au ${writtenOn(after.date)}`;
+  if (after.durationS < before.durationS) {
+    return `est allégée, ${sessionDuration(after.durationS)} au lieu de ${sessionDuration(before.durationS)}`;
+  }
+  if (after.type !== before.type) return 'devient un décrassage';
+  if (after.load < before.load) return `est allégée, ${after.load} points de charge au lieu de ${before.load}`;
+  return '';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ce qui écarte un paramètre de son test de laboratoire
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type LabGapKey = 'vma' | 'vt2' | 'vt1' | 'hrMax' | 'hrRest';
+
+/**
+ * En dessous de ces écarts, un paramètre ne s'écarte pas de son test : c'est
+ * la résolution de la mesure de laboratoire. Une vitesse s'y lit au palier
+ * près — le protocole dit de combien il monte, sinon un demi-km/h —, une FC au
+ * battement près, à deux battements du capteur.
+ */
+const LAB_HR_RESOLUTION_BPM = 2;
+const labSpeedResolutionKmh = (lab: LabTest): number => {
+  const step = /incr[ée]ment\w*\s+(\d+(?:[.,]\d+)?)\s*km\/h/i.exec(lab.protocol)?.[1];
+  return step ? Number(step.replace(',', '.')) : 0.5;
+};
+
+/** Une vitesse au dixième, sans le « ,0 » d'un entier : « 20 km/h », « 16,8 km/h ». */
+const kmh = (ms: number) => {
+  const v = Math.round(ms * 36) / 10;
+  return Number.isInteger(v) ? String(v) : decimal(v, 1);
+};
+
+const MINUTES_IN_WORDS: Record<number, string> = {
+  2: 'deux', 3: 'trois', 4: 'quatre', 5: 'cinq', 6: 'six', 7: 'sept', 8: 'huit', 10: 'dix', 12: 'douze',
+  15: 'quinze', 20: 'vingt', 30: 'trente',
+};
+
+/** « vingt minutes », « 5 min 30 ». */
+function effortSpan(seconds: number): string {
+  const min = seconds / 60;
+  if (Number.isInteger(min)) return MINUTES_IN_WORDS[min] ? `${MINUTES_IN_WORDS[min]} minutes` : `${min} minutes`;
+  return `${Math.floor(min)} min ${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+}
+
+/** L'âge d'un test, dit comme on le dit : « 14 mois ». */
+function labAge(labDate: string, asOf: string): string {
+  const days = (Date.parse(asOf) - Date.parse(labDate)) / 86_400_000;
+  if (days < 45) return `${Math.round(days)} jours`;
+  return `${Math.round(days / 30.44)} mois`;
+}
+
+/** « paliers d'une minute », quand le protocole le dit. */
+function stages(lab: LabTest): string {
+  const n = /paliers?\s+d['’]\s*(\d+)\s*min/i.exec(lab.protocol)?.[1];
+  if (!n) return '';
+  return Number(n) === 1 ? ", mesuré par paliers d'une minute" : `, mesuré par paliers de ${COUNT[Number(n)] ?? n} minutes`;
+}
+
+/** « ne pèse plus que 34 % », « n'y pèse plus que 12 % », « pèse encore 60 % ». */
+const labShare = (w: number, there = false) =>
+  w < 0.5
+    ? `${there ? "n'y" : 'ne'} pèse plus que ${Math.round(w * 100)} %`
+    : `${there ? 'y ' : ''}pèse encore ${Math.round(w * 100)} %`;
+
+/**
+ * Pourquoi un paramètre n'est plus celui du test de laboratoire, en une ligne
+ * par paramètre, sur ce que le modèle a lui-même retenu : le poids qui reste
+ * au laboratoire, l'effort de terrain qui l'a remplacé, la règle qui le dérive.
+ * Un paramètre qui ne s'écarte pas de son test — à la résolution du test
+ * près — n'a rien à dire.
+ */
+export function labGaps(model: PhysiologyModel, lab: LabTest): Partial<Record<LabGapKey, string>> {
+  const out: Partial<Record<LabGapKey, string>> = {};
+  const speedStep = labSpeedResolutionKmh(lab);
+  const apart = (a: number, b: number) => resolvable(a - b, speedStep / 3.6);
+  const age = labAge(lab.date, model.asOf);
+
+  const vma = vmaSources(model, lab);
+  if (vma.fieldMs != null && apart(model.vmaMs, lab.vmaMs)) {
+    const from = vma.basis === 'effort'
+      ? `ton meilleur effort de ${effortSpan(VMA_EFFORT_S)}`
+      : 'ta vitesse critique';
+    const vo2 = Math.abs(model.vo2maxRel - lab.vo2maxRel) >= 1 ? ' Ta VO2max suit dans la même proportion.' : '';
+    out.vma =
+      `Ton labo disait ${kmh(lab.vmaMs)} km/h${stages(lab)} ; le terrain la place à ${kmh(vma.fieldMs)} km/h, ` +
+      `d'après ${from}. Le labo ${labShare(vma.labWeight)} : il a ${age}.${vo2}`;
+  }
+
+  if (apart(model.vt2.speedMs, lab.vt2.speedMs)) {
+    const ev = model.criticalSpeedEvidence;
+    const share = ev ? ` Le labo ${labShare(ev.weightLab, true)}.` : '';
+    const proof = ev?.proof;
+    const on = (ageDays: number) => writtenOn(new Date(Date.parse(model.asOf) - ageDays * 86_400_000).toISOString());
+    if (proof) {
+      const side = lab.vt2.speedMs > proof.speedMs ? 'au-dessus des' : 'sous les';
+      out.vt2 =
+        `Ton labo le plaçait à ${kmh(lab.vt2.speedMs)} km/h, ${side} ${kmh(proof.speedMs)} km/h que tu as tenus ` +
+        `${effortSpan(proof.durationS)} à fond le ${on(proof.ageDays)} : ton seuil 2 se place juste sous ta ` +
+        `vitesse critique.${share}`;
+    } else {
+      const basis = ev?.lastProofAgeDays != null
+        ? `, d'après ton effort maximal du ${on(ev.lastProofAgeDays)}`
+        : ', sans effort maximal récent pour l\'ancrer';
+      out.vt2 =
+        `Ton labo le plaçait à ${kmh(lab.vt2.speedMs)} km/h ; le terrain place ta vitesse critique à ` +
+        `${kmh(model.criticalSpeedMs)} km/h${basis}, et ton seuil 2 juste en dessous.${share}`;
+    }
+  }
+
+  if (apart(model.vt1.speedMs, lab.vt1.speedMs)) {
+    out.vt1 =
+      `Ton labo le plaçait à ${kmh(lab.vt1.speedMs)} km/h ; faute de mesure de terrain, il suit ton seuil 2 ` +
+      "dans le même rapport qu'au labo.";
+  }
+
+  if (model.hrMax - lab.hrMax >= LAB_HR_RESOLUTION_BPM) {
+    out.hrMax = `Ton labo mesurait ${lab.hrMax} bpm ; tes sorties montent plus haut, jusqu'à ${model.hrMax} hors pics isolés.`;
+  }
+
+  if (lab.hrRestLab != null && Math.abs(model.hrRest - lab.hrRestLab) >= LAB_HR_RESOLUTION_BPM) {
+    const measured = model.provenance.hrRest === 'field';
+    out.hrRest =
+      `Ton labo l'a relevée à ${lab.hrRestLab} bpm, debout et sous masque, juste avant l'effort : écartée. ` +
+      (measured
+        ? `${model.hrRest} vient de tes mesures au réveil.`
+        : `${model.hrRest} est une estimation d'après ta VO2max ; trois mesures au réveil, au point du jour, la remplacent.`);
+  }
+  return out;
 }
 
 export interface PresentationContext {

@@ -210,3 +210,19 @@ export function cumulativeVertical(streams: ActivityStreams): number[] {
   }
   return out;
 }
+
+/**
+ * Les échantillons où l'athlète est en mouvement.
+ *
+ * Une pause de 8 min à un ravitaillement ne doit ni diluer les moyennes ni
+ * compter comme de la zone 1. L'analyse d'une sortie et ce que le modèle lit de
+ * ses sorties passées partagent cette règle : deux lectures du même flux
+ * jugeraient la même FC sur deux durées différentes.
+ */
+export function movingIndices(streams: ActivityStreams): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < streams.time.length; i++) {
+    if (streams.moving ? streams.moving[i] : (streams.velocity[i] ?? 0) > 0.5) out.push(i);
+  }
+  return out;
+}

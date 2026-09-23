@@ -145,7 +145,7 @@ vi.mock('@cairn/db', () => ({
   },
 }));
 
-const { applyAdjustments, evaluateAdjustments, rematchRecent } = await import('@cairn/coach');
+const { applyAdjustments, evaluateAdjustments, rematchRecent, recovery } = await import('@cairn/coach');
 
 /** 20 min d'échauffement, 20 min à 14,3 km/h et 175 bpm, 21 min de retour : la forme du 21/09. */
 function testRun(): ActivityStreams {
@@ -402,5 +402,69 @@ describe('La semaine du 21/09, de la relève au plan', () => {
       }),
     ]);
     expect(store.revisions.at(-1)?.changes[0]).toMatchObject({ before: '—', after: 'ajoutée : décrassage' });
+  });
+});
+
+// ── Le jugement des sept derniers jours, refait ──────────────────────────────
+
+/**
+ * Le décrassage du 22/09, couru comme prescrit — 48 min 15 à 9,2 km/h, 133 bpm
+ * de moyenne, 14 % du temps au-dessus de 141 — et déclaré remplacé sur une
+ * charge prévue de 8 points.
+ */
+function recoveryRun(hr: [number, number][] = [[125, 600], [133, 1500], [139, 390], [145, 300], [150, 105]]): ActivityStreams {
+  const heartrate = hr.flatMap(([bpm, s]) => new Array<number>(s).fill(bpm));
+  const n = heartrate.length;
+  const velocity = new Array<number>(n).fill(2.547);
+  return {
+    time: velocity.map((_, i) => i), distance: velocity.map((v, i) => v * (i + 1)),
+    altitude: new Array<number>(n).fill(200), velocity, grade: new Array<number>(n).fill(0), heartrate,
+    moving: new Array<boolean>(n).fill(true),
+  };
+}
+
+const DECRASSAGE_2209 = (): PlannedSession => ({
+  id: 'ses_2209', athleteId: 'pierre', date: '2026-09-22', type: 'recovery', priority: 'optional',
+  title: 'Décrassage — 45 min', intent: '', blocks: recovery(PIERRE_MODEL, 45).blocks,
+  plannedLoad: 8, plannedMechanicalLoad: 1, plannedDurationS: 2700, status: 'replaced',
+  completedActivityId: 'strava-2209',
+  rationale:
+    "Ce n'est pas la séance prescrite : 48'16\" pour 45'00\" et 41 points de charge pour 8 prévus. " +
+    'Charge réalisée 410 % au-dessus du prévu. À surveiller sur la fraîcheur des jours suivants.',
+});
+
+describe('La passe des sept derniers jours rejuge ce qu’elle tient', () => {
+  beforeEach(() => {
+    store.sessions = [DECRASSAGE_2209()];
+    store.activities = [activity('strava-2209', '2026-09-22')];
+    store.streams = new Map([['strava-2209', recoveryRun()]]);
+  });
+
+  it('rend « faite » le décrassage du 22/09, une fois, et le dit', async () => {
+    expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-09-23')).toEqual([
+      { activityId: 'strava-2209', sessionId: 'ses_2209' },
+    ]);
+    const s = store.sessions[0]!;
+    expect(s).toMatchObject({ status: 'completed', completedActivityId: 'strava-2209', date: '2026-09-22' });
+    // Ce qu'on lui avait fait dire était faux : le motif est remplacé, et le
+    // rejugement laisse sa trace.
+    expect(s.rationale).toMatch(/^Séance exécutée comme prescrite : 48'15" courues pour 45'00"/);
+    expect(s.history?.at(-1)).toMatchObject({ by: 'rules' });
+    expect(s.history?.at(-1)?.text).toMatch(/^Rejugée : « réalisée », et non plus « remplacée »\. Séance exécutée/);
+    expect(store.analyses.get('strava-2209')?.compliance).toMatchObject({ outcome: 'fulfilled', verdict: 'on_target' });
+
+    // Une seconde passe ne réécrit rien.
+    const updates = store.updates;
+    expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-09-23')).toEqual([]);
+    expect(store.updates).toBe(updates);
+  });
+
+  it('n’écrit rien quand le jugement tient', async () => {
+    // Couru à 150 bpm, ce n'était pas le décrassage : remplacé il était, remplacé il reste.
+    store.streams = new Map([['strava-2209', recoveryRun([[140, 900], [150, 2000]])]]);
+    expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-09-23')).toEqual([]);
+    expect(store.updates).toBe(0);
+    expect(store.analyses.has('strava-2209')).toBe(false);
+    expect(store.sessions[0]!.rationale).toMatch(/^Ce n'est pas la séance prescrite/);
   });
 });

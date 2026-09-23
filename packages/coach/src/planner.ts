@@ -4,9 +4,9 @@ import type {
 } from '@cairn/core';
 import { decimal, signedDecimal, writtenOn } from '@cairn/core';
 import {
-  ACWR_SPIKE, DURABILITY_MEASURABLE, interpretDurability, predictRace, prescribedMechanicalLoad,
-  projectFrom, projectLoadRatios, ratioExceedances, targetDistribution, targetRaceDayTsb,
-  type DailyLoad, type LoadRatioExceedance,
+  ACWR_SPIKE, DURABILITY_MEASURABLE, fractionalUtilization, interpretDurability, predictRace,
+  prescribedMechanicalLoad, projectFrom, projectLoadRatios, ratioExceedances, steadyRunLoad, targetDistribution,
+  targetRaceDayTsb, type DailyLoad, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import {
   TAPER_SCALE_BOUNDS, addDays, buildPeriodization, mondayOf, type WeekPlanSpec,
@@ -21,7 +21,7 @@ import {
   roundsLabel,
 } from './eccentric.js';
 import {
-  firstParagraph, onTerrain, presentDecided, taperGapText, withConstruction,
+  onTerrain, presentDecided, taperGapJournal, taperGapText, withConstruction, type RaceDayGapCost,
 } from './presentation.js';
 import { carryDecisions, decisionOn, type PlanCarryOver } from './preserve.js';
 import * as lib from './sessionLibrary.js';
@@ -534,7 +534,7 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
       blocks,
       durationS: existing.durationS + s.durationS,
       plannedLoad: existing.plannedLoad + s.plannedLoad,
-      plannedMechanicalLoad: lib.mechanicalFor(blocks, existing.elevationLossM).total,
+      plannedMechanicalLoad: lib.mechanicalFor(model, blocks, existing.elevationLossM).total,
       intent: `${existing.intent} ${lib.STRENGTH_INTENT}`,
     });
   } else if (hosts.length > 0 && spec.phase !== 'taper') {
@@ -664,34 +664,28 @@ function capToWeeklyCeiling(
     // La maille des cinq minutes fait qu'un facteur ne tombe pas juste du
     // premier coup : on réduit, on remesure, on recommence tant qu'il reste du
     // mou.
-    for (let pass = 0; pass < 4 && over() > 0; pass++) {
-      const movable = pool
+    const movable = () =>
+      pool
         .map((x) => ({ x, body: negotiableS(x), room: negotiableS(x) - floorOf(x) }))
         .filter((m) => m.room > 0 && m.body > 0);
-      const room = movable.reduce((a, m) => a + m.room, 0);
+    for (let pass = 0; pass < 4 && over() > 0; pass++) {
+      const candidates = movable();
+      const room = candidates.reduce((a, m) => a + m.room, 0);
       if (room <= 0) break;
+      const before = over();
       // Chacun cède au prorata de ce qu'il peut céder : le plafond ne vide pas
       // la première séance venue pour épargner la suivante.
       const share = Math.min(1, over() / room);
-      for (const m of movable) {
-        const factor = (m.body - m.room * share) / m.body;
-        // Une sortie qui mesurait la durabilité continue de la mesurer : le
-        // plafond lui prend du temps, pas le dénivelé qui la rend lisible. Ce
-        // que l'athlète ne peut pas tenir sur le temps qui reste cède quand
-        // même — les courbes décident, et la séance le dit.
-        const carried = lib.elevationGainOf(m.x.blocks);
-        const measuring =
-          carried >= DURABILITY_MEASURABLE.minVertM &&
-          m.body * factor >= DURABILITY_MEASURABLE.minDurationS;
-        const vertical = measuring
-          ? Math.max(factor, DURABILITY_MEASURABLE.minVertM / carried)
-          : factor;
-        const t = lib.transformSession(m.x, { duration: factor, vertical }, model);
-        m.x.blocks = t.blocks;
-        // Ce que le plafond a fait céder rejoint l'historique : le « pourquoi »
-        // reste la raison d'être de la séance.
-        if (t.amendments.length) m.x.history = withConstruction(m.x, undefined, t.amendments, builtAt()).history;
-        humanize(m.x, model);
+      for (const m of candidates) shorten(m.x, m.body, (m.body - m.room * share) / m.body, model);
+      // La maille peut ramener chaque coupe à son point de départ : 27 min 30
+      // se prescrivent 30 min, et la semaine ne bougeait plus d'un passage à
+      // l'autre — c'était alors la sortie longue qui cédait sa plage, le
+      // décrassage gardant son quart d'heure de marge. Le reste se prend en pas
+      // entiers de la maille, sur la séance qui a le plus de marge.
+      const widest = over() >= before ? movable().sort((a, b) => b.room - a.room)[0] : undefined;
+      if (widest) {
+        const step = Math.min(widest.room, Math.ceil(over() / lib.ROUND_S) * lib.ROUND_S);
+        shorten(widest.x, widest.body, (widest.body - step) / widest.body, model);
       }
     }
   }
@@ -754,6 +748,27 @@ function capToWeeklyCeiling(
       t.directiveId === directive.id && !t.exemption ? { ...t, exemption: 'ceiling' as const } : t,
     );
   }
+}
+
+/**
+ * Ce que le plafond horaire fait céder à une séance : du temps.
+ *
+ * Une sortie qui mesurait la durabilité continue de la mesurer : le plafond lui
+ * prend du temps, pas le dénivelé qui la rend lisible. Ce que l'athlète ne peut
+ * pas tenir sur le temps qui reste cède quand même — les courbes décident, et
+ * la séance le dit.
+ */
+function shorten(x: PlannedSession, body: number, factor: number, model: PhysiologyModel): void {
+  const carried = lib.elevationGainOf(x.blocks);
+  const measuring =
+    carried >= DURABILITY_MEASURABLE.minVertM && body * factor >= DURABILITY_MEASURABLE.minDurationS;
+  const vertical = measuring ? Math.max(factor, DURABILITY_MEASURABLE.minVertM / carried) : factor;
+  const t = lib.transformSession(x, { duration: factor, vertical }, model);
+  x.blocks = t.blocks;
+  // Ce que le plafond a fait céder rejoint l'historique : le « pourquoi » reste
+  // la raison d'être de la séance.
+  if (t.amendments.length) x.history = withConstruction(x, undefined, t.amendments, builtAt()).history;
+  humanize(x, model);
 }
 
 /** Un nombre d'heures tel qu'on l'écrit à l'athlète — « 9 h », « 7 h 30 ». */
@@ -1120,6 +1135,12 @@ export interface BuildPlanInput {
   currentAtl?: number;
   estimatedRaceDurationS: number;
   racePaceMs?: number;
+  /**
+   * Charge de la course, lue sur sa prédiction : le temps couru, à l'intensité
+   * que la prédiction y tient. Absente, la course se compte à la fraction de la
+   * vitesse critique que sa durée laisse tenir.
+   */
+  raceLoad?: number;
   startDate?: string;
   /** Directives issues du dossier de l'athlète. */
   directives?: TrainingDirective[];
@@ -1482,22 +1503,35 @@ function solveTaperScale(attempt: (k: number) => PlanAttempt, target: number): P
  * La fraîcheur du jour J n'est pas une note : elle se convertit en temps par la
  * prédiction, à modèle et parcours identiques. C'est ce chiffre-là — onze
  * secondes sur trois heures et demie — qui dit à Pierre si l'écart mérite qu'on
- * s'y arrête. Nul quand il partirait plus frais que visé : le temps qui lui
- * manquerait alors vient du fond qu'il n'a pas construit, pas de cet écart.
+ * s'y arrête — rapporté à ce que la prédiction elle-même sait mesurer : la
+ * demi-largeur de son intervalle à 80 %. Nul quand il partirait plus frais que
+ * visé : le temps qui lui manquerait alors vient du fond qu'il n'a pas
+ * construit, pas de cet écart.
+ *
+ * Exportée : le plan enregistré se relit avec le modèle du jour, sans être
+ * reconstruit.
  */
-function costOfGap(
+export function raceDayGapCost(
   model: PhysiologyModel,
   course: CourseProfile,
   target: number,
   projected: number,
-): { costS: number; predictedS: number } {
-  if (projected >= target) return { costS: 0, predictedS: 0 };
-  const at = (tsb: number) => predictRace({ model, course, raceDayTsb: tsb, skipLimiters: true }).predictedTimeS;
+): RaceDayGapCost {
+  if (projected >= target) return { costS: 0, predictedS: 0, uncertaintyS: 0 };
+  const at = (tsb: number) => predictRace({ model, course, raceDayTsb: tsb, skipLimiters: true });
   const ideal = at(target);
-  return { costS: Math.max(0, at(projected) - ideal), predictedS: ideal };
+  return {
+    costS: Math.max(0, at(projected).predictedTimeS - ideal.predictedTimeS),
+    predictedS: ideal.predictedTimeS,
+    uncertaintyS: (ideal.rangeS[1] - ideal.rangeS[0]) / 2,
+  };
 }
 
 const signed = (v: number) => signedDecimal(v);
+
+/** Ce que coûte une course tenue à la fraction de la vitesse critique que sa durée laisse. */
+const raceLoadAtCs = (model: PhysiologyModel, durationS: number): number =>
+  steadyRunLoad(durationS, model.criticalSpeedMs * fractionalUtilization(durationS), model.vt2.speedMs);
 
 export function buildTrainingPlan(input: BuildPlanInput): {
   plan: TrainingPlan;
@@ -1573,7 +1607,9 @@ export function buildTrainingPlan(input: BuildPlanInput): {
       title: `🏁 ${input.race.name}`,
       intent: `Objectif ${input.race.priority}. ${Math.round(input.race.course.distanceM / 100) / 10} km, ${input.race.course.elevationGainM} m D+.`,
       blocks: [],
-      plannedLoad: Math.round((input.estimatedRaceDurationS / 3600) * 85),
+      // Elle valait 85 points l'heure quelle que soit la course : une intensité
+      // posée, et non celle que la prédiction y tient.
+      plannedLoad: Math.round(input.raceLoad ?? raceLoadAtCs(input.model, input.estimatedRaceDurationS)),
       plannedMechanicalLoad: Math.round(
         prescribedMechanicalLoad({ elevationLossM: input.race.course.elevationLossM }).total,
       ),
@@ -1627,21 +1663,26 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   const points = projectFrom(seed, written.map((s) => ({ date: s.date, load: s.plannedLoad })), planStart, eve);
   const projected = points[points.length - 1]?.tsb ?? Math.round((seed.ctl - seed.atl) * 10) / 10;
   const gap = Math.round((projected - tsb.metabolic) * 10) / 10;
+  const onTarget = Math.abs(gap) <= TSB_TOLERANCE;
+  // Deux prédictions de course : on ne les fait que pour un écart à dire.
+  const cost = onTarget
+    ? { costS: 0, predictedS: 0, uncertaintyS: 0 }
+    : raceDayGapCost(input.model, input.race.course, tsb.metabolic, projected);
   const tsbCheck: RaceDayTsbCheck = {
     date: eve,
     target: tsb.metabolic,
     projected,
     gap,
-    onTarget: Math.abs(gap) <= TSB_TOLERANCE,
+    onTarget,
     taperScale: Math.round(solved.taperScale * 100) / 100,
     shortfall:
-      Math.abs(gap) <= TSB_TOLERANCE
+      onTarget
         ? null
         : taperGapText({
             raceDay: writtenOn(raceDate),
             target: tsb.metabolic,
             projected,
-            ...costOfGap(input.model, input.race.course, tsb.metabolic, projected),
+            ...cost,
             atFloor: solved.taperScale <= TAPER_SCALE_BOUNDS.min + 1e-6,
             atCeiling: solved.taperScale >= TAPER_SCALE_BOUNDS.max - 1e-6,
             taperScale: solved.taperScale,
@@ -1695,11 +1736,15 @@ export function buildTrainingPlan(input: BuildPlanInput): {
           summary:
             `Plan construit sur ${fresh.length} semaines jusqu'à « ${input.race.name} », le ${writtenOn(raceDate)}. ` +
             `Tu pars d'une forme de fond de ${Math.round(effectiveCtl)} points ; la veille de la course, ` +
-            `le plan t'amène à une fraîcheur de ${signed(tsbCheck.projected)} pour ${signed(tsb.metabolic)} visés ` +
-            `(écart ${signed(gap)} point, affûtage à ${Math.round(solved.taperScale * 100)} % de sa profondeur habituelle).` +
-            // Le journal dit l'essentiel de l'écart ; son compte complet est dans
-            // le plan, sous le pli de l'encart.
-            (tsbCheck.shortfall ? ` ⚠ ${firstParagraph(tsbCheck.shortfall)}` : '') +
+            `le plan t'amène à une fraîcheur de ${signed(tsbCheck.projected)} pour ${signed(tsb.metabolic)} visés` +
+            // Le mécanisme d'un écart — profondeur d'affûtage, plancher,
+            // semaines — n'a pas sa place à l'écran : il est ici, et ici
+            // seulement. Ce que l'écart coûte ne s'y écrit que si la prédiction
+            // sait le mesurer.
+            (tsbCheck.shortfall
+              ? `. ⚠ ${taperGapJournal(tsbCheck.shortfall, { target: tsb.metabolic, projected, ...cost })}`
+              : ` (écart ${signed(gap)} point, affûtage à ${Math.round(solved.taperScale * 100)} % de sa ` +
+                'profondeur habituelle).') +
             (ratioCheck.exceedances.length
               ? ` ⚠ Sur une partie du plan, tu cours nettement plus que les semaines d'avant ne t'y ont préparé — ` +
                 `${describeRatioExceedances(ratioCheck.exceedances)}.`

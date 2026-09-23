@@ -417,6 +417,26 @@ export const garminSync = sqliteTable('garmin_sync', {
   rejections: text('rejections', { mode: 'json' }),
 });
 
+/**
+ * Ce qu'OpenStreetMap a dit du terrain, gardé pour toujours.
+ *
+ * Les voies relevées autour d'une montée (Overpass) et les adresses de ses
+ * points (Nominatim) : une réponse obtenue n'est jamais redemandée. Ces services
+ * sont gratuits et bénévoles, et leur règle d'usage le demande ; le terrain, lui,
+ * ne bouge pas d'une relève à l'autre. Une ligne par question, sa réponse telle
+ * qu'on l'a gardée, et quand on l'a obtenue.
+ *
+ * Aucune valeur par défaut calculée : la table est créée au démarrage par
+ * `ensureGeoTables` à partir de cette définition même.
+ */
+export const geoCache = sqliteTable('geo_cache', {
+  /** La question : `osm-ways:v1:<activité>:<indices>` ou `nominatim:v1:<zoom>:<lat>,<lng>`. */
+  key: text('key').primaryKey(),
+  /** La réponse, réduite à ce qu'on en lit. */
+  value: text('value', { mode: 'json' }).notNull(),
+  fetchedAt: text('fetched_at').notNull(),
+});
+
 export type AthleteRow = typeof athletes.$inferSelect;
 export type ActivityRow = typeof activities.$inferSelect;
 export type PlannedSessionRow = typeof plannedSessions.$inferSelect;

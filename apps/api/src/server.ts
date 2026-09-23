@@ -3,14 +3,14 @@ import cors from '@fastify/cors';
 import * as db from '@cairn/db';
 import { directivesFor } from '@cairn/core';
 import {
-  applyAdjustments, chat, describeAdjustments, describeDirectives, evaluateAdjustments,
-  executeTool, generateWeeklyReview, loadAthleteState, rebuildPhysiologyModel,
-  summarizeWeek,
+  CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, describeAdjustments,
+  describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, labGaps,
+  loadAthleteState, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, summarizeWeek, type SessionState,
 } from '@cairn/coach';
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
 } from '@cairn/strava';
-import type { ActivityStreams, DeclaredAbsence, DecisionOrigin } from '@cairn/core';
+import type { ActivityStreams, DeclaredAbsence, DecisionOrigin, PlannedSession } from '@cairn/core';
 import {
   formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
 } from '@cairn/physiology';
@@ -342,6 +342,10 @@ export async function buildServer() {
         })),
         hasPlan: s.plan != null,
         labTest: s.profile.labTests[0] ?? null,
+        // Pourquoi un paramètre n'est plus celui du test, paramètre par paramètre.
+        labGaps: s.profile.labTests[0] ? labGaps(s.model, s.profile.labTests[0]) : {},
+        // Ce que le point du jour change, dit avant qu'on y réponde.
+        checkInPurpose: CHECK_IN_PURPOSE,
         // Ce que le planificateur lit du dossier, et l'extrait qui le fonde.
         directives: directivesFor(s.profile),
       };
@@ -349,6 +353,10 @@ export async function buildServer() {
       return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
     }
   });
+
+  // Les mots techniques qui restent à l'écran et leur définition : une seule
+  // table, celle de `presentation.ts`.
+  app.get('/api/glossary', async () => GLOSSARY);
 
   app.get('/api/pmc', async (req, reply) => {
     const q = req.query as { days?: string };
@@ -435,6 +443,7 @@ export async function buildServer() {
     });
     return {
       plan: plan?.plan ?? null,
+      raceDay: plan ? await raceDayView(plan.plan) : null,
       weekSummaries: plan?.weeks.map(summarizeWeek) ?? [],
       // Ce qu'une directive produit se lit sur le contenu actuel de la séance.
       sessions: sessions.map((s) => ({
@@ -523,6 +532,15 @@ export async function buildServer() {
         return reply.code(400).send({ error: 'Point du jour vide : aucune réponse à enregistrer.' });
       }
 
+      // Ce que les réponses vont changer se mesure contre l'état d'avant :
+      // la disponibilité, et la séance que les règles peuvent toucher.
+      const before = (await loadAthleteState(A)).readiness;
+      const today = iso(new Date());
+      const tomorrow = iso(new Date(Date.now() + dayMs));
+      const watched = (await db.listPlannedSessions(A, today, tomorrow))
+        .filter((s) => s.date >= today && s.date <= tomorrow && s.status === 'planned' && s.type !== 'rest')
+        .sort((a, b) => a.date.localeCompare(b.date))[0];
+
       // Un point du jour se complète : deux envois successifs s'ajoutent, le
       // second n'efface pas ce que le premier avait déclaré.
       const existing = (await db.listCheckIns(A, date)).find((c) => c.date === date);
@@ -555,11 +573,21 @@ export async function buildServer() {
       const upcoming = await db.listPlannedSessions(A, iso(new Date()), iso(new Date(Date.now() + 14 * dayMs)));
       const adjustments = evaluateAdjustments(state, upcoming);
       const applied = await applyAdjustments(A, adjustments, 'readiness');
+      const after = watched
+        ? (await db.listPlannedSessions(A, today, iso(new Date(Date.now() + 14 * dayMs)))).find((s) => s.id === watched.id)
+        : undefined;
       return {
         readiness: state.readiness,
         checkIn: state.todayCheckIn ?? null,
         adjustments: applied,
         adjustmentSummary: applied > 0 ? describeAdjustments(adjustments) : null,
+        // Ce que les réponses ont changé, en une phrase.
+        effect: checkInEffect({
+          before,
+          after: state.readiness,
+          today,
+          session: watched ? { before: sessionState(watched), after: after ? sessionState(after) : null } : null,
+        }),
       };
     } catch (e) {
       return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
@@ -674,6 +702,35 @@ export async function buildServer() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Ce qu'une séance est, pour dire ce qu'un point du jour en a fait. */
+const sessionState = (s: PlannedSession): SessionState => ({
+  type: s.type, status: s.status, date: s.date, durationS: s.plannedDurationS, load: s.plannedLoad,
+});
+
+/**
+ * La fraîcheur du jour de la course, telle que l'écran du plan la dit.
+ *
+ * Le plan enregistré porte sa cible, ce que ses charges produisent et, quand il
+ * la manque, pourquoi. Ce que l'écart coûte se relit ici, avec le modèle du
+ * jour, contre la précision de la prédiction qui le chiffre : sous elle,
+ * l'écart n'est pas une information, et l'écran n'en dit rien — ni encart, ni
+ * deux chiffres dont on lirait la différence. `notice` est donc à la fois
+ * l'encart et le signal qu'il y a un écart à lire.
+ */
+async function raceDayView(plan: {
+  goalRaceId: string; targetRaceDayTsb: number; projectedRaceDayTsb?: number; raceDayTsbShortfall?: string;
+}) {
+  const target = plan.targetRaceDayTsb;
+  const projected = plan.projectedRaceDayTsb ?? null;
+  const shortfall = plan.raceDayTsbShortfall;
+  if (projected == null || !shortfall) return { target, projected, notice: null };
+  const race = await db.getRaceGoal(plan.goalRaceId);
+  // Sans course à chiffrer, l'écart se dit tel que le plan l'a écrit.
+  if (!race) return { target, projected, notice: firstParagraph(shortfall) };
+  const cost = raceDayGapCost(await currentModel(env.athleteId), race.course, target, projected);
+  return { target, projected, notice: raceDayNotice(shortfall, { target, projected, ...cost }) };
+}
 
 /**
  * Combien de séances chaque absence a retirées.

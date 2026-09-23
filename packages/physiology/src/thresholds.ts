@@ -2,8 +2,10 @@ import type { LabTest, ParameterProvenance, PhysiologyModel } from '@cairn/core'
 import {
   blendCriticalSpeed, csPriorFromThresholds, fitCriticalSpeed, maximalEffortSupport,
 } from './criticalSpeed.js';
+import { measureEasySpeeds, type EasyRun } from './easy.js';
 import { interpolateCurve, type MmpCurve } from './mmp.js';
 import { clamp, quantile } from './units.js';
+import { buildZones } from './zones.js';
 
 /**
  * Estimation et vieillissement du modèle physiologique.
@@ -57,6 +59,11 @@ export interface FieldEvidence {
   descentVamCurve?: Record<string, number>;
   /** Nombre de jours de données exploitables sur la fenêtre. */
   dataDays: number;
+  /**
+   * Sorties récentes avec leur FC : ce que l'athlète court quand il tient un
+   * plafond. Absentes, l'allure facile est la valeur par défaut.
+   */
+  easyRuns?: EasyRun[];
 }
 
 /** Demi-vie de la pertinence d'un test de laboratoire, en jours. */
@@ -144,6 +151,15 @@ export function estimateVt2Hr(
   return { value: Math.round(bounded), provenance: 'blended', n: band.length };
 }
 
+/** Durée d'effort à laquelle le terrain lit la VMA : 5 min 30, proche du temps limite à vVO2max. */
+export const VMA_EFFORT_S = 330;
+
+/**
+ * Relèvement d'une VMA lue sur le terrain : un effort de terrain n'est presque
+ * jamais un vrai test maximal.
+ */
+export const FIELD_VMA_UPLIFT = 1.02;
+
 /**
  * VMA courante. Deux estimateurs :
  *  · la meilleure vitesse graduée soutenue ~5 min (proche de vVO2max) ;
@@ -157,19 +173,57 @@ export function estimateVma(
   labVma: number,
   labW: number,
 ): { value: number; provenance: ParameterProvenance } {
-  const observed5 = interpolateCurve(curve, 330);
-  const modelled = cs > 0 ? cs + dPrime / 330 : 0;
+  const observed5 = interpolateCurve(curve, VMA_EFFORT_S);
+  const modelled = cs > 0 ? cs + dPrime / VMA_EFFORT_S : 0;
   const field = Math.max(observed5 ?? 0, modelled);
 
   if (field <= 0) return { value: labVma, provenance: 'lab' };
   // Un effort de terrain n'est presque jamais un vrai test maximal : on applique
   // un léger relèvement pour compenser le sous-maximalisme, puis on mélange.
-  const fieldVma = field * 1.02;
+  const fieldVma = field * FIELD_VMA_UPLIFT;
   const value = fieldVma * (1 - labW) + labVma * labW;
   return {
     value,
     provenance: labW > 0.6 ? 'lab' : labW > 0.2 ? 'blended' : 'field',
   };
+}
+
+/** Ce que la VMA d'un modèle doit au terrain et au laboratoire. */
+export interface VmaSources {
+  /** Poids du laboratoire, que son âge seul escompte. */
+  labWeight: number;
+  /** La VMA que dit le terrain, relèvement compris, m/s. `null` : le terrain ne dit rien. */
+  fieldMs: number | null;
+  /**
+   * D'où le terrain la tire : le meilleur effort de `VMA_EFFORT_S`, ou la
+   * vitesse critique et sa réserve extrapolées à cette durée.
+   */
+  basis: 'effort' | 'critical_speed' | null;
+}
+
+/**
+ * Ce que la VMA d'un modèle doit au terrain et au laboratoire, relu sur le
+ * modèle lui-même.
+ *
+ * C'est l'inverse exact d'`estimateVma` : le mélange s'y défait avec le poids
+ * que le laboratoire avait ce jour-là, et le terrain qui en sort se reconnaît
+ * — il vaut la vitesse critique extrapolée à 5 min 30, ou il vient d'un effort
+ * plus rapide qu'elle. Un modèle se relit donc tel qu'il a été construit, sans
+ * les courbes qui l'ont produit.
+ */
+export function vmaSources(model: PhysiologyModel, lab: LabTest): VmaSources {
+  const w = labWeight(lab.date, model.asOf);
+  // Un laboratoire qui pèse encore presque tout ne laisse rien à relire : le
+  // terrain qu'on en tirerait ne serait que l'arrondi, amplifié.
+  if (w > 0.95 || Math.abs(model.vmaMs - lab.vmaMs) < 1e-6) return { labWeight: w, fieldMs: null, basis: null };
+  const fieldMs = (model.vmaMs - lab.vmaMs * w) / (1 - w);
+  const modelled = model.criticalSpeedMs > 0
+    ? (model.criticalSpeedMs + model.dPrimeM / VMA_EFFORT_S) * FIELD_VMA_UPLIFT
+    : 0;
+  // Les paramètres enregistrés sont arrondis au millième de m/s : l'écart que
+  // l'arrondi laisse est de cet ordre, celui d'un effort distinct bien au-delà.
+  const basis = Math.abs(fieldMs - modelled) < 0.01 ? 'critical_speed' : 'effort';
+  return { labWeight: w, fieldMs, basis };
 }
 
 /** VO2max déduit de la VMA (relation de Léger : VO2max ≈ VMA[km/h] × 3,5). */
@@ -290,7 +344,7 @@ export function buildPhysiologyModel(
     (fit.quality === 'strong' ? 1 : fit.quality === 'usable' ? 0.7 : 0.35) * support.support;
   const confidence = clamp(0.35 + 0.35 * dataScore + 0.2 * fitScore + 0.1 * labW, 0.2, 0.97);
 
-  return {
+  const model: PhysiologyModel = {
     asOf,
     bodyMassKg: Math.round(bodyMassKg * 10) / 10,
     hrMax: hrMaxEst.value,
@@ -312,10 +366,24 @@ export function buildPhysiologyModel(
       lastProofAgeDays:
         support.lastProofAgeDays == null ? null : Math.round(support.lastProofAgeDays),
       weightLab: Math.round(blended.weightLab * 1000) / 1000,
+      proof: support.longestProof && {
+        durationS: support.longestProof.durationS,
+        speedMs: round3(support.longestProof.speedMs),
+        ageDays: Math.round(support.longestProof.ageDays),
+      },
     },
     confidence: Math.round(confidence * 100) / 100,
     provenance,
   };
+
+  // ── Allure facile ──────────────────────────────────────────────────────────
+  // Lue sous les plafonds des zones du modèle qu'on vient d'établir : c'est sur
+  // eux que les séances faciles se prescrivent et se jugent.
+  const easy = measureEasySpeeds(buildZones(model), field.easyRuns ?? []);
+  model.easySpeeds = easy.speeds;
+  provenance['easySpeeds.Z1'] = easy.provenance.Z1;
+  provenance['easySpeeds.Z2'] = easy.provenance.Z2;
+  return model;
 }
 
 /**

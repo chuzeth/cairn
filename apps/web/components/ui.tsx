@@ -1,17 +1,17 @@
 'use client';
 import type { ReactNode } from 'react';
-import type { TerrainStretch } from '@cairn/core';
-import { mapUrl } from '@cairn/core/terrain';
+import { groundText, itinerary } from '@cairn/core/terrain';
 import { frDate, frStamp, num } from '@/lib/api';
 import type {
   DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, Readiness, ReadinessComponent, ReadinessSource,
   SessionRow,
 } from '@/lib/api';
 import { useOutbox } from '@/lib/offline';
+import { Term } from '@/components/Term';
 
 export function Card({
   title, hint, action, children, style,
-}: { title?: string; hint?: string; action?: ReactNode; children: ReactNode; style?: React.CSSProperties }) {
+}: { title?: string; hint?: ReactNode; action?: ReactNode; children: ReactNode; style?: React.CSSProperties }) {
   return (
     <section className="card" style={style}>
       {(title || action) && (
@@ -31,7 +31,7 @@ export function Card({
 export function Metric({
   label, value, unit, note, tone, delta, direction,
 }: {
-  label: string; value: ReactNode; unit?: string; note?: string;
+  label: ReactNode; value: ReactNode; unit?: string; note?: ReactNode;
   tone?: 'good' | 'watch' | 'warn' | 'metabolic' | 'mechanical';
   delta?: string; direction?: 'up' | 'down' | 'flat';
 }) {
@@ -244,7 +244,7 @@ export const READINESS_SOURCE_LABEL: Record<ReadinessSource, string> = {
   declared: 'déclaré',
   partial: 'partiel',
   baseline: 'vs ta norme',
-  hrv: 'rMSSD',
+  hrv: 'variabilité',
   'resting-hr': 'FC repos',
   default: 'par défaut',
 };
@@ -252,16 +252,18 @@ export const READINESS_SOURCE_LABEL: Record<ReadinessSource, string> = {
 const BASIS_ROWS = [
   // Les mêmes mots qu'en bas de l'écran du matin : deux noms pour la même chose,
   // et c'est deux chiffres qu'on croit lire.
-  ['tsbMetabolic', 'Fraîcheur'],
-  ['tsbMechanical', 'Fraîcheur des jambes'],
+  ['tsbMetabolic', <Term key="t" k="fraicheur">Fraîcheur</Term>],
+  ['tsbMechanical', <><Term key="t" k="fraicheur">Fraîcheur</Term> des jambes</>],
   ['subjective', 'Ressenti déclaré'],
-  ['autonomic', 'Système autonome'],
+  // FC de repos ou variabilité cardiaque : ce que le cœur dit au réveil. Le
+  // nom savant de la chose n'apprenait rien à qui la lit.
+  ['autonomic', 'Cœur au repos'],
 ] as const;
 
 /** Ce que le score n'a pas les moyens de regarder, nommé pour être réclamé. */
 export const MISSING_LABEL: Record<'subjective' | 'autonomic', string> = {
   subjective: 'ton ressenti',
-  autonomic: 'ton système autonome',
+  autonomic: 'ton cœur au repos',
 };
 
 /** Les composantes qui ne pèsent rien, faute de source. */
@@ -408,18 +410,22 @@ export function SessionHistory({ history }: { history: NonNullable<SessionRow['h
 }
 
 /**
- * Où se court un bloc : « du haut au demi-tour, 405 m à 19 % », chaque bout
- * ouvert sur la carte par ses coordonnées — c'est là qu'on fait demi-tour, et
- * rien d'autre ne le dit aussi exactement.
+ * Où et comment se court un bloc, dit comme un itinéraire — « Descends 3 min
+ * jusqu'au n° 12, fais demi-tour, remonte en marchant. » —, puis le tronçon en
+ * chiffres et son sol, tel qu'OpenStreetMap le donne. Aucune position relative :
+ * les points s'ouvrent sur la carte de la séance (`SessionMap`), par leur adresse.
  */
-export function WhereLine({ where }: { where: TerrainStretch }) {
-  const link = (p: TerrainStretch['from']) => (
-    <a href={mapUrl(p)} className="m-inline" target="_blank" rel="noreferrer">{p.role}</a>
-  );
-  const pct = Math.round(where.grade * 100);
+export function WhereLine({ block }: { block: SessionRow['blocks'][number] }) {
+  const w = block.where;
+  if (!w) return null;
+  const pct = Math.round(w.grade * 100);
+  const ground = w.ground ? groundText(w.ground) : 'sol non relevé sur OpenStreetMap';
   return (
     <>
-      Du {link(where.from)} au {link(where.to)}, {num(where.lengthM)}{'\u00a0'}m à {pct}{'\u00a0'}%
+      <span className="m-where">{itinerary(block)}</span>{' '}
+      <span className="m-faint">
+        {num(w.lengthM)}{'\u00a0'}m à {pct}{'\u00a0'}% · {ground}
+      </span>
     </>
   );
 }

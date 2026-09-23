@@ -180,9 +180,8 @@ describe('Une séance de terrain se prescrit comme elle se court', () => {
     );
     // La montée, et ses deux bouts sur la carte.
     expect(s.blocks[0]!.where).toEqual({
-      climb:
-        "ta montée de 940 m à 13 % (121 m), à 510 m à l'ouest de ton départ habituel, courue lors de 4 sorties — " +
-        'la dernière le 17/08 (« Trail dans l’après-midi »)',
+      // Sans voie relevée, elle se dit par ses chiffres — jamais par sa position par rapport au domicile.
+      climb: 'ta montée de 940 m à 13 % (121 m), courue lors de 4 sorties — la dernière le 17/08 (« Trail dans l’après-midi »)',
       from: { role: 'pied', at: [45.764389, 4.82914] },
       to: { role: 'haut', at: [45.763824, 4.822308] },
       lengthM: 942,
@@ -287,5 +286,163 @@ describe('Ce que Pierre lit lui parle de sa course, pas du modèle', () => {
     const over = lib.taperGapText({ ...gap, target: 8, projected: 12, atFloor: false, atCeiling: true });
     expect(over.split('\n\n')[0]).toContain('plus reposé que l\'idéal');
     expect(over).not.toMatch(/secondes/);
+  });
+});
+
+describe('Un écart plus petit que l\'incertitude de ce qui le mesure ne s\'affiche pas', () => {
+  // Le plan du 22/09 au soir : +11,2 contre +12 visés, 8 secondes sur 3 h 34
+  // d'une prédiction qui a elle-même ±23 minutes d'incertitude.
+  const gap = {
+    raceDay: '18/10', target: 12, projected: 11.2, costS: 8, predictedS: 12_840, uncertaintyS: 1_380,
+    atFloor: true, atCeiling: false, taperScale: 0.6, weeks: 4, taperWeeks: 2, startCtl: 37, maxWeeklyHours: 8,
+  };
+  const shortfall = lib.taperGapText(gap);
+
+  it('ne montre pas l\'encart : huit secondes sous ±23 minutes ne sont pas une information', () => {
+    expect(lib.raceDayNotice(shortfall, gap)).toBeNull();
+    // Le coach, qui lit le texte en entier, sait pourquoi l'écran se tait.
+    expect(lib.firstParagraph(shortfall)).toContain(
+      '8 secondes sur 3 h 34, sous la précision de la prédiction (±23 minutes).',
+    );
+  });
+
+  it('montre ce que l\'écart change quand la prédiction sait le mesurer, et rien de son mécanisme', () => {
+    const wide = { ...gap, projected: 2, costS: 1_500 };
+    const notice = lib.raceDayNotice(lib.taperGapText(wide), wide)!;
+    expect(notice).toMatch(/^Tu seras un peu moins frais que l'idéal le 18\/10 : 25 minutes sur 3 h 34\./);
+    expect(notice).not.toMatch(/profondeur|plancher|semaines dont/);
+  });
+
+  it('dit toujours un départ trop frais : il ne se chiffre pas en temps, il se décide', () => {
+    const over = { ...gap, target: 8, projected: 12, costS: 0, uncertaintyS: 0, atFloor: false, atCeiling: true };
+    expect(lib.raceDayNotice(lib.taperGapText(over), over)).toContain('plus reposé que l\'idéal');
+  });
+
+  it('garde au journal le mécanisme — profondeur, plancher —, sans les secondes', () => {
+    const journal = lib.taperGapJournal(shortfall, gap);
+    expect(journal).toContain("L'affûtage est à 60 % de sa profondeur habituelle, son plancher");
+    expect(journal).not.toMatch(/secondes|\n/);
+  });
+});
+
+describe('Le vocabulaire : une table, une phrase par mot', () => {
+  const entries = Object.entries(lib.GLOSSARY);
+
+  it('définit exactement les mots qui restent à l\'écran', () => {
+    expect(entries.map(([, e]) => e.term)).toEqual([
+      'Points de charge', 'Charge mécanique', 'Forme de fond', 'Fatigue', 'Fraîcheur', 'Disponibilité',
+      'Vitesse critique', 'VMA', 'Seuil',
+    ]);
+  });
+
+  it('tient chaque définition en une phrase, sans le jargon qu\'elle remplace', () => {
+    for (const [key, e] of entries) {
+      expect(lib.isOneSentence(e.definition), key).toBe(true);
+      expect(e.definition, key).not.toMatch(/\b(TSB|CTL|ATL|ACWR|rTSS|TSS|EWMA|D′|D')\b/);
+      expect(e.definition, key).not.toMatch(/\d+\.\d/);
+    }
+  });
+
+  it('ancre toutes les charges sur une heure au seuil, et lit ses nombres dans le moteur', () => {
+    expect(lib.GLOSSARY.points.definition).toContain('une heure à ton seuil vaut 100 points');
+    expect(lib.GLOSSARY.seuil.definition).toContain('seuil 2');
+    expect(lib.GLOSSARY.forme.definition).toContain('les six dernières semaines');
+    expect(lib.GLOSSARY.fatigue.definition).toContain('la dernière semaine');
+    expect(lib.GLOSSARY.fraicheur.definition).toContain('les quatre dernières semaines et les cinq derniers jours');
+    expect(lib.GLOSSARY.disponibilite.definition).toContain('vert dès 68, rouge sous 45');
+    expect(lib.GLOSSARY.vitesseCritique.definition).toContain('de 2 à 20 minutes');
+  });
+});
+
+describe('Le point du jour dit à quoi il sert, puis ce qu\'il a changé', () => {
+  const today = '2026-09-23';
+  const session = { type: 'endurance', status: 'planned', date: today, durationS: 4_200, load: 62 };
+
+  it('dit avant l\'envoi ce que les réponses peuvent changer', () => {
+    expect(lib.CHECK_IN_PURPOSE).toContain('disponibilité du jour');
+    expect(lib.CHECK_IN_PURPOSE).toContain('sous 45');
+    expect(lib.isOneSentence(lib.CHECK_IN_PURPOSE)).toBe(true);
+  });
+
+  it('dit la disponibilité avant et après, et une séance inchangée', () => {
+    expect(lib.checkInEffect({
+      before: { score: 50, verdict: 'amber' }, after: { score: 58, verdict: 'amber' }, today,
+      session: { before: session, after: session },
+    })).toBe('Ta disponibilité passe de 50 à 58 ; ta séance du jour ne change pas.');
+  });
+
+  it('dit de combien la séance est allégée, et le verdict atteint', () => {
+    expect(lib.checkInEffect({
+      before: { score: 50, verdict: 'amber' }, after: { score: 38, verdict: 'red' }, today,
+      session: { before: session, after: { ...session, durationS: 1_800, load: 21 } },
+    })).toBe('Ta disponibilité passe de 50 à 38, au rouge : ta séance du jour est allégée, 30 min au lieu de 1 h 10.');
+  });
+
+  it('dit un lendemain de test devenu repos, une disponibilité immobile, un jour sans séance', () => {
+    expect(lib.checkInEffect({
+      before: { score: 47, verdict: 'amber' }, after: { score: 41, verdict: 'red' }, today,
+      session: { before: { ...session, type: 'recovery' }, after: { ...session, type: 'rest', durationS: 0, load: 0 } },
+    })).toBe('Ta disponibilité passe de 47 à 41, au rouge : ta séance du jour devient un repos complet.');
+    expect(lib.checkInEffect({
+      before: { score: 50, verdict: 'amber' }, after: { score: 50, verdict: 'amber' }, today,
+      session: { before: { ...session, date: '2026-09-24' }, after: { ...session, date: '2026-09-24' } },
+    })).toBe('Ta disponibilité reste à 50 ; ta séance de demain ne change pas.');
+    expect(lib.checkInEffect({
+      before: { score: 70, verdict: 'green' }, after: { score: 72, verdict: 'green' }, today, session: null,
+    })).toBe("Ta disponibilité passe de 70 à 72 ; aucune séance n'est prévue d'ici demain.");
+  });
+});
+
+describe('Un paramètre qui s\'écarte de son test de laboratoire dit pourquoi', () => {
+  const lab = PIERRE.labTests[0]!;
+  // Le modèle du 22/09/2026, tel qu'enregistré, avec la preuve que le modèle
+  // retient désormais : les vingt minutes à fond du 21/09.
+  const model = {
+    ...PIERRE_MODEL,
+    asOf: '2026-09-22', criticalSpeedMs: 3.897, dPrimeM: 201, vmaMs: 4.918, vo2maxRel: 57.2,
+    vt1: { hr: 155, speedMs: 3.002 }, vt2: { hr: 171, speedMs: 3.82 }, hrMax: 191, hrRest: 56,
+    criticalSpeedEvidence: {
+      support: 0.769, lastProofAgeDays: 1, weightLab: 0.116,
+      proof: { durationS: 1200, speedMs: 3.958, ageDays: 1 },
+    },
+    provenance: { ...PIERRE_MODEL.provenance, hrRest: 'default' as const },
+  };
+
+  it('dit la VMA du labo, ce que le terrain en dit, et le poids qui reste au labo', () => {
+    expect(lib.labGaps(model, lab).vma).toBe(
+      "Ton labo disait 20 km/h, mesuré par paliers d'une minute ; le terrain la place à 16,5 km/h, " +
+        "d'après ta vitesse critique. Le labo ne pèse plus que 34 % : il a 14 mois. " +
+        'Ta VO2max suit dans la même proportion.',
+    );
+  });
+
+  it('met le seuil 2 du labo face à l\'effort maximal qui le dément', () => {
+    expect(lib.labGaps(model, lab).vt2).toBe(
+      'Ton labo le plaçait à 16,8 km/h, au-dessus des 14,2 km/h que tu as tenus vingt minutes à fond le ' +
+        "21/09 : ton seuil 2 se place juste sous ta vitesse critique. Le labo n'y pèse plus que 12 %.",
+    );
+    // Un modèle construit avant qu'on retienne la preuve la nomme par sa date.
+    const older = { ...model, criticalSpeedEvidence: { ...model.criticalSpeedEvidence, proof: undefined } };
+    expect(lib.labGaps(older, lab).vt2).toContain(
+      "le terrain place ta vitesse critique à 14 km/h, d'après ton effort maximal du 21/09",
+    );
+  });
+
+  it('dit d\'où viennent le seuil 1 et les deux fréquences cardiaques', () => {
+    const gaps = lib.labGaps(model, lab);
+    expect(gaps.vt1).toContain('il suit ton seuil 2 dans le même rapport qu\'au labo');
+    expect(gaps.hrMax).toBe('Ton labo mesurait 187 bpm ; tes sorties montent plus haut, jusqu\'à 191 hors pics isolés.');
+    expect(gaps.hrRest).toContain('debout et sous masque');
+    expect(gaps.hrRest).toContain('56 est une estimation');
+  });
+
+  it('se tait sur un paramètre qui ne s\'écarte pas de son test, à la résolution du test près', () => {
+    const fresh = { ...model, asOf: lab.date, vmaMs: lab.vmaMs + 0.1, vt2: { ...lab.vt2 }, vt1: { ...lab.vt1 }, hrMax: lab.hrMax };
+    const gaps = lib.labGaps(fresh, lab);
+    // 0,36 km/h d'écart, sous le palier de 0,8 km/h du protocole.
+    expect(gaps.vma).toBeUndefined();
+    expect(gaps.vt2).toBeUndefined();
+    expect(gaps.vt1).toBeUndefined();
+    expect(gaps.hrMax).toBeUndefined();
   });
 });

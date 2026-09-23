@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  frDate, getStamped, markdown, num, todayIso,
+  frDate, getStamped, markdown, nbsp, num, todayIso,
   type CheckInResult, type Readiness, type StateResponse,
 } from '@/lib/api';
 import {
@@ -13,6 +13,7 @@ import { sendOrQueue, useOutbox } from '@/lib/offline';
 import { useUnsent } from '@/lib/version';
 import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, Stale, unweighed } from '@/components/ui';
 import { Gauge } from '@/components/charts';
+import { Glossed } from '@/components/Term';
 
 /**
  * Le point du jour.
@@ -34,6 +35,8 @@ export default function CheckInPage() {
 
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const [before, setBefore] = useState<Readiness | null>(null);
+  /** À quoi sert le point, tel que l'API le dit : c'est elle qui sait ce que les règles en font. */
+  const [purpose, setPurpose] = useState<string | null>(null);
   const [result, setResult] = useState<CheckInResult | null>(null);
   /** Le point est en file : il n'est pas enregistré, et l'écran ne dit pas qu'il l'est. */
   const [queued, setQueued] = useState(false);
@@ -55,6 +58,7 @@ export default function CheckInPage() {
       const { data: s, recordedAt: at } = await getStamped<StateResponse>('/api/state');
       setToday(s.today.date);
       setBefore(s.readiness);
+      setPurpose(s.checkInPurpose ?? null);
       setRecordedAt(at);
       // Un point déjà commencé se reprend, il ne se recommence pas.
       if (s.checkIn) {
@@ -147,12 +151,10 @@ export default function CheckInPage() {
           la dire d'aujourd'hui ferait répondre l'athlète contre un chiffre faux. */}
       {recordedAt && <Stale recordedAt={recordedAt} />}
 
-      {before && unweighed(before).length > 0 && (
+      {/* À quoi il sert, avant d'y répondre : une ligne, celle des règles. */}
+      {purpose && (
         <p className="checkin-lede">
-          Sans ton point du jour, ta disponibilité ne regarde pas{' '}
-          {unweighed(before).map((k) => MISSING_LABEL[k]).join(' ni ')} : faute de relevé,{' '}
-          {unweighed(before).length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une
-          moyenne. Tes réponses {unweighed(before).length > 1 ? 'leur rendent leur' : 'lui rend son'} poids.
+          <Glossed text={nbsp(purpose)} terms={['disponibilite']} />
         </p>
       )}
 
@@ -289,7 +291,6 @@ function Result({
 }: { result: CheckInResult; before: Readiness | null; onEdit: () => void }) {
   const r = result.readiness;
   const note = result.checkIn?.notes;
-  const delta = before ? r.score - before.score : 0;
   // Ce que le point vient de changer n'est pas seulement le score : c'est le
   // poids que le ressenti a le droit de prendre dedans.
   const weightBefore = before ? Math.round(before.weights.subjective * 100) : null;
@@ -302,7 +303,11 @@ function Result({
       <div className="page-head" style={{ marginBottom: 14 }}>
         <div>
           <h1 className="page-title">C&apos;est noté.</h1>
-          <p className="page-sub">Voici ce que ça change.</p>
+          {/* Ce que les réponses ont changé, en une phrase : la disponibilité
+              avant et après, et la séance — inchangée, ou allégée et de combien. */}
+          <p className="page-sub checkin-effect">
+            {result.effect ? <Glossed text={nbsp(result.effect)} terms={['disponibilite']} /> : 'Voici ce que ça change.'}
+          </p>
         </div>
       </div>
 
@@ -320,11 +325,6 @@ function Result({
               <span className="dot" />
               {verdictLabel}
             </Badge>
-            {delta !== 0 && (
-              <div className="delta" data-dir={delta > 0 ? 'up' : 'down'} style={{ fontSize: 19, marginTop: 6 }}>
-                {delta > 0 ? '+' : ''}{num(delta)} point{Math.abs(delta) > 1 ? 's' : ''}
-              </div>
-            )}
             <p className="small muted" style={{ margin: '8px 0 0' }}>{r.recommendation}</p>
           </div>
         </div>
