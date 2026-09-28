@@ -70,7 +70,7 @@ type DerivedBlockField = 'paceRange' | 'provenance' | 'where';
 const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockField>, true> = {
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
-  cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true,
+  cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true, terrain: true,
 };
 
 type Recovery = NonNullable<SessionBlock['recovery']>;
@@ -342,6 +342,15 @@ function parseBlock(
   }
   if (raw.notes !== undefined) {
     block.notes = text(raw.notes, `${at}.notes`, MAX_NOTES_CHARS);
+  }
+  // Le terrain dit à quelle allure un bloc facile se compte : celle que
+  // l'athlète tient sur le sentier n'est pas celle du plat.
+  if (raw.terrain !== undefined) {
+    if (kind !== undefined) throw new Error(`${at}.terrain : un bloc ${kind} ne se court pas.`);
+    if (raw.terrain !== 'flat' && raw.terrain !== 'trail') {
+      throw new Error(`${at}.terrain : « flat » ou « trail » attendu, reçu ${JSON.stringify(raw.terrain)}.`);
+    }
+    block.terrain = raw.terrain;
   }
   return block;
 }

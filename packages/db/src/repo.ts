@@ -1,7 +1,7 @@
 import type {
-  Activity, ActivityAnalysis, ActivityStreams, AthleteProfile, ChatMessage,
+  Activity, ActivityAnalysis, ActivityStreams, AthleteHome, AthleteProfile, ChatMessage,
   CoachInsight, DailyCheckIn, DeclaredAbsence, LabTest, PhysiologyModel, PlannedSession,
-  RaceGoal, TrainingPlan, TrainingWeek,
+  RaceGoal, SessionRoute, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import type { GarminSyncState, LedgerEntry } from '@cairn/garmin';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm';
@@ -736,6 +736,7 @@ function sessionRow(
     successCriteria: s.successCriteria ?? null,
     directives: s.directives ?? null,
     history: s.history?.length ? s.history : null,
+    lightenings: s.lightenings?.length ? s.lightenings : null,
   };
 }
 
@@ -822,6 +823,7 @@ function rowToSession(row: typeof t.plannedSessions.$inferSelect): PlannedSessio
     successCriteria: (row.successCriteria as PlannedSession['successCriteria']) ?? undefined,
     directives: (row.directives as PlannedSession['directives']) ?? undefined,
     history: (row.history as PlannedSession['history']) ?? undefined,
+    lightenings: (row.lightenings as PlannedSession['lightenings']) ?? undefined,
   };
 }
 
@@ -1176,4 +1178,74 @@ export async function putGeo(key: string, value: unknown, fetchedAt = new Date()
     .insert(t.geoCache)
     .values({ key, value, fetchedAt })
     .onConflictDoUpdate({ target: t.geoCache.key, set: { value, fetchedAt } });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domicile et itinéraires
+// ─────────────────────────────────────────────────────────────────────────────
+
+let routeReady: Promise<unknown> | null = null;
+
+/** Crée les tables du domicile et des itinéraires si elles manquent — le service ne passe pas `db:push`. */
+export function ensureRouteTables(): Promise<unknown> {
+  routeReady ??= (async () => {
+    for (const table of [t.athleteHomes, t.sessionRoutes]) {
+      for (const statement of createStatements(table)) await getDb().run(sql.raw(statement));
+    }
+  })().catch((e) => {
+    routeReady = null;
+    throw e;
+  });
+  return routeReady;
+}
+
+/** Le domicile de l'athlète, ou `null` tant qu'il ne l'a pas donné. */
+export async function getHome(athleteId: string): Promise<AthleteHome | null> {
+  await ensureRouteTables();
+  const [row] = await getDb().select().from(t.athleteHomes).where(eq(t.athleteHomes.athleteId, athleteId));
+  return row ? (row.value as AthleteHome) : null;
+}
+
+/** Enregistre le domicile ; `null` l'efface, et les itinéraires avec lui. */
+export async function setHome(athleteId: string, home: AthleteHome | null): Promise<void> {
+  await ensureRouteTables();
+  const db = getDb();
+  if (!home) {
+    await db.delete(t.athleteHomes).where(eq(t.athleteHomes.athleteId, athleteId));
+    const ids = (await db.select({ id: t.plannedSessions.id }).from(t.plannedSessions).where(eq(t.plannedSessions.athleteId, athleteId))).map((r) => r.id);
+    if (ids.length > 0) await db.delete(t.sessionRoutes).where(inArray(t.sessionRoutes.sessionId, ids));
+    return;
+  }
+  const updatedAt = new Date().toISOString();
+  await db
+    .insert(t.athleteHomes)
+    .values({ athleteId, value: home, updatedAt })
+    .onConflictDoUpdate({ target: t.athleteHomes.athleteId, set: { value: home, updatedAt } });
+}
+
+/** Les itinéraires enregistrés de ces séances, avec leur base. */
+export async function getSessionRoutes(
+  sessionIds: readonly string[],
+): Promise<Map<string, { basis: string; route: SessionRoute }>> {
+  await ensureRouteTables();
+  if (sessionIds.length === 0) return new Map();
+  const rows = await getDb().select().from(t.sessionRoutes).where(inArray(t.sessionRoutes.sessionId, [...sessionIds]));
+  return new Map(rows.map((r) => [r.sessionId, { basis: r.basis, route: r.value as SessionRoute }]));
+}
+
+export async function putSessionRoute(sessionId: string, route: SessionRoute): Promise<void> {
+  await ensureRouteTables();
+  await getDb()
+    .insert(t.sessionRoutes)
+    .values({ sessionId, basis: route.basis, value: route, computedAt: route.computedAt })
+    .onConflictDoUpdate({
+      target: t.sessionRoutes.sessionId,
+      set: { basis: route.basis, value: route, computedAt: route.computedAt },
+    });
+}
+
+/** Oublie les itinéraires des séances qui n'existent plus — une reconstruction en recrée d'autres. */
+export async function purgeSessionRoutes(): Promise<void> {
+  await ensureRouteTables();
+  await getDb().run(sql`delete from session_routes where session_id not in (select id from planned_sessions)`);
 }

@@ -1,13 +1,16 @@
 import type { PlannedSession, SessionBlock } from '@cairn/core';
-import { climbsBack, sessionDuration, stretchSpan } from '@cairn/core';
+import { climbsBack, sessionDuration, stretchSpan, viaStreets } from '@cairn/core';
 import * as db from '@cairn/db';
 import { easyClimbRate } from '@cairn/physiology';
-import { withAddresses, withGround } from './geo.js';
+import { altitudeIndex } from './altitude.js';
+import { withAddresses, withGround, withLoopGround } from './geo.js';
+import { OSM_SERVICES, buildRoute, routeBasis, type RouteServices } from './itinerary.js';
 import { addDays } from './periodization.js';
 import { onTerrain, withHistory } from './presentation.js';
 import { currentModel } from './state.js';
 import {
-  detectClimbs, groupRecurring, homeGrounds, type ClimbOccurrence, type OutingStart, type TerrainHint,
+  detectClimbs, findLoops, groupRecurring, homeGrounds, lightTrace, type ClimbOccurrence, type LightTrace,
+  type OutingStart, type TerrainHint,
 } from './terrain.js';
 
 /**
@@ -35,12 +38,14 @@ export async function readTerrain(athleteId: string, from: string, to: string) {
   const activities = await db.listActivities(athleteId, { from, to, limit: 500 });
   const climbs: ClimbOccurrence[] = [];
   const outings: OutingStart[] = [];
+  const traces: LightTrace[] = [];
   let traced = 0;
   for (const a of activities) {
     const stored = await db.getStreams(a.id);
     if (!stored) continue;
     traced++;
     const date = a.startDateLocal.slice(0, 10);
+    traces.push(lightTrace(a.id, date, stored.streams));
     const start = stored.streams.latlng?.find((p) => p != null);
     if (start) {
       outings.push({
@@ -54,19 +59,33 @@ export async function readTerrain(athleteId: string, from: string, to: string) {
       climbs.push({ ...c, activityId: a.id, activityName: a.name, date });
     }
   }
-  return { activities, traced, climbs, outings };
+  return { activities, traced, climbs, outings, traces };
 }
 
 /**
  * Ce que le planificateur sait du terrain : les montées récurrentes de l'année,
  * le sol de celles qu'une séance peut désigner — lu sur OpenStreetMap, gardé en
- * base —, et le départ habituel. C'est par lui qu'une séance de terrain nomme sa
- * montée, et qu'une séance rapide évite ses marches.
+ * base —, les boucles qu'elles forment, et le départ habituel. C'est par lui
+ * qu'une séance de terrain nomme sa montée, qu'une séance rapide évite ses
+ * marches, et qu'une rando-course monte par l'une et redescend par l'autre.
  */
 export async function terrainHint(athleteId: string, today = iso(new Date())): Promise<TerrainHint> {
-  const { climbs, outings } = await readTerrain(athleteId, addDays(today, -365), today);
+  return (await terrainAndTraces(athleteId, today)).terrain;
+}
+
+/** Le terrain, et les traces allégées d'où il vient — ce dont l'itinéraire lit le relief. */
+export async function terrainAndTraces(
+  athleteId: string,
+  today = iso(new Date()),
+): Promise<{ terrain: TerrainHint; traces: LightTrace[] }> {
+  const { climbs, outings, traces } = await readTerrain(athleteId, addDays(today, -365), today);
   const home = homeGrounds(outings)[0]?.center;
-  return { climbs: await withGround(groupRecurring(climbs), home), ...(home ? { home } : {}) };
+  const grounded = await withGround(groupRecurring(climbs), home);
+  const loops = await withLoopGround(findLoops(grounded, traces, home));
+  return {
+    terrain: { climbs: grounded, ...(loops.length > 0 ? { loops } : {}), ...(home ? { home } : {}) },
+    traces,
+  };
 }
 
 /** Séances de descente faites jusqu'à `today` : sans aucune, la prochaine est une première. */
@@ -91,7 +110,7 @@ const readable = (s: PlannedSession) =>
 const repOf = (s: PlannedSession): SessionBlock | undefined =>
   s.blocks.find((b) => (b.elevationLossM ?? 0) > 0 && climbsBack(b.recovery));
 
-/** Ce que la descente dit des montées écartées pour leurs marches (`skippedNote`), s'il y en a. */
+/** Ce que la séance dit des montées écartées pour leurs marches (`skippedNote`), s'il y en a. */
 const skippedOf = (b?: SessionBlock): string =>
   b?.notes?.match(/(?:Pas sur |Aucune de tes montées |Le sol de tes montées )[^:]*:[^.]*\./)?.[0] ?? '';
 
@@ -139,6 +158,27 @@ function describeLaying(before: PlannedSession, after: PlannedSession, model: Pa
 }
 
 /**
+ * Ce que la pose a changé à une rando-course, en clair : la montée où elle se
+ * court, celle qu'elle évite pour ses marches, et ce qu'elle pèse.
+ */
+function describeTrail(before: PlannedSession, after: PlannedSession): string {
+  const was = before.blocks.find((b) => b.where)?.where;
+  const trail = after.blocks.find((b) => b.where) ?? after.blocks[0];
+  const now = trail?.where;
+  const parts: string[] = [];
+  if (now?.back && now.back.climb !== was?.back?.climb) {
+    parts.push(`Posée en boucle : tu montes par ${now.climb}, tu redescends par ${viaStreets(now.back)}.`);
+  } else if (now && now.climb !== was?.climb) parts.push(`Posée sur ${now.climb}.`);
+  if (was?.back && now && !now.back) parts.push(`Plus en boucle : tu redescends par ${now.climb}.`);
+  if (was && !now) parts.push(`Plus posée sur ${was.climb}.`);
+  if (was?.climb !== now?.climb && skippedOf(trail)) parts.push(skippedOf(trail));
+  if (before.plannedLoad !== after.plannedLoad) {
+    parts.push(`Charge de ${before.plannedLoad} à ${after.plannedLoad} points, remesurée avec le modèle du jour.`);
+  }
+  return parts.join(' ');
+}
+
+/**
  * Pose les séances de terrain à venir sur les montées de l'athlète, et écrit ce
  * qui a changé. Rend les changements, tels que le journal du plan les garde.
  */
@@ -165,7 +205,12 @@ export async function layPlanOnTerrain(
     const before = upcoming[i]!;
     const after = laid[i]!;
     if (after === before || readable(after) === readable(before)) continue;
-    const text = before.type === 'downhill' ? describeLaying(before, after, model) : '';
+    const text =
+      before.type === 'downhill'
+        ? describeLaying(before, after, model)
+        : before.type === 'long_trail'
+          ? describeTrail(before, after)
+          : '';
     const history = text ? withHistory(after.history, { at, by: 'planner', text }) : after.history;
     await db.updateSession(before.id, {
       title: after.title,
@@ -197,4 +242,43 @@ export async function layPlanOnTerrain(
     });
   }
   return changes;
+}
+
+/** Horizon des itinéraires, jours : une séance plus lointaine sera reposée d'ici là, et son itinéraire refait. */
+const ROUTE_HORIZON_DAYS = 14;
+
+/**
+ * Les itinéraires de porte à porte des séances de terrain à venir.
+ *
+ * Seuls se refont ceux dont la base a changé — domicile, blocs, allures — :
+ * un itinéraire à jour ne repose aucune question, et chaque réponse d'OSRM ou
+ * de Nominatim est déjà en base. Sans domicile, rien : Cairn ne devine pas où
+ * l'athlète habite. Un moteur d'itinéraire injoignable laisse l'ancien
+ * itinéraire en base, que sa base périmée tient hors de l'écran.
+ */
+export async function routeUpcoming(
+  athleteId: string,
+  today = iso(new Date()),
+  services: RouteServices = OSM_SERVICES,
+): Promise<{ date: string; built: boolean }[]> {
+  const home = await db.getHome(athleteId);
+  if (!home) return [];
+  await db.purgeSessionRoutes();
+  const sessions = (await db.listPlannedSessions(athleteId, today, addDays(today, ROUTE_HORIZON_DAYS))).filter(
+    (s) => s.status === 'planned' && s.blocks.some((b) => b.where),
+  );
+  if (sessions.length === 0) return [];
+  const model = await currentModel(athleteId);
+  const stored = await db.getSessionRoutes(sessions.map((s) => s.id));
+  const stale = sessions.filter((s) => stored.get(s.id)?.basis !== routeBasis(s, home, model));
+  if (stale.length === 0) return [];
+  const { terrain, traces } = await terrainAndTraces(athleteId, today);
+  const altitude = altitudeIndex(traces);
+  const out: { date: string; built: boolean }[] = [];
+  for (const s of stale) {
+    const route = await buildRoute(s, { home, model, altitude, terrain, traces, services });
+    if (route) await db.putSessionRoute(s.id, route);
+    out.push({ date: s.date, built: route != null });
+  }
+  return out;
 }

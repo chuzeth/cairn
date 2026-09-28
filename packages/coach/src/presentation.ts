@@ -622,13 +622,16 @@ function trailForm(
 }
 
 /**
- * Re-présente une séance décidée : contenu intact, présentation du jour.
+ * Re-présente une séance décidée : contenu intact, présentation et mesure du
+ * jour.
  *
- * Le contenu, c'est la date, le type, la durée, le dénivelé et la charge, tels
- * qu'ils ont été décidés : ils sont repris à l'identique, et les blocs qu'on
- * présente les portent — même durée, même dénivelé. La présentation, c'est le
- * titre, l'intention, la phrase de « pourquoi » et les consignes : elles sont
- * celles que les règles écrivent aujourd'hui.
+ * Le contenu, c'est la date, le type, la durée et le dénivelé, tels qu'ils ont
+ * été décidés : ils sont repris à l'identique, et les blocs qu'on présente les
+ * portent — même durée, même dénivelé. La présentation, c'est le titre,
+ * l'intention, la phrase de « pourquoi » et les consignes : elles sont celles
+ * que les règles écrivent aujourd'hui. La charge, c'est une mesure : elle se
+ * refait sur ces blocs avec le modèle du jour (`remeasured`). Si elle franchit
+ * un seuil, ce sont les règles de charge qui en décident, pas la présentation.
  *
  * Ce qu'elle remplace n'est pas effacé. Le raisonnement de la décision et les
  * consignes qui l'accompagnaient rejoignent l'historique, une fois, datés du
@@ -667,9 +670,10 @@ export function presentDecided(s: PlannedSession, ctx: PresentationContext): Pla
   // Le résumé de la décision est un texte enregistré comme un autre : il se
   // relit n'importe quel jour.
   const decision = { ...s.decision, summary: anchorRelativeDates(s.decision.summary, at) };
-  const presented: PlannedSession = {
-    ...s, title, intent, blocks, decision, ...(history?.length ? { history } : {}),
-  };
+  const presented = lib.remeasured<PlannedSession>(
+    { ...s, title, intent, blocks, decision, ...(history?.length ? { history } : {}) },
+    ctx.model,
+  );
   return { ...presented, rationale: decidedWhy(presented, ctx.model) };
 }
 

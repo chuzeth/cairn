@@ -2,8 +2,8 @@ import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
-  generateActivityInsight, layPlanOnTerrain, loadAthleteState, rebuildPhysiologyModel, rematchRecent,
-  type AthleteState,
+  generateActivityInsight, layPlanOnTerrain, loadAthleteState, rebuildPhysiologyModel, recountDecisions,
+  rematchRecent, routeUpcoming, type AthleteState,
 } from '@cairn/coach';
 import { StravaClient, StravaRateLimitError, ingestStreams, isRunLike, mapActivity } from '@cairn/strava';
 import { env } from './env.js';
@@ -137,6 +137,9 @@ export async function ingestActivity(
   const analysis = streams ? await analyzeAndStore(athleteId, activity.id, model) : null;
 
   // ── Ajustement automatique du plan ────────────────────────────────────────
+  // Les séances décidées se comptent avec le modèle que cette sortie vient de
+  // déplacer, avant que les règles ne les jugent.
+  await recountDecisions(athleteId, new Date().toISOString().slice(0, 10));
   const state = await loadAthleteState(athleteId);
   const { adjustmentCount, adjustmentSummary } = await adjustPlan(athleteId, state);
 
@@ -266,6 +269,9 @@ export async function backfill(
     // comme après une activité importée.
     model ??= await db.getLatestModel(athleteId);
     if (model) {
+      // Le recompte, à chaque relève : une séance décidée garde son contenu, et
+      // se compte avec le modèle du jour avant que les règles ne la jugent.
+      await recountDecisions(athleteId, new Date().toISOString().slice(0, 10));
       const matched = await rematchRecent(athleteId, model, new Date().toISOString().slice(0, 10));
       if (matched.length > 0) await adjustPlan(athleteId, await loadAthleteState(athleteId));
     }
@@ -275,6 +281,13 @@ export async function backfill(
     // la situe — ou avant qu'une remontée ne se chronomètre à la marche — le
     // devient ici. Une séance déjà posée ne change plus.
     await layPlanOnTerrain(athleteId, new Date().toISOString().slice(0, 10));
+
+    // Puis leurs itinéraires de porte à porte, là où leur base a changé. Un
+    // moteur d'itinéraire injoignable ne coûte pas la relève : l'écran dit
+    // seulement qu'il n'y a pas d'itinéraire à jour.
+    await routeUpcoming(athleteId, new Date().toISOString().slice(0, 10)).catch((e) =>
+      console.warn(`Itinéraires non refaits : ${e instanceof Error ? e.message : String(e)}`),
+    );
 
     progress.message = progress.rateLimited
       ? `Quota Strava presque atteint : ${progress.ingested} activité(s) importée(s). Relance l'import dans un quart d'heure pour continuer.`

@@ -8,9 +8,10 @@ import {
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  ACWR_SPIKE, EASY_SPEED_WINDOW_DAYS, ECCENTRIC_MOVEMENTS, VERTICAL_CURVE_DURATIONS, describeZone, easySpeedOf,
-  formatClock, formatDuration, formatPace, goalProbability, hrProvenanceOf, interpretAcwr, interpretDurability,
-  isEasyZone, msToKmh, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad, summarizeForCoach,
+  ACWR_SPIKE, EASY_SPEED_WINDOW_DAYS, EASY_TERRAINS, ECCENTRIC_MOVEMENTS, MOUNTAIN_M_PER_KM, VERTICAL_CURVE_DURATIONS,
+  describeZone, easySpeedOf, formatClock, formatDuration, formatPace, goalProbability, hrProvenanceOf, interpretAcwr,
+  interpretDurability, isEasyZone, msToKmh, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
+  summarizeForCoach,
   targetRaceDayTsb, verticalCapacity,
   type LoadRatioExceedance,
 } from '@cairn/physiology';
@@ -181,6 +182,12 @@ const BLOCK_SCHEMA = {
         'à la fois ne sont acceptés que s\'ils concordent.',
     ),
     cadenceTargetSpm: num('Cadence cible, en pas par minute.'),
+    terrain: str(
+      "Terrain du bloc : « trail » pour un sentier où l'on marche les pentes — la rando-course —, « flat » " +
+        "(défaut) pour le reste. Sous un plafond de FC, c'est lui qui dit à quelle allure le bloc se compte : " +
+        "celle que l'athlète tient sur ce terrain, mesurée sur ses sorties.",
+      { enum: ['flat', 'trail'] },
+    ),
     effort: str(
       "Consigne d'un bloc que ni la FC ni l'allure ne pilotent — une descente : un effort et une technique, ex. " +
         "« Vite mais maîtrisé : foulée courte et rapide, pieds sous le bassin, regard trois ou quatre mètres " +
@@ -541,7 +548,7 @@ export async function executeTool(
             aisance_descente: model.descentSkill ?? 1,
             // Ce que l'athlète court sous chaque plafond facile : la charge prévue
             // de tout ce qui s'y court en dépend.
-            allure_sous_plafond: (['Z1', 'Z2'] as const).map((zone) => easyPaceRow(model, zone)),
+            allure_sous_plafond: (['Z1', 'Z2'] as const).flatMap((zone) => easyPaceRow(model, zone)),
             confiance: model.confidence,
             provenance: model.provenance,
           },
@@ -1514,27 +1521,34 @@ export async function executeTool(
       };
       // Encore à venir, elle se présente comme toute séance ; un statut, lui,
       // se dit par la première phrase de ce qui l'a fixé.
-      const presented =
-        decided.status === 'planned' && decided.date >= localDate(at)
-          ? (
-              await withAddresses([
-                presentDecided(decided, {
-                  model,
-                  terrain: decided.type === 'long_trail' ? await terrainHint(athleteId) : undefined,
-                }),
-              ])
-            )[0]!
-          : {
-              ...decided,
-              rationale: firstSentence(said),
-              history: withHistory(target.history, { at, by: origin, text: reasoning }),
-            };
+      const upcoming = decided.status === 'planned' && decided.date >= localDate(at);
+      const presented = upcoming
+        ? (
+            await withAddresses([
+              presentDecided(decided, {
+                model,
+                terrain: decided.type === 'long_trail' ? await terrainHint(athleteId) : undefined,
+              }),
+            ])
+          )[0]!
+        : {
+            ...decided,
+            rationale: firstSentence(said),
+            history: withHistory(target.history, { at, by: origin, text: reasoning }),
+          };
       patch.title = presented.title;
       patch.intent = presented.intent;
       patch.blocks = presented.blocks;
       patch.rationale = presented.rationale;
       patch.history = presented.history ?? null;
       patch.decision = decision;
+      // Ce qu'elle pèse, c'est ce que pèsent les blocs enregistrés : une
+      // rando-course présentée court sur le sentier, et s'y compte.
+      if (upcoming) {
+        patch.plannedLoad = presented.plannedLoad;
+        patch.plannedMechanicalLoad = presented.plannedMechanicalLoad;
+        if (presented.plannedDistanceM != null) patch.plannedDistanceM = presented.plannedDistanceM;
+      }
 
       // Les ratios de charge que le plan produira, cette modification comprise,
       // lus avant qu'elle ne s'enregistre : un pic se voit quand la séance
@@ -1849,22 +1863,29 @@ function ratioContent(exceedances: readonly LoadRatioExceedance[]) {
   };
 }
 
-/** L'allure facile d'une zone, dite avec ce sur quoi elle repose. */
+const TERRAIN_FR = { flat: 'sur le plat', trail: 'sur sentier de montagne' } as const;
+
+/** L'allure facile d'une zone, terrain par terrain, dite avec ce sur quoi elle repose. */
 function easyPaceRow(model: PhysiologyModel, zone: 'Z1' | 'Z2') {
-  const e = easySpeedOf(model, zone);
-  return {
-    zone,
-    plafond_fc: e.hrCeiling,
-    vitesse_graduee_kmh: round2(msToKmh(e.speedMs)),
-    vitesse_au_sol_kmh: round2(msToKmh(e.groundSpeedMs)),
-    sorties: e.runs,
-    provenance: e.provenance,
-    lecture:
-      e.provenance === 'field'
-        ? `Moyenne de ${e.runs} sorties des ${EASY_SPEED_WINDOW_DAYS} derniers jours qui ont tenu ${e.hrCeiling} bpm, ` +
-          'pondérée par leur durée.'
-        : `Pas assez de sorties sous ${e.hrCeiling} bpm : valeur par défaut, la vitesse du plafond de la zone.`,
-  };
+  return EASY_TERRAINS.map((terrain) => {
+    const e = easySpeedOf(model, zone, terrain);
+    return {
+      zone,
+      terrain,
+      plafond_fc: e.hrCeiling,
+      vitesse_graduee_kmh: round2(msToKmh(e.speedMs)),
+      vitesse_au_sol_kmh: round2(msToKmh(e.groundSpeedMs)),
+      charge_par_heure: Math.round(steadyRunLoad(3600, e.speedMs, model.vt2.speedMs)),
+      sorties: e.runs,
+      provenance: e.provenance,
+      lecture:
+        e.provenance === 'field'
+          ? `Moyenne de ${e.runs} sorties ${TERRAIN_FR[terrain]} des ${EASY_SPEED_WINDOW_DAYS} derniers jours qui ont ` +
+            `tenu ${e.hrCeiling} bpm, pondérée par leur durée. Sentier : ${MOUNTAIN_M_PER_KM} m D+/km et plus.`
+          : `Pas assez de sorties ${TERRAIN_FR[terrain]} sous ${e.hrCeiling} bpm : valeur par défaut, la vitesse du ` +
+            'plafond de la zone.',
+    };
+  });
 }
 
 /** Recalcule le modèle physiologique — exposé séparément (opération lourde). */

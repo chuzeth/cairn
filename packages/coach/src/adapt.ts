@@ -3,7 +3,7 @@ import type {
   SessionDecision,
 } from '@cairn/core';
 import * as db from '@cairn/db';
-import { decimal, directivesFor, sessionDuration, writtenOn } from '@cairn/core';
+import { decimal, directivesFor, localDate, sessionDuration, writtenOn } from '@cairn/core';
 import { ACWR_SPIKE } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
@@ -183,6 +183,22 @@ const PROTECTIVE_TYPES = new Set(['rest', 'recovery']);
 /** Une séance que les règles peuvent réécrire : personne d'autre ne l'a décidée. */
 const rulesMay = (s: PlannedSession) => !s.decision || s.decision.by === 'rules';
 const live = (s: PlannedSession) => s.status !== 'cancelled' && s.status !== 'withdrawn';
+
+/** Ce qui allège une séance : ce qu'une même règle ne fait qu'une fois. */
+const LIGHTENING: ReadonlySet<Adjustment['action']> = new Set(['scale', 'drop_strength']);
+
+/**
+ * La règle a-t-elle déjà allégé cette séance ?
+ *
+ * Les règles se réévaluent à chaque sortie, à chaque point du jour : tant que le
+ * signal durait, elles réallégeaient la même séance — 0,75 × 0,75 sur un pic de
+ * charge. Une descente ramenée à 45 % pour une disponibilité rouge restait
+ * au-dessus des 40 points de la règle, ses remontées à pied ne raccourcissant
+ * pas, et un second point du jour au rouge l'allégeait encore. Le signal a été
+ * pris en compte une fois ; la séance le porte.
+ */
+const lightenedBy = (s: PlannedSession | undefined, rule: string): boolean =>
+  s?.lightenings?.some((l) => l.rule === rule) ?? false;
 
 /**
  * Ce que la règle pose au lendemain d'une séance clef réalisée, et pourquoi.
@@ -368,10 +384,14 @@ export function evaluateAdjustments(
   const today = state.today.date;
   const daysUntil = (date: string) => Math.round((midnight(date) - midnight(today)) / dayMs);
   const seen = new Set<string>();
+  const byId = new Map(upcoming.map((s) => [s.id, s]));
 
   const push = (adj: Adjustment) => {
     // Une seule règle par séance : la première déclenchée, la plus protectrice.
     if (seen.has(adj.sessionId)) return;
+    // Et une règle n'allège qu'une fois une même séance : ce qu'elle a déjà
+    // allégé ne l'est pas deux fois, et laisse passer la règle suivante.
+    if (LIGHTENING.has(adj.action) && lightenedBy(byId.get(adj.sessionId), adj.rule)) return;
     seen.add(adj.sessionId);
     out.push(adj);
   };
@@ -667,6 +687,18 @@ export async function applyAdjustments(
     rationale: firstSentence(text),
     history: withHistory(session.history, { at, by: origin, text }),
   });
+  // Ce que pèsent les blocs qu'on enregistre : ceux que la présentation écrit,
+  // mesurés avec le modèle du jour.
+  const measuredOf = (p: PlannedSession) => ({
+    plannedLoad: p.plannedLoad,
+    plannedMechanicalLoad: p.plannedMechanicalLoad,
+    ...(p.plannedDistanceM != null ? { plannedDistanceM: p.plannedDistanceM } : {}),
+  });
+  // Un allègement garde la trace de sa règle et de son jour : c'est ce qui
+  // empêche la même règle de l'alléger une seconde fois (`lightenedBy`).
+  const traced = (session: PlannedSession, rule: string) => ({
+    lightenings: [...(session.lightenings ?? []), { rule, on: localDate(at) }],
+  });
 
   const plan = await db.getActivePlan(athleteId);
   // Une séance qui change de semaine prend la phase de celle qui l'accueille.
@@ -738,12 +770,14 @@ export async function applyAdjustments(
         );
         await db.updateSession(adj.sessionId, {
           ...content,
+          ...measuredOf(presented),
           title: presented.title,
           intent: presented.intent,
           blocks: presented.blocks,
           rationale: presented.rationale,
           history: presented.history ?? null,
           decision: presented.decision,
+          ...traced(session, adj.rule),
         } as never);
         break;
       }
@@ -770,12 +804,14 @@ export async function applyAdjustments(
         );
         await db.updateSession(adj.sessionId, {
           ...content,
+          ...measuredOf(presented),
           title: presented.title,
           intent: presented.intent,
           blocks: presented.blocks,
           rationale: presented.rationale,
           history: presented.history ?? null,
           decision: presented.decision,
+          ...traced(session, adj.rule),
         } as never);
         break;
       }
@@ -804,6 +840,7 @@ export async function applyAdjustments(
         await db.updateSession(adj.sessionId, {
           ...content,
           plannedDistanceM: content.plannedDistanceM ?? null,
+          ...measuredOf(presented),
           directives: content.directives ?? null,
           successCriteria: content.successCriteria ?? null,
           date,

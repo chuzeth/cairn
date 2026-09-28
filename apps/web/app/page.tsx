@@ -2,17 +2,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, get, getStamped, num, post, signed, shortDate,
+  duration, frDate, get, getStamped, nbsp, num, post, shortDate,
   type ActivityRow, type InsightRow, type PlanResponse, type PmcResponse, type StateResponse,
 } from '@/lib/api';
+import { LOAD_WORDS, loadFigures, plainWord, type LoadFigure } from '@/lib/figures';
 import { useOutbox } from '@/lib/offline';
-import { useIsPhone } from '@/lib/viewport';
+import { useIsDesk } from '@/lib/viewport';
 import {
-  AbsenceNotice, Badge, Card, ErrorBox, Loading, Metric, MISSING_LABEL,
+  AbsenceNotice, Badge, Card, ErrorBox, Loading, LoadName, Metric, MISSING_LABEL,
   ReadinessBasis, Stale, ThreeZoneBar, unweighed, Waiting,
 } from '@/components/ui';
 import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
 import { Morning } from '@/components/Morning';
+import { ActivityCard } from '@/components/ActivityCard';
+import { Term } from '@/components/Term';
 
 interface Health {
   stravaConnected: boolean;
@@ -21,8 +24,15 @@ interface Health {
   sync: { status?: string; message?: string } | null;
 }
 
+/** Ce qu'une analyse dit d'abord : ses deux premières phrases, jamais un mot coupé au 190ᵉ caractère. */
+function opening(body: string): string {
+  const plain = body.replace(/[*_#]/g, '').replace(/\s+/g, ' ').trim();
+  const sentences = plain.match(/[^.!?]+[.!?]+(?=\s|$)/g) ?? [plain];
+  return sentences.slice(0, 2).join(' ').trim();
+}
+
 export default function Dashboard() {
-  const phone = useIsPhone();
+  const desk = useIsDesk();
   const [state, setState] = useState<StateResponse | null>(null);
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [pmc, setPmc] = useState<PmcResponse | null>(null);
@@ -69,12 +79,12 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (phone === false && !pmc) void loadDeskOnly(); }, [phone, pmc, loadDeskOnly]);
+  useEffect(() => { if (desk === true && !pmc) void loadDeskOnly(); }, [desk, pmc, loadDeskOnly]);
 
   const reload = useCallback(async () => {
     await load();
-    if (phone === false) await loadDeskOnly();
-  }, [load, loadDeskOnly, phone]);
+    if (desk === true) await loadDeskOnly();
+  }, [load, loadDeskOnly, desk]);
 
   // Une réponse partie en différé a été calculée par le serveur, pas ici :
   // l'écran ne connaît le score qu'elle produit qu'en relisant l'état.
@@ -113,11 +123,12 @@ export default function Dashboard() {
   };
 
   if (error && !state) return <ErrorBox error={error} onRetry={load} />;
-  if (phone === null || !state || !plan) return <Loading label="Chargement de ton état de forme…" />;
+  if (desk === null || !state || !plan) return <Loading label="Chargement de ton état de forme…" />;
 
-  // Au téléphone, le premier écran répond à la question du matin ; le tableau
-  // de bord reste ce qu'il est, une console d'analyse, sur l'écran qui va avec.
-  if (phone) {
+  // Sous l'ordinateur — téléphone, tablette —, le premier écran répond à la
+  // question du matin ; le tableau de bord reste ce qu'il est, une console
+  // d'analyse, sur l'écran qui a la place de la montrer.
+  if (!desk) {
     return (
       <Morning
         state={state}
@@ -144,11 +155,21 @@ export default function Dashboard() {
     .filter((s) => s.date >= state.today.date && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled')
     .slice(0, 4);
   const nextRace = state.upcomingRaces[0];
+  // Les semaines que le graphique dessine vraiment : l'API ne rend que celles
+  // des quarante-cinq derniers jours qui ont une séance, et c'est leur nombre
+  // que le titre annonce — « dix », « huit » ne se vérifiaient pas.
+  const weeks = state.weeklyTotals.slice(-10);
   // Les absences encore vivantes : en cours ou à venir.
   const absences = state.absences.filter((a) => a.endDate >= today.date);
 
-  const tsbTone = today.tsb > 5 ? 'good' : today.tsb > -15 ? undefined : today.tsb > -28 ? 'watch' : 'warn';
-  const mechTone = today.mechanicalTsb > 0 ? 'good' : today.mechanicalTsb > -18 ? undefined : 'warn';
+  // Les quatre chiffres du jour, dans les mots de l'écran du matin : un seul
+  // vocabulaire pour les mêmes nombres, et aucun sigle.
+  const tone: Record<LoadFigure['key'], 'good' | 'watch' | 'warn' | 'metabolic' | undefined> = {
+    ctl: 'metabolic',
+    tsb: today.tsb > 5 ? 'good' : today.tsb > -15 ? undefined : today.tsb > -28 ? 'watch' : 'warn',
+    mechanicalTsb: today.mechanicalTsb > 0 ? 'good' : today.mechanicalTsb > -18 ? undefined : 'warn',
+    acwr: today.acwrRisk === 'high' ? 'warn' : today.acwrRisk === 'moderate' ? 'watch' : 'good',
+  };
 
   // Ce que le score ne regarde pas, nommé. Il n'invente plus rien — ce qui n'a
   // pas de source ne pèse rien — mais un score étroit ne dit pas ce que dit un
@@ -245,66 +266,39 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
-        <Card>
-          <Metric
-            label="Charge chronique"
-            value={num(today.ctl)}
-            note={`${signed(today.rampRate, 1)} pts/semaine`}
-            tone="metabolic"
-          />
-        </Card>
-        <Card>
-          <Metric
-            label="Fraîcheur métabolique"
-            value={signed(today.tsb)}
-            note={today.tsbLabel}
-            tone={tsbTone}
-          />
-        </Card>
-        <Card>
-          <Metric
-            label="Fraîcheur mécanique"
-            value={signed(today.mechanicalTsb)}
-            note="Fatigue musculaire de descente"
-            tone={mechTone}
-          />
-        </Card>
-        <Card>
-          <Metric
-            label="Charge aiguë / chronique"
-            value={num(today.acwr, 2)}
-            note={today.acwrLabel}
-            tone={today.acwrRisk === 'high' ? 'warn' : today.acwrRisk === 'moderate' ? 'watch' : 'good'}
-          />
-        </Card>
+        {loadFigures(today).map((f) => (
+          <Card key={f.key}>
+            <Metric label={<LoadName w={f} />} value={f.value} note={f.note} tone={tone[f.key]} />
+          </Card>
+        ))}
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', marginBottom: 14 }}>
+      <div className="dash-row dash-main">
         <Card
           title="Charge et fraîcheur"
-          hint="Deux filières suivies en parallèle : le cœur et les muscles ne récupèrent pas au même rythme."
+          hint="Six mois, en points de charge par jour. Le cœur et les jambes ne récupèrent pas au même rythme : leurs fraîcheurs se suivent à part."
         >
           <TimeSeriesChart
             height={230}
             zeroLine
             series={[
-              { key: 'ctl', label: 'CTL métabolique', color: 'var(--metabolic)', fill: true, points: pmc.metabolic.map((p) => ({ date: p.date, value: p.ctl })) },
-              { key: 'atl', label: 'ATL', color: 'var(--text-faint)', dashed: true, width: 1.3, points: pmc.metabolic.map((p) => ({ date: p.date, value: p.atl })) },
-              { key: 'tsb', label: 'TSB métabolique', color: 'var(--good)', width: 1.6, points: pmc.metabolic.map((p) => ({ date: p.date, value: p.tsb })) },
-              { key: 'mech', label: 'TSB mécanique', color: 'var(--mechanical)', width: 1.6, points: pmc.mechanical.map((p) => ({ date: p.date, value: p.tsb })) },
+              { key: 'ctl', label: plainWord(LOAD_WORDS.ctl), legend: <LoadName w={LOAD_WORDS.ctl} />, color: 'var(--metabolic)', fill: true, points: pmc.metabolic.map((p) => ({ date: p.date, value: p.ctl })) },
+              { key: 'atl', label: plainWord(LOAD_WORDS.atl), legend: <LoadName w={LOAD_WORDS.atl} />, color: 'var(--text-faint)', dashed: true, width: 1.3, points: pmc.metabolic.map((p) => ({ date: p.date, value: p.atl })) },
+              { key: 'tsb', label: plainWord(LOAD_WORDS.tsb), legend: <LoadName w={LOAD_WORDS.tsb} />, color: 'var(--good)', width: 1.6, points: pmc.metabolic.map((p) => ({ date: p.date, value: p.tsb })) },
+              { key: 'mech', label: plainWord(LOAD_WORDS.mechanicalTsb), legend: <LoadName w={LOAD_WORDS.mechanicalTsb} />, color: 'var(--mechanical)', width: 1.6, points: pmc.mechanical.map((p) => ({ date: p.date, value: p.tsb })) },
             ]}
           />
         </Card>
 
-        <Card title="Disponibilité du jour">
-          <div className="row" style={{ gap: 16, alignItems: 'center' }}>
+        <Card title={<><Term k="disponibilite">Disponibilité</Term> du jour</>}>
+          <div className="readiness-head">
             <Gauge value={readiness.score} label="sur 100" tone={readiness.verdict} assumed={readiness.assumedShare} />
-            <div style={{ minWidth: 0 }}>
+            <div className="readiness-verdict">
               <Badge tone={readiness.verdict === 'green' ? 'good' : readiness.verdict === 'amber' ? 'watch' : 'warn'}>
                 <span className="dot" />
                 {readiness.verdict === 'green' ? 'Feu vert' : readiness.verdict === 'amber' ? 'Vigilance' : 'Signal rouge'}
               </Badge>
-              <p className="small muted" style={{ marginTop: 8, marginBottom: 0 }}>{readiness.recommendation}</p>
+              <p className="small muted" style={{ marginTop: 8, marginBottom: 0 }}>{nbsp(readiness.recommendation)}</p>
             </div>
           </div>
 
@@ -340,9 +334,20 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', marginBottom: 14 }}>
-        <Card title="Volume hebdomadaire" hint="Charge métabolique et mécanique empilées, 8 dernières semaines.">
-          <WeeklyBars weeks={state.weeklyTotals.slice(-10)} />
+      <div className="dash-row dash-pair">
+        <Card
+          title="Volume hebdomadaire"
+          hint={
+            <>
+              {weeks.length > 1 ? `Les ${num(weeks.length)} dernières semaines` : 'Cette semaine'} :{' '}
+              <Term k="points">points de charge</Term> et <Term k="mecanique">charge mécanique</Term>, empilés.
+            </>
+          }
+        >
+          <WeeklyBars
+            weeks={weeks}
+            legend={{ metabolic: <Term k="points">Points de charge</Term>, mechanical: <Term k="mecanique">Charge mécanique</Term> }}
+          />
         </Card>
 
         <Card
@@ -359,7 +364,7 @@ export default function Dashboard() {
           ) : (
             <div className="stack" style={{ gap: 10 }}>
               {upcoming.map((s) => (
-                <Link key={s.id} href="/plan" className="row-between" style={{ padding: '9px 11px', background: 'var(--bg-inset)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                <Link key={s.id} href="/plan" className="dash-next">
                   <div style={{ minWidth: 0 }}>
                     <div className="row" style={{ gap: 7 }}>
                       <span className="tiny mono faint">{shortDate(s.date)}</span>
@@ -367,8 +372,8 @@ export default function Dashboard() {
                     </div>
                     <div style={{ fontWeight: 550, marginTop: 2, fontSize: 13.5 }}>{s.title}</div>
                   </div>
-                  <div style={{ textAlign: 'right', flex: 'none' }}>
-                    <div className="mono small">{num(s.plannedLoad)} pts</div>
+                  <div className="dash-next-figures">
+                    <div className="mono small">{num(s.plannedLoad)} points</div>
                     <div className="tiny faint">{duration(s.plannedDurationS)}</div>
                   </div>
                 </Link>
@@ -392,11 +397,12 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: 'minmax(0,1.15fr) minmax(0,1fr)' }}>
+      <div className="dash-row dash-pair">
         <Card title="Analyses du coach" action={<Link href="/activities" className="btn" data-variant="ghost">Toutes les séances →</Link>}>
           {insights.length === 0 ? (
             <div className="empty">
-              Les analyses apparaîtront après ta première séance synchronisée.
+              Aucune analyse rédigée : elles s&apos;écrivent à l&apos;import d&apos;une séance, quand une clé
+              Anthropic est configurée.
             </div>
           ) : (
             <div className="stack">
@@ -408,10 +414,7 @@ export default function Dashboard() {
                       {frDate(i.createdAt)}
                     </Badge>
                   </div>
-                  <p className="small muted" style={{ margin: 0 }}>
-                    {i.body.replace(/[*_#]/g, '').slice(0, 190)}
-                    {i.body.length > 190 ? '…' : ''}
-                  </p>
+                  <p className="small muted" style={{ margin: 0 }}>{opening(i.body)}</p>
                   {i.highlights.length > 0 && (
                     <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
                       {i.highlights.slice(0, 4).map((h) => (
@@ -427,35 +430,38 @@ export default function Dashboard() {
           )}
         </Card>
 
+        {/* Un tableau s'il tient dans la carte, les cartes du téléphone sinon :
+            c'est la carte qui choisit, sur sa largeur (`.dash-acts`). */}
         <Card title="Dernières séances">
           {activities.length === 0 ? (
             <div className="empty">Aucune séance importée pour l'instant.</div>
           ) : (
-            <table>
-              <thead>
-                <tr><th>Date</th><th>Séance</th><th className="right">Charge</th><th>Intensité</th></tr>
-              </thead>
-              <tbody>
-                {activities.map((a) => (
-                  <tr key={a.id} className="clickable" onClick={() => { window.location.href = `/activities/${a.id}`; }}>
-                    <td className="mono tiny faint">{shortDate(a.startDateLocal)}</td>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>{a.name.length > 26 ? `${a.name.slice(0, 26)}…` : a.name}</div>
-                      <div className="tiny faint">{num(a.distanceKm, 1)} km · {a.durationLabel} · {num(a.totalElevationGainM)} m D+</div>
-                    </td>
-                    <td className="right mono">
-                      {a.load ? (
-                        <>
-                          <div style={{ color: 'var(--metabolic)' }}>{num(a.load.metabolic)}</div>
-                          <div className="tiny" style={{ color: 'var(--mechanical)' }}>{num(a.load.mechanical)}</div>
-                        </>
-                      ) : '—'}
-                    </td>
-                    <td style={{ width: 84 }}>{a.zones ? <ThreeZoneBar z={a.zones} /> : <span className="faint tiny">—</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <div className="act-cards dash-acts-cards">
+                {activities.map((a) => <ActivityCard key={a.id} activity={a} />)}
+              </div>
+              <table className="dash-acts">
+                <thead>
+                  <tr><th>Date</th><th>Séance</th><th className="right">Points</th><th>Intensité</th></tr>
+                </thead>
+                <tbody>
+                  {activities.map((a) => (
+                    <tr key={a.id} className="clickable" onClick={() => { window.location.href = `/activities/${a.id}`; }}>
+                      <td className="mono tiny faint">{frDate(a.startDateLocal)}</td>
+                      <td>
+                        <div style={{ fontWeight: 500 }}>{a.name}</div>
+                        <div className="tiny faint">
+                          {num(a.distanceKm, 1)} km · {a.durationLabel} · {num(a.totalElevationGainM)} m D+
+                          {a.load && a.load.mechanical >= 1 && <> · {num(a.load.mechanical)} de charge mécanique</>}
+                        </div>
+                      </td>
+                      <td className="right mono" style={{ color: 'var(--metabolic)' }}>{a.load ? num(a.load.metabolic) : '—'}</td>
+                      <td style={{ width: 84 }}>{a.zones ? <ThreeZoneBar z={a.zones} /> : <span className="faint tiny">—</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </Card>
       </div>

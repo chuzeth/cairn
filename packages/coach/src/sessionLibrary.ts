@@ -14,8 +14,8 @@ import {
 import { describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit } from './plausibility.js';
 import { checkReserve, describeReserve, describeShortfall } from './reserve.js';
 import {
-  climbFor, descentAccess, descentPick, descentStretch, describeClimbChoice, hillPick, skippedNote, trailStretch,
-  type TerrainHint,
+  descentAccess, descentLoops, descentPick, descentStretch, describeClimb, describeClimbChoice, hillPick, skippedNote,
+  trailPick, trailStretch, type ClimbLoop, type TerrainHint, type WalkPart,
 } from './terrain.js';
 
 /**
@@ -174,6 +174,7 @@ function block(
   if (opts.cadenceTargetSpm) b.cadenceTargetSpm = opts.cadenceTargetSpm;
   if (opts.distanceM) b.distanceM = opts.distanceM;
   if (opts.where) b.where = opts.where;
+  if (opts.terrain) b.terrain = opts.terrain;
   return b;
 }
 
@@ -298,10 +299,13 @@ interface Pace {
  * relief. Une seule lecture pour les deux.
  *
  * Ce qui se court sous un plafond de FC — les zones faciles — se compte à
- * l'allure que l'athlète tient sous ce plafond, lue dans ses sorties
- * (`easySpeedOf`), jamais sur la bande de vitesse de sa zone : celle de la Z1
- * commence à 0 km/h, et son milieu comptait un décrassage de 45 min pour
- * 8 points, l'allure de la marche. Une descente se court à ce que son tracé
+ * l'allure que l'athlète tient sous ce plafond sur le terrain du bloc, lue dans
+ * ses sorties (`easySpeedOf`), jamais sur la bande de vitesse de sa zone : celle
+ * de la Z1 commence à 0 km/h, et son milieu comptait un décrassage de 45 min
+ * pour 8 points, l'allure de la marche. Le terrain compte : comptée à l'allure
+ * Z2 de toutes ses sorties confondues, une rando-course valait 66 points
+ * l'heure ; ses sorties en montagne en font 60, ses footings 73. Une descente se
+ * court à ce que son tracé
  * impose, dans sa durée ; elle valait 80 % de la vitesse au SV1 quelle que soit
  * sa pente, deux à trois fois ce qu'elle coûte. Le reste se court à ce que le
  * bloc prescrit : le milieu de sa fourchette.
@@ -314,7 +318,7 @@ function paceOf(model: PhysiologyModel, b: SessionBlock): Pace {
   if (b.circuit) return { groundMs: 0, flatMs: mid ?? 0 };
   if (b.effort && (b.elevationLossM ?? 0) > 0) return descentPace(b);
   if (isEasyZone(b.zone)) {
-    const easy = easySpeedOf(model, b.zone);
+    const easy = easySpeedOf(model, b.zone, b.terrain ?? 'flat');
     return { groundMs: easy.groundSpeedMs, flatMs: easy.speedMs };
   }
   if (mid != null) return { groundMs: mid, flatMs: mid };
@@ -339,7 +343,7 @@ function descentPace(b: SessionBlock): Pace {
 
 /**
  * La vitesse d'une récupération. Active, elle se trottine sous le plafond de sa
- * zone, à l'allure que l'athlète y tient ; une remontée se marche, à
+ * zone, à l'allure que l'athlète y tient sur le terrain du bloc ; une remontée se marche, à
  * l'intensité dont sa durée est tirée (`easyClimbRate`). Passive, elle ne se
  * court pas — la charge réalisée ne compte pas l'athlète à l'arrêt.
  */
@@ -347,7 +351,7 @@ function recoveryPaceOf(model: PhysiologyModel, b: SessionBlock): Pace {
   const r = b.recovery!;
   if (!r.active) return { groundMs: PASSIVE_RECOVERY_MS, flatMs: 0 };
   if (climbsBack(r)) return { groundMs: 0, flatMs: ACTIVE_RECOVERY_INTENSITY * model.vt2.speedMs };
-  const easy = easySpeedOf(model, isEasyZone(r.zone) ? r.zone : 'Z1');
+  const easy = easySpeedOf(model, isEasyZone(r.zone) ? r.zone : 'Z1', b.terrain ?? 'flat');
   return { groundMs: easy.groundSpeedMs, flatMs: easy.speedMs };
 }
 
@@ -447,7 +451,7 @@ export function withoutEccentricStrength(
   session: TransformableSession,
   model: PhysiologyModel,
 ): Omit<TransformedSession, 'amendments'> {
-  const kept = locateVertical(session.blocks, session.type).filter((b) => !isEccentricCircuit(b));
+  const kept = situated(session.blocks, session.type).filter((b) => !isEccentricCircuit(b));
   const blocks = kept.some((b) => b.circuit) ? kept : kept.filter((b) => b.kind !== 'activation');
   const totals = sessionTotals(model, blocks, elevationLossOf(blocks));
   return {
@@ -615,7 +619,7 @@ export function transformSession(
 ): TransformedSession {
   const { duration, vertical = duration, eccentric = 1, repeats = 1 } =
     typeof change === 'number' ? { duration: change } : change;
-  const located = locateVertical(session.blocks, session.type);
+  const located = situated(session.blocks, session.type);
   const seconds = scaledDurations(located, duration);
   const round = (m: number | undefined) => (m === undefined ? undefined : Math.round(m * vertical));
 
@@ -674,6 +678,65 @@ export function transformSession(
     // contenu, pas sur celui qu'on a mis à l'échelle. Un allègement qui raccourcit
     // les répétitions rend le fractionné plus dense, jamais plus facile.
     amendments: [...(fit.share < 1 ? [shedNote(snapped, fit)] : []), ...reserveNote(blocks, model)],
+  };
+}
+
+/**
+ * Un contenu écrit, situé : son dénivelé là où il descend (`locateVertical`),
+ * et son terrain.
+ *
+ * Une rando-course écrite avant que ses blocs ne portent leur terrain court sur
+ * le sentier ce qui y monte et y descend, et sur le plat le reste — approche et
+ * retour au calme : c'est ainsi que la bibliothèque l'écrivait, et c'est ainsi
+ * qu'elle se compte.
+ */
+function situated(blocks: readonly SessionBlock[], type: SessionType): SessionBlock[] {
+  const located = locateVertical(blocks, type);
+  if (type !== 'long_trail' || located.some((b) => b.terrain)) return located;
+  return located.map((b) =>
+    !b.kind && !b.circuit && isEasyZone(b.zone) && ((b.elevationGainM ?? 0) > 0 || (b.elevationLossM ?? 0) > 0)
+      ? { ...b, terrain: 'trail' as const }
+      : b,
+  );
+}
+
+/**
+ * Ce que pèse aujourd'hui un contenu écrit un autre jour.
+ *
+ * Le contenu — blocs, durée, dénivelé — est ce qui a été décidé ; sa charge en
+ * est une mesure, et une mesure se refait avec le modèle du jour. Les deux
+ * rando-courses décidées le 18/09 gardaient 138 et 140 points, comptés aux
+ * allures d'alors : à celle que Pierre tient depuis sur le sentier, elles en
+ * valent 178, et le ratio métabolique du 27/09 passait 1,5 sans que le plan le
+ * voie.
+ *
+ * La charge métabolique et la distance se relisent sur les blocs. La charge
+ * mécanique a deux parts : le dénivelé négatif et les circuits, qui sont du
+ * contenu, et l'impact à plat des kilomètres, que font les allures. Seule la
+ * seconde se remesure : relire la première sur les blocs la ferait dépendre du
+ * chemin qui les a écrits — la bibliothèque déclare sans descente un
+ * échauffement qui monte vers le plat.
+ *
+ * Une séance sans contenu écrit — une course, un repos — n'a que ses totaux :
+ * rien ne s'y remesure.
+ */
+export function remeasured<S extends TransformableSession>(s: S, model: PhysiologyModel): S {
+  if (totalDuration(s.blocks) <= 0) return s;
+  const located = situated(s.blocks, s.type);
+  const distanceM = totalDistance(model, located);
+  const impact = (m: number) => prescribedMechanicalLoad({ elevationLossM: 0, distanceM: m }).total;
+  return {
+    ...s,
+    plannedLoad: estimateLoad(model, located),
+    ...(s.plannedDistanceM != null
+      ? {
+          plannedDistanceM: Math.round(distanceM),
+          plannedMechanicalLoad: Math.max(
+            0,
+            Math.round(s.plannedMechanicalLoad - impact(s.plannedDistanceM) + impact(distanceM)),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -1288,11 +1351,14 @@ export function longTrail(
   const walkAt = walkingGrade(FLAT_RUNNING_COST * (z2.speedMaxMs as number));
   const pct = Math.round(walkAt * 100);
 
+  // Le sentier se compte à l'allure que l'athlète y tient sous le plafond de
+  // Z2, pas à celle du plat : il y marche les pentes.
   const content = (gainM: number, notes?: string, where?: TerrainStretch | null): SessionBlock[] => [
     block(c, `Sur sentier, marche dès ${pct} % de pente`, 'Z2', terrainS, {
       elevationGainM: gainM,
       elevationLossM: gainM,
       cadenceTargetSpm: 172,
+      terrain: 'trail',
       ...(notes ? { notes } : {}),
       ...(where ? { where } : {}),
     }),
@@ -1309,7 +1375,8 @@ export function longTrail(
   const fit = fitVertical(provisional, verticalOf(model), 'long_trail');
   const gain = fit.share < 1 ? elevationGainOf(fit.blocks) : asked;
   const amendments = fit.share < 1 ? [shedNote(provisional, fit)] : [];
-  const climb = climbFor(terrain, gain, walkAt);
+  const { choice: climb, skipped } = trailPick(terrain, gain, walkAt);
+  const ground = skippedNote(skipped, climb != null, 'rando-course');
 
   const rule =
     `Cours tant que la pente reste sous ${pct} %, marche au-dessus : passé ce seuil, courir en Z2 ne va pas ` +
@@ -1328,7 +1395,7 @@ export function longTrail(
     ...(amendments.length ? { amendments } : {}),
     blocks: content(
       gain,
-      climb ? `${rule} ${describeClimbChoice(climb, gain)}` : rule,
+      [rule, climb ? describeClimbChoice(climb, gain) : '', ground].filter(Boolean).join(' '),
       climb ? trailStretch(climb) : null,
     ),
   });
@@ -1827,6 +1894,61 @@ function climbBack(
 }
 
 /**
+ * Ce que dure une remontée à pied par ces morceaux, à la puissance dont une
+ * récupération qui remonte est tirée (`easyClimbRate`) : chaque morceau à sa
+ * pente, en marchant dès qu'elle est raide.
+ */
+export function walkDurationS(model: PhysiologyModel, parts: readonly WalkPart[]): number {
+  const power = FLAT_RUNNING_COST * ACTIVE_RECOVERY_INTENSITY * model.vt2.speedMs;
+  return Math.round(
+    parts.reduce((s, p) => {
+      if (p.lengthM <= 0) return s;
+      const v = speedForMetabolicPower(power, (p.gainM - p.lossM) / p.lengthM);
+      return v > 0 ? s + p.lengthM / v : s;
+    }, 0),
+  );
+}
+
+/**
+ * La remontée en boucle d'une descente, jugée sur la récupération prescrite.
+ *
+ * Remonter par une autre montée — l'escalier d'une boucle, qu'on monte à pied —
+ * évite de remonter là où l'on vient de descendre. Mais une récupération se
+ * prescrit : la boucle ne s'impose que si sa marche tient dans le temps que la
+ * remontée ordinaire y met. Rend la boucle la plus courte, qu'elle tienne ou non,
+ * et ce qu'elle demanderait.
+ */
+export function descentLoopFit(
+  model: PhysiologyModel,
+  terrain: TerrainHint | undefined,
+  dropM: number,
+  recoveryS: number,
+): { loop: ClimbLoop; walkS: number; fits: boolean; stretch: TerrainStretch; gainM: number; lossM: number } | null {
+  const options = descentLoops(terrain, dropM)
+    .map((o) => ({ ...o, walkS: walkDurationS(model, o.parts) }))
+    .sort((a, b) => a.walkS - b.walkS);
+  const best = options[0];
+  if (!best) return null;
+  return {
+    loop: best.loop,
+    walkS: best.walkS,
+    fits: best.walkS <= recoveryS,
+    stretch: best.stretch,
+    gainM: Math.round(best.parts.reduce((s, p) => s + p.gainM, 0)),
+    lossM: Math.round(best.parts.reduce((s, p) => s + p.lossM, 0)),
+  };
+}
+
+/** Ce que l'itinéraire dit d'une boucle qui ne tient pas dans la récupération prescrite. */
+export function loopTooLongNote(fit: { loop: ClimbLoop; walkS: number }, recoveryS: number): string {
+  const min = (s: number) => Math.round(s / 60);
+  return (
+    `Pas de boucle par ${describeClimb(fit.loop.up)} aujourd'hui : la remontée y prendrait ${min(fit.walkS)} min à ` +
+    `pied, et la récupération en prévoit ${min(recoveryS)}. Tu remontes par où tu es descendu.`
+  );
+}
+
+/**
  * Le tronçon d'une descente de `dropM`, et ce que la séance dit des montées
  * écartées pour lui : celle que l'athlète court le plus passe peut-être par un
  * escalier, et la séance le dit plutôt que de changer de montée en silence.
@@ -1852,6 +1974,8 @@ interface DescentSpec {
   ground?: string;
   /** La dernière descente ne remonte pas : la remontée sépare les descentes. */
   lastGoesDown?: boolean;
+  /** Une remontée en boucle (`where.back`) : ce qu'elle monte et descend, dans le temps de la remontée ordinaire. */
+  loopClimb?: { gainM: number; lossM: number };
 }
 
 /**
@@ -1871,6 +1995,10 @@ function descentBlock(c: Ctx, d: DescentSpec): SessionBlock {
   b.recovery = d.where
     ? climbBack(c, d.dropM, d.where.grade, d.where.provenance)
     : climbBack(c, d.dropM, DEFAULT_DESCENT_GRADE, 'default');
+  if (d.loopClimb && d.where?.back) {
+    b.recovery.elevationGainM = d.loopClimb.gainM;
+    if (d.loopClimb.lossM > 0) b.recovery.elevationLossM = d.loopClimb.lossM;
+  }
   if (d.lastGoesDown) b.recovery.betweenReps = true;
   return b;
 }
@@ -1945,8 +2073,13 @@ export function layDescent(
   const rep = located[i];
   if (!rep) return null;
   const dropM = rep.elevationLossM as number;
-  const { where, ground } = descentOn(terrain, dropM);
-  const access = where ? descentAccess(terrain, dropM) : null;
+  const { where: onClimb, ground } = descentOn(terrain, dropM);
+  const access = onClimb ? descentAccess(terrain, dropM) : null;
+  // La remontée en boucle, seulement si elle tient dans la récupération que
+  // la remontée ordinaire prescrit.
+  const ordinary = onClimb ? climbBack(c, dropM, onClimb.grade, onClimb.provenance) : null;
+  const loop = ordinary ? descentLoopFit(model, terrain, dropM, ordinary.durationS) : null;
+  const where = onClimb && loop?.fits ? { ...onClimb, back: loop.stretch } : onClimb;
   // Le dernier bloc couru ramène au pied quand l'accès est connu : c'est lui qui
   // porte ce qu'il reste à descendre sous le demi-tour.
   const back = access
@@ -1961,6 +2094,7 @@ export function layDescent(
         ...(ground ? { ground } : {}),
         // La dernière descente ne remonte pas : la séance rentre par le bas.
         ...(access ? { lastGoesDown: true } : {}),
+        ...(loop?.fits ? { loopClimb: { gainM: loop.gainM, lossM: loop.lossM } } : {}),
       });
     }
     // L'échauffement mène au haut de la montée quand la descente y est posée, et

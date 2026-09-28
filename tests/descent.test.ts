@@ -5,7 +5,7 @@ import { easyClimbRate } from '@cairn/physiology';
 import {
   COOLDOWN_TO_FOOT, DESCENT_EFFORT, WARMUP_TO_TOP, descentStretch, detectClimbs, downhillSession,
   elevationGainOf, elevationLossOf, groupRecurring, matchTrack, onTerrain, parseSessionBlocks, pointBelowTop,
-  totalDuration, type ClimbOccurrence, type OsmWay, type TerrainHint,
+  sessionTotals, totalDuration, type ClimbOccurrence, type OsmWay, type TerrainHint,
 } from '@cairn/coach';
 import { prescribe, type WatchItem, type WatchStep } from '@cairn/garmin';
 import { DECIDED_ON_2026_09_21, PIERRE_MODEL } from './fixtures/pierre.js';
@@ -67,7 +67,7 @@ const TERRAIN: TerrainHint = {
     ...c,
     ground: matchTrack(c.latest.profile, [STREET], '2026-09-23T12:00:00.000Z'),
   })),
-  home: [45.7644, 4.8356],
+  home: [45.75788, 4.832],
 };
 
 const Z2 = { hrRange: [141, 155] as [number, number], speedRangeMs: [2.46, 3.0] as [number, number] };
@@ -190,9 +190,12 @@ describe('La descente du 24/09 se lit comme une séance qu\'on court', () => {
   it('nomme la montée de la rando-course, du pied au haut, sans toucher à son contenu', () => {
     const w = rando!.blocks[0]!.where;
     expect(w).toMatchObject({ from: { role: 'pied' }, to: { role: 'haut' } });
-    for (const k of ['plannedDurationS', 'plannedLoad', 'plannedMechanicalLoad', 'plannedElevationGainM'] as const) {
+    for (const k of ['plannedDurationS', 'plannedElevationGainM'] as const) {
       expect(rando![k]).toEqual(RANDO_2709[k]);
     }
+    // Sa charge, elle, se compte avec le modèle du jour, à l'allure du sentier.
+    expect(rando!.blocks[0]!.terrain).toBe('trail');
+    expect(rando!.plannedLoad).toBe(sessionTotals(PIERRE_MODEL, rando!.blocks).load);
   });
 
   it('ne change plus une séance déjà posée', () => {

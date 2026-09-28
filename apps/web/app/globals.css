@@ -62,6 +62,10 @@
      tout ce qui commence en haut de page la reprenne — et non la seule page
      qu'on regardait le jour où on s'en est aperçu. */
   --safe-top: env(safe-area-inset-top);
+  /* La colonne de lecture du téléphone et de la tablette : sous 1 100 px,
+     chaque écran s'y tient, centré. Assez large pour une séance et sa carte,
+     assez étroite pour qu'une ligne se lise d'un seul mouvement d'yeux. */
+  --column: 640px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.3);
 
   /* Archivo, chargée par next/font : rien ne part vers Google à l'ouverture. */
@@ -83,7 +87,20 @@ html, body {
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Aucun mot seul sur sa ligne : le navigateur rééquilibre les dernières
+     lignes d'un paragraphe plutôt que d'y laisser tomber un mot orphelin.
+     Hérité partout ; ce qui ne doit pas passer à la ligne le dit lui-même. */
+  text-wrap: pretty;
 }
+/* Un paragraphe court — une phrase, une consigne, une légende — s'équilibre
+   sur toutes ses lignes : `pretty` laisse encore un mot long seul à la fin
+   (« 170-180. »). La prose longue garde `pretty`, que l'équilibrage ne sait
+   pas traiter au-delà de six lignes ; les textes du matin passent en plus par
+   `nbsp()`, qui lie leur dernier mot au précédent. */
+p, li, blockquote { text-wrap: balance; }
+.msg-content :is(p, li), .history-text, .history-notes li, .m-why p { text-wrap: pretty; }
+/* Un champ qu'on remplit ne se rééquilibre pas sous les doigts. */
+textarea { text-wrap: wrap; }
 
 /* Les chiffres doivent s'aligner en colonne : sans cela, un tableau de données
    « saute » à chaque rafraîchissement. */
@@ -96,7 +113,24 @@ button { font-family: inherit; font-size: inherit; }
 
 /* ── Structure ────────────────────────────────────────────────────────────── */
 
-.app { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
+/*
+ * Deux formes pour un seul site, et une seule bascule sur la largeur de
+ * l'écran : 1 100 px (`lib/viewport.ts` porte la même, pour ce que le rendu
+ * choisit).
+ *
+ * Au-dessus, l'ordinateur : la barre latérale et les consoles d'analyse. En
+ * dessous, téléphone et tablette prennent la même forme — la barre d'onglets
+ * sous le pouce, les écrans du téléphone, dans une colonne de lecture centrée.
+ * Une tablette n'est pas un petit ordinateur : à 768 px, la barre latérale y
+ * prenait un tiers de la largeur, et les consoles s'écrasaient dans le reste.
+ *
+ * L'écran ne décide que de cela. La forme de chaque composant — grille ou
+ * liste, tableau ou cartes, côte à côte ou l'un sous l'autre — se décide sur
+ * la place dont il dispose, par requête de conteneur : la page (`.main`) et
+ * chaque carte en sont un. La même semaine du plan n'a pas la même largeur à
+ * côté d'une barre latérale et dans une colonne, et c'est la sienne qui compte.
+ */
+.app { display: grid; grid-template-columns: 216px minmax(0, 1fr); min-height: 100vh; }
 
 .sidebar {
   border-right: 1px solid var(--border);
@@ -124,7 +158,7 @@ button { font-family: inherit; font-size: inherit; }
 
 .sidebar-foot { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-faint); }
 
-.main { min-width: 0; padding: 28px 32px 64px; max-width: 1400px; }
+.main { min-width: 0; padding: 28px 32px 64px; max-width: 1400px; container: page / inline-size; }
 
 .page-head { margin-bottom: 24px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .page-title { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
@@ -132,22 +166,39 @@ button { font-family: inherit; font-size: inherit; }
 
 /* ── Cartes ───────────────────────────────────────────────────────────────── */
 
+/* Une carte est un conteneur : ce qu'elle porte prend sa forme sur sa largeur. */
 .card {
   min-width: 0;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px;
+  container-type: inline-size;
 }
-.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+/* Le titre cède la ligne à ce qui l'accompagne quand la carte est étroite,
+   plutôt que de se tasser à côté d'un bouton. */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.card-head > div:first-child { flex: 1 1 14em; min-width: 0; }
 .card-title { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--text); }
 .card-hint { font-size: 11.5px; color: var(--text-faint); }
 
+/*
+ * Une grille prend ses colonnes sur la place qu'on lui laisse : 200 px par
+ * élément au moins — en deçà, l'étiquette d'une mesure passe à un mot par
+ * ligne. Quatre, deux ou une colonne, jamais trois et un orphelin.
+ * `grid-wide` range deux blocs qui en demandent 340 : un tableau, un graphique.
+ */
 .grid { display: grid; gap: 14px; }
-.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-@media (max-width: 1100px) { .grid-4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .grid-3 { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+/* Chaque case de la grille est un conteneur : ce qu'elle porte se règle sur
+   sa largeur à elle, pas sur celle de la carte qui la contient. */
+.grid > * { container-type: inline-size; }
+.grid-2, .grid-3, .grid-4 { grid-template-columns: minmax(0, 1fr); }
+@container (width >= 414px) {
+  .grid-2:not(.grid-wide), .grid-3, .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (width >= 628px) { .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (width >= 694px) { .grid-2.grid-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (width >= 842px) { .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 /* ── Navigation du téléphone ──────────────────────────────────────────────── */
 
@@ -160,7 +211,9 @@ button { font-family: inherit; font-size: inherit; }
      calcule pas rendrait la barre illisible au lieu de la rendre discrète. */
   background: var(--bg);
   border-top: 1px solid var(--border);
-  padding: 0 8px env(safe-area-inset-bottom);
+  /* Les onglets restent au-dessus de la colonne : sur une tablette couchée,
+     quatre onglets étalés sur 1 024 px s'éloigneraient du texte qu'ils servent. */
+  padding: 0 max(8px, calc((100% - var(--column)) / 2)) env(safe-area-inset-bottom);
 }
 .tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
@@ -177,6 +230,7 @@ button { font-family: inherit; font-size: inherit; }
 .sheet-veil { display: none; position: fixed; inset: 0; z-index: 50; background: rgba(4, 5, 8, 0.62); }
 .sheet {
   position: absolute; left: 0; right: 0; bottom: 0;
+  max-width: calc(var(--column) + 24px); margin-inline: auto;
   background: var(--bg-elev); border-top: 1px solid var(--border-strong);
   border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
   padding: 6px 12px calc(var(--bars) + 10px);
@@ -203,71 +257,90 @@ button { font-family: inherit; font-size: inherit; }
 .broken p { margin: 0; font-size: 17px; }
 .broken .broken-version { margin-top: 8px; font-size: 13px; color: var(--text-faint); font-family: var(--mono); }
 
-/* Au téléphone, la barre latérale disparaît au profit d'une barre d'onglets
+/* Sous 1 100 px, la barre latérale disparaît au profit d'une barre d'onglets
    sous le pouce : le haut de l'écran appartient à la réponse du jour, pas au
-   menu. Cf. `.tabbar`. */
-@media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; }
+   menu. Cf. `.tabbar`. La page se tient dans la colonne de lecture, centrée ;
+   au téléphone, la colonne est l'écran. */
+@media (width < 1100px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
   .sidebar { display: none; }
-  .main { padding: calc(var(--safe-top) + 26px) 20px var(--bars); }
-  /* `minmax(0, 1fr)` et non `1fr` : une piste en `1fr` a pour largeur minimale
-     celle de son contenu, si bien qu'un tableau large l'élargit au lieu d'y
-     défiler — et c'est la page entière qui part de côté. */
-  .grid-2, .grid-3, .grid-4 { grid-template-columns: minmax(0, 1fr); }
+  .main {
+    width: 100%; max-width: calc(var(--column) + 40px); margin-inline: auto;
+    padding: calc(var(--safe-top) + 26px) 20px var(--bars);
+  }
   .tabbar { display: grid; }
   .sheet-veil { display: block; }
-
-  /* Un tableau large ne se rétrécit pas : ses colonnes se tassent jusqu'à
-     couper les mots, puis débordent quand même. Celui qui ne tient pas défile
-     dans sa carte — la page, elle, ne défile jamais de côté. Les deux vues où
-     ce serait la lecture principale ne sont pas des tableaux ici : le plan
-     devient une liste de jours, les séances des cartes. */
-  .card table { display: block; width: 100%; overflow-x: auto; }
-  .card table th, .card table td.right, .card table td.mono { white-space: nowrap; }
-  /* Une colonne de prose a besoin d'une largeur pour rester une colonne : sans
-     plancher, l'algorithme de tableau lui laisse ce que les colonnes de chiffres
-     n'ont pas pris, et la phrase tombe en ruban d'un mot par ligne. */
-  .card table td:not(.right):not(.mono) { min-width: 150px; }
 }
 
 /* ── La semaine du plan ───────────────────────────────────────────────────── */
 
-/* Sur un écran large, sept colonnes : la semaine se lit d'un coup, et les jours
-   vides comptent autant que les autres. Sur 375 px, sept colonnes font 45 px —
-   « Récupération » y tient sur six lignes d'une lettre et demie. La semaine
-   redevient alors ce qu'elle est au téléphone : une liste de jours. */
-.plan-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+/* La semaine est d'abord une liste de jours, un par ligne, séparés d'un filet
+   plutôt que de sept cadres empilés. Elle devient une grille de sept colonnes
+   — la semaine lue d'un coup, les jours vides comptant autant que les autres —
+   quand chaque jour a la place d'écrire sur une ligne tout ce qu'il porte : son
+   titre, sa durée, et l'état le plus long qu'il puisse avoir.
+
+   Le plus long mesure 104 px en Archivo 11,5 (« reconnexion Garmin » ; un
+   titre, 76 : « Cross-training »), la case en prend 28,5 autour : sept
+   colonnes de 133 px et six gouttières de 8 font 980 px. En deçà, la grille
+   coupait « Récupér », « Enduran », et posait « 1 h 05 » sur deux lignes. */
+.plan-week { display: grid; grid-template-columns: minmax(0, 1fr); }
 
 .plan-day {
-  background: var(--bg-inset); border: 1px solid var(--border);
-  border-radius: 8px; padding: 9px; min-height: 108px;
-  display: flex; flex-direction: column; gap: 6px;
+  border-bottom: 1px solid var(--border); padding: 9px 0;
+  display: flex; align-items: baseline; gap: 12px;
 }
-.plan-day[data-today="true"] { background: var(--bg-elev-2); border-color: var(--accent); }
+.plan-day:last-child { border-bottom: 0; padding-bottom: 0; }
+/* Aujourd'hui se distingue par un repère en marge, pas par un cadre : dans
+   une liste, c'est le bord gauche qu'on suit du regard. */
+.plan-day[data-today="true"] {
+  margin-inline: -10px; padding-inline: 8px;
+  border-left: 2px solid var(--accent);
+}
 
-.plan-date { font-size: 11.5px; font-weight: 600; color: var(--text-faint); white-space: nowrap; }
+.plan-date { flex: none; width: 52px; font-size: 12.5px; font-weight: 600; color: var(--text-faint); white-space: nowrap; }
 .plan-day[data-today="true"] .plan-date { color: var(--text); }
 /* Le jour s'écrit d'une lettre dans la grille, de trois dans la liste : « L »
-   au-dessus d'une colonne de 45 px se devine par la position, seul sur une
-   ligne il ne se devine plus. */
-.plan-dow-long { display: none; }
+   au-dessus d'une colonne se devine par la position, seul sur une ligne il ne
+   se devine plus. */
+.plan-dow-short { display: none; }
 
-.plan-slots { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.plan-slots { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .plan-slot {
   text-align: left; border: none; cursor: pointer; padding: 0;
   background: transparent; color: inherit; width: 100%;
 }
-.plan-session { border-left: 2.5px solid var(--border-strong); padding-left: 6px; }
+.plan-session { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
 .plan-session[data-faded="true"] { opacity: 0.45; }
-.plan-name { font-size: 11.5px; font-weight: 600; line-height: 1.25; }
-.plan-figures { font-size: 11.5px; color: var(--text-faint); font-family: var(--mono); }
-/* Manquée, remplacée, retirée : ces mots disent ce qu'est devenue une décision.
-   Tronqués, ils ne disent plus rien — ils ne se coupent donc pas. */
-.plan-status { font-size: 11.5px; white-space: nowrap; }
+/* Rien ne se coupe dans un jour : un titre, une durée, un état tiennent chacun
+   sur leur ligne, ou la semaine change de forme. « Tronqués, ils ne disent
+   plus rien. » */
+.plan-name, .plan-figures, .plan-status, .plan-done-link { white-space: nowrap; }
+.plan-name { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
+.plan-figures { font-size: 12px; color: var(--text-faint); font-family: var(--mono); }
+.plan-status { font-size: 12px; }
 .plan-status[data-tone="done"] { color: var(--good); }
 .plan-status[data-tone="off"] { color: var(--warn); }
 .plan-status[data-tone="mute"] { color: var(--text-faint); }
-.plan-done-link { font-size: 11.5px; color: var(--metabolic); }
+.plan-done-link { font-size: 12px; color: var(--metabolic); }
+
+@container (width >= 980px) {
+  .plan-week { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+  .plan-day, .plan-day:last-child {
+    background: var(--bg-inset); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px; min-height: 108px;
+    flex-direction: column; align-items: stretch; gap: 6px;
+  }
+  .plan-day[data-today="true"] {
+    margin-inline: 0; padding-inline: 9px;
+    background: var(--bg-elev-2); border: 1px solid var(--accent);
+  }
+  .plan-date { width: auto; font-size: 11.5px; }
+  .plan-dow-short { display: inline; }
+  .plan-dow-long { display: none; }
+  .plan-session { display: block; border-left: 2.5px solid var(--border-strong); padding-left: 6px; }
+  .plan-name, .plan-figures, .plan-status, .plan-done-link { font-size: 11.5px; }
+}
 
 /* L'état Garmin d'une séance : la couleur dit s'il y a quelque chose à faire. */
 .garmin-line { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-faint); }
@@ -276,40 +349,24 @@ button { font-family: inherit; font-size: inherit; }
 .garmin-detail { color: var(--text-faint); }
 .garmin-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-faint); }
 .garmin-note[data-warn] { color: var(--warn); }
-/* Dans la grille, l'état Garmin peut passer à la ligne : coupé, il ne dirait plus rien. */
-.plan-status.plan-garmin { white-space: normal; line-height: 1.25; }
+/* ── Les séances : un tableau s'il tient, des cartes sinon ────────────────── */
 
-@media (max-width: 760px) {
-  .plan-week { grid-template-columns: 1fr; gap: 0; }
-  /* Un jour par ligne, séparés d'un filet plutôt que de sept cadres empilés. */
-  .plan-day {
-    min-height: 0; border: 0; border-bottom: 1px solid var(--border);
-    border-radius: 0; background: none; padding: 9px 0;
-    flex-direction: row; align-items: baseline; gap: 12px;
-  }
-  .plan-day:last-child { border-bottom: 0; padding-bottom: 0; }
-  /* Aujourd'hui se distingue par un repère en marge, pas par un cadre : dans
-     une liste, c'est le bord gauche qu'on suit du regard. */
-  .plan-day[data-today="true"] {
-    background: none; border-color: var(--border);
-    margin-inline: -10px; padding-inline: 8px;
-    border-left: 2px solid var(--accent);
-  }
-  .plan-date { flex: none; width: 52px; font-size: 12.5px; }
-  .plan-dow-long { display: inline; }
-  .plan-dow-short { display: none; }
-  .plan-slots { flex: 1; }
-  .plan-session { border-left: 0; padding-left: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
-  .plan-name { font-size: 13.5px; }
-  .plan-figures, .plan-status, .plan-done-link { font-size: 12px; }
-}
-
-/* ── Les séances, au téléphone ────────────────────────────────────────────── */
-
-/* Dix colonnes ne rentrent pas dans 375 px, et une séance n'a pas besoin de dix
-   colonnes pour se reconnaître : son nom, sa date, et ce qu'elle a coûté. Le
-   reste est sur sa page. */
+/* Le tableau des séances n'existe que là où il tient : ses dix colonnes, et le
+   nom de chaque séance sur au moins 220 px — 898 px mesurés, 920 retenus. En
+   deçà, il débordait à droite et cassait les noms sur quatre lignes. Une
+   séance n'a pas besoin de dix colonnes pour se reconnaître : son nom, sa
+   date, et ce qu'elle a coûté. Le reste est sur sa page, et c'est ce que dit
+   la carte. */
+.act-table { display: none; }
 .act-cards { display: flex; flex-direction: column; }
+@container (width >= 920px) {
+  .act-table { display: table; }
+  .act-cards { display: none; }
+}
+/* Les chiffres ne passent jamais à la ligne ; le nom, si : un nom de séance
+   plus long que d'habitude se replie sur deux lignes d'au moins 220 px. */
+.act-table td, .act-table th { white-space: nowrap; }
+.act-table td.act-name-cell { white-space: normal; min-width: 220px; }
 .act-card {
   display: flex; flex-direction: column; gap: 8px;
   padding: 13px 0; border-bottom: 1px solid var(--border);
@@ -330,11 +387,50 @@ button { font-family: inherit; font-size: inherit; }
 .act-range { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
 .act-range .btn { padding: 6px 11px; }
 
-@media (max-width: 760px) {
+@container page (width < 520px) {
   .act-controls { width: 100%; }
   .act-controls input { flex: 1 1 100%; }
   .act-range { width: 100%; }
   .act-range .btn { padding: 6px 4px; }
+}
+
+/* ── Le tableau de bord ───────────────────────────────────────────────────── */
+
+/* Les blocs vont par deux quand la page leur laisse la place, l'un sous
+   l'autre sinon. La disponibilité ne se range à côté du graphique qu'à partir
+   de 1 034 px de page, quand son tiers lui laisse 300 px : chaque ligne de
+   provenance — le nom, d'où il vient, ce qu'il pèse — y tient sur une ligne.
+   En deçà, elle passe sous le graphique ; à 768 px, « Disponibilité du jour »
+   tombait dans 90 px, un mot par ligne. */
+.dash-row { display: grid; gap: 14px; margin-bottom: 14px; grid-template-columns: minmax(0, 1fr); }
+.dash-row:last-child { margin-bottom: 0; }
+@container page (width >= 860px) { .dash-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container page (width >= 1034px) { .dash-main { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); } }
+
+/* La jauge et son verdict côte à côte quand le verdict garde 250 px pour se
+   lire ; la jauge au-dessus sinon — à 212 px, la recommandation finissait sur
+   « l'échauffement. » seul. */
+.readiness-head { display: flex; gap: 16px; align-items: center; }
+.readiness-verdict { min-width: 0; flex: 1 1 0; }
+@container (width < 382px) {
+  .readiness-head { flex-direction: column; align-items: flex-start; }
+  .readiness-verdict { flex-basis: auto; }
+}
+
+.dash-next {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 11px; background: var(--bg-inset); border-radius: 8px; border: 1px solid var(--border);
+}
+.dash-next-figures { text-align: right; flex: none; white-space: nowrap; }
+
+/* Les dernières séances : quatre colonnes quand la carte les tient avec le nom
+   sur une ligne, les cartes du téléphone sinon. */
+.dash-acts { display: none; }
+.dash-acts td:first-child, .dash-acts th { white-space: nowrap; }
+.dash-acts td:nth-child(2) { min-width: 220px; }
+@container (width >= 500px) {
+  .dash-acts { display: table; }
+  .dash-acts-cards { display: none; }
 }
 
 /* ── Métriques ────────────────────────────────────────────────────────────── */
@@ -385,6 +481,46 @@ tbody tr:last-child td { border-bottom: none; }
 tbody tr.clickable { cursor: pointer; transition: background 100ms; }
 tbody tr.clickable:hover { background: var(--bg-elev-2); }
 td.right, th.right { text-align: right; }
+
+/*
+ * Un tableau de mesures ne se tasse pas : ses colonnes serrées coupaient « 0,9 »
+ * de son « % », puis débordaient quand même. Il se montre tel quel là où il
+ * tient — 680 px pour les neuf colonnes d'une séance (621 mesurés), les huit
+ * d'un plan d'allure avec sa consigne sur 200 px (655) —, et se replie sinon :
+ * chaque ligne devient un bloc, chaque case une étiquette et sa valeur, qui
+ * passent à la ligne entières. La première case titre le bloc ; la prose
+ * (`t-prose`) prend la ligne du dessous.
+ */
+.t-stack td, .t-stack th { white-space: nowrap; }
+.t-stack td.t-prose { white-space: normal; }
+@container (width < 680px) {
+  .t-stack, .t-stack tbody { display: block; }
+  .t-stack thead { display: none; }
+  .t-stack tr {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 14px;
+    padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  }
+  .t-stack tr:last-child { border-bottom: 0; }
+  .t-stack td { display: block; padding: 0; border: 0; text-align: left; }
+  .t-stack td[data-label]::before { content: attr(data-label) "\00a0"; font-family: var(--font); color: var(--text-faint); }
+  .t-stack td:first-child { flex-basis: 100%; font-weight: 600; color: var(--text); }
+  .t-stack td.t-prose { flex-basis: 100%; order: 1; min-width: 0 !important; max-width: none !important; }
+}
+
+/* Un tableau d'intitulés et de valeurs : l'intitulé tient sur sa ligne, et
+   quand la valeur n'a plus la place à côté de lui, elle passe dessous, à
+   droite — plutôt que « Fréquence respiratoire » au-dessus d'un « max » seul. */
+.kv-table td { white-space: nowrap; }
+@container (width < 360px) {
+  .kv-table, .kv-table tbody { display: block; }
+  .kv-table tr {
+    display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 0 12px;
+    padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  }
+  .kv-table tr:last-child { border-bottom: 0; }
+  .kv-table td { display: block; padding: 0; border: 0; }
+  .kv-table td:first-child { flex: 1 0 auto; }
+}
 
 /* ── Boutons & champs ─────────────────────────────────────────────────────── */
 
@@ -489,19 +625,35 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 }
 .suggestion:hover { border-color: var(--accent); color: var(--text); }
 
-/* Au téléphone, le fil n'a pas de hauteur à lui : la page descend, et la
-   réserve du bas garde la saisie au-dessus de la barre d'onglets. Un fil
-   étiré à la hauteur de l'écran ouvrirait sur quatre cents pixels de vide
-   entre l'introduction et les suggestions. */
-@media (max-width: 760px) {
+/* Sous la barre d'onglets, le fil n'a pas de hauteur à lui : la page descend,
+   et la réserve du bas garde la saisie au-dessus des onglets. Un fil étiré à
+   la hauteur de l'écran ouvrirait sur quatre cents pixels de vide entre
+   l'introduction et les suggestions. */
+@media (width < 1100px) {
   .chat { height: auto; }
   .chat-scroll { flex: none; overflow: visible; padding-right: 0; }
+}
 
-  /* Une suggestion est une phrase, pas une étiquette : pleine largeur, lue de
-     gauche à droite. Le retrait annule le rembourrage de la pastille, pour que
-     le texte tombe sur la marge intérieure de la carte comme le reste. */
+/* Une suggestion est une phrase, pas une étiquette : quand la carte n'a plus
+   la place de les aligner, chacune prend la pleine largeur, lue de gauche à
+   droite. Le retrait annule le rembourrage de la pastille, pour que le texte
+   tombe sur la marge intérieure de la carte comme le reste. */
+@container (width < 560px) {
   .suggestions { display: grid; gap: 7px; margin-inline: -13px; }
   .suggestion { text-align: left; border-radius: var(--radius-sm); }
+}
+
+/* Un tableau écrit par le coach n'a pas de forme étroite à lui : quand la
+   carte ne le tient plus, chaque ligne devient un bloc, chaque case sa valeur
+   précédée du titre de sa colonne (`markdown()` le recopie). Il ne défile pas
+   de côté. */
+@container (width < 560px) {
+  .msg-content table, .msg-content tbody, .msg-content tr, .msg-content td { display: block; }
+  .msg-content thead { display: none; }
+  .msg-content tr { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .msg-content tr:last-child { border-bottom: 0; }
+  .msg-content td { padding: 1px 0; border: 0; }
+  .msg-content td[data-label]::before { content: attr(data-label) " · "; color: var(--text-faint); }
 }
 
 /* ── Provenance de la disponibilité ───────────────────────────────────────── */
@@ -535,8 +687,11 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 /* ── Point du jour ────────────────────────────────────────────────────────── */
 
 /* La seule page pensée d'abord pour le pouce : cibles de 46 px, une question
-   par ligne, aucun défilement horizontal, envoi atteignable sans remonter. */
+   par ligne, aucun défilement horizontal, envoi atteignable sans remonter.
+   Dans la colonne de lecture, elle en prend la largeur : 560 px à gauche d'une
+   colonne de 640, c'est une page décentrée. */
 .checkin { max-width: 560px; }
+@media (width < 1100px) { .checkin { max-width: none; } }
 .checkin-lede { font-size: 13px; color: var(--text-dim); margin: 0 0 16px; }
 /* Ce que les réponses ont changé : la phrase qu'on vient lire, pas une légende. */
 .checkin-effect { font-size: 15px; line-height: 1.45; color: var(--text); text-wrap: pretty; }
@@ -547,6 +702,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   border-radius: var(--radius);
   padding: 12px 13px 13px;
   margin-bottom: 10px;
+  container-type: inline-size;
 }
 .q-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
 .q-title { font-size: 13.5px; font-weight: 600; }
@@ -558,9 +714,10 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   border: 1px solid var(--border-strong); background: var(--bg-inset); color: var(--text-dim);
   border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 550; cursor: pointer;
   padding: 4px 3px;
-  /* Un libellé vaut mieux qu'un chiffre — encore faut-il qu'il tienne. */
+  /* Un libellé vaut mieux qu'un chiffre — encore faut-il qu'il tienne, et
+     entier : « sous » au-dessus de « l'eau », ce sont deux réponses. */
   display: flex; align-items: center; justify-content: center; text-align: center;
-  line-height: 1.2; overflow-wrap: anywhere; hyphens: auto;
+  line-height: 1.2; white-space: nowrap;
   transition: background 120ms, border-color 120ms, color 120ms;
   /* Au pouce, une frappe doit choisir une réponse, pas sélectionner un libellé. */
   -webkit-tap-highlight-color: transparent;
@@ -573,7 +730,21 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   border-color: var(--accent); color: var(--text);
 }
 
+/* Cinq réponses sur une ligne : le plus long libellé, « sous l'eau », mesure
+   53 px en 11,5 — sa case les a à partir de 328 px de question. En deçà, il
+   rend le rembourrage et un demi-point (50 px), puis un point encore sous
+   290 px (46 px, un téléphone de 320). */
+@container (width < 328px) {
+  .q-options { gap: 4px; }
+  .q-option { padding-inline: 1px; font-size: 11px; }
+}
+@container (width < 290px) {
+  .q-options { gap: 3px; }
+  .q-option { font-size: 10px; }
+}
+
 .q-extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@container (width < 400px) { .q-extras { grid-template-columns: 1fr 1fr; } }
 .extra { display: block; margin: 0; text-transform: none; letter-spacing: 0; }
 .extra-label { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 4px; text-transform: none; letter-spacing: 0; }
 .extra input { min-height: 44px; }
@@ -596,7 +767,6 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 }
 
 @media (max-width: 520px) {
-  .q-extras { grid-template-columns: 1fr 1fr; }
   /* L'envoi reste sous le pouce : répondre à une seule question et envoyer ne
      doit pas demander de redescendre la page.
 
@@ -624,7 +794,9 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
    cent quarante pixels de vide tombent sous la question du matin — la seule
    chose qu'on touche sur cet écran. Le blanc qui reste se pose au-dessus
    d'elle, et elle sous le pouce. */
-.morning { max-width: 420px; min-height: 100%; padding-bottom: 10px; display: flex; flex-direction: column; gap: 22px; }
+/* Sur la tablette, la colonne est celle de toute l'application : le tracé
+   s'y allonge sans grossir (`Trace`), le texte garde sa taille. */
+.morning { min-height: 100%; padding-bottom: 10px; display: flex; flex-direction: column; gap: 22px; }
 
 .m-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; color: var(--text-dim); }
 .m-goal { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
@@ -645,12 +817,15 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-after[data-warn] { color: var(--warn); }
 .m-faint { color: var(--text-faint); }
 
-/* Ces liens se touchent au pouce : le trait fait 13 px, la cible 30. */
+/* Ces liens se touchent au pouce : le trait fait 13 px, la cible 30. Un repli
+   ne se casse pas — « les » au-dessus de « consignes » ne se lit plus comme un
+   lien : c'est la rangée qui passe à la ligne. */
 .m-link, .m-action, .m-more {
   font-size: 13px; color: var(--text-dim); background: none; border: 0; padding: 8px 0 6px; cursor: pointer;
   text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong);
   text-align: left;
 }
+.m-action, .m-more { white-space: nowrap; }
 .m-more { font-size: 12.5px; }
 .m-actions { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 
@@ -688,7 +863,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-block-said { display: block; margin-top: 5px; color: var(--text-dim); }
 
 .m-session-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 0 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-faint); }
-.m-foot-more { display: flex; align-items: baseline; gap: 18px; }
+.m-foot-more { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 18px; }
 .m-why { display: flex; flex-direction: column; gap: 9px; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
 .m-why p { margin: 0; }
 
@@ -853,7 +1028,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .term-sheet:empty { display: none; }
 .term-sheet p { margin: 0; }
 .term-sheet strong { color: var(--text); font-weight: 600; }
-@media (min-width: 761px) { .term-sheet { bottom: 24px; } }
+@media (width >= 1100px) { .term-sheet { bottom: 24px; } }
 
 /* Pourquoi un paramètre n'est plus celui du laboratoire : sous lui, en petit. */
 .lab-gap { margin: 8px 0 0; font-size: 12px; line-height: 1.45; color: var(--text-dim); }
@@ -875,6 +1050,9 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-map {
   height: 260px; border-radius: var(--radius-sm); overflow: hidden;
   border: 1px solid var(--border); background: var(--bg-inset);
+  /* Les calques de Leaflet montent jusqu'à 800 : isolés ici, ils ne passent
+     jamais au-dessus de la barre d'onglets quand la page défile dessous. */
+  isolation: isolate;
 }
 .m-map.leaflet-container { background: var(--bg-inset); font: inherit; }
 .m-map .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(0.82) contrast(0.92); }
@@ -893,3 +1071,45 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 10px;
 }
 .m-where { color: var(--text-dim); }
+
+/*
+ * L'itinéraire de porte à porte : un segment par bloc de temps, une indication
+ * par ligne, la distance à droite. Même grille que les blocs de la séance — la
+ * durée à gauche, à l'ocre quand ça monte — pour qu'on lise l'un sous l'autre.
+ */
+.route { display: flex; flex-direction: column; gap: 12px; }
+.route-head { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-dim); text-wrap: pretty; }
+.route-legs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.route-leg-head { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: baseline; }
+.route-leg-time { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.route-leg-time[data-climb="true"] { color: var(--ochre); }
+.route-leg-label { font-size: 14px; line-height: 1.4; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.route-steps {
+  list-style: none; margin: 6px 0 0 86px; padding: 0 0 0 10px; border-left: 1px solid var(--border-strong);
+  display: flex; flex-direction: column; gap: 5px; font-size: 13px; line-height: 1.45; color: var(--text-dim);
+}
+.route-steps li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-items: baseline; }
+.route-steps li > span:first-child { min-width: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.route-step-m { font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.route-note { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); text-wrap: pretty; }
+.route-note[data-warn] { color: var(--warn); }
+.route-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.route-actions .m-map-go { background: none; cursor: pointer; font: inherit; font-size: 13px; }
+.route-actions .m-map-go:disabled { opacity: 0.5; cursor: default; }
+.route-source { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+.route-source a { color: var(--text-dim); }
+.home-form { display: flex; flex-direction: column; gap: 10px; }
+.home-form label {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; margin: 0;
+  /* L'écran du matin n'a pas de micro-étiquettes en capitales : le libellé se lit comme une phrase. */
+  font-size: inherit; font-weight: inherit; text-transform: none; letter-spacing: normal; color: inherit;
+}
+.home-form input {
+  font: inherit; font-size: 16px; color: var(--text); background: var(--bg-inset);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; min-width: 0;
+}
+.home-form-at { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@container (width < 480px) {
+  /* À l'étroit, les indications prennent toute la largeur : la durée du segment est déjà dite au-dessus. */
+  .route-steps { margin-left: 0; }
+}

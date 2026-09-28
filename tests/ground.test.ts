@@ -5,7 +5,7 @@ import {
 } from '@cairn/core';
 import {
   COOLDOWN_TO_FOOT, WARMUP_TO_TOP, addressFrom, descentPick, describeClimb, downhillSession, groundBetween,
-  groupRecurring, hillRepeats, hitFrom, kindOf, matchTrack, onTerrain, overpassQuery, queryTrack, streetsOf,
+  groupRecurring, hillRepeats, hitFrom, kindOf, longTrail, matchTrack, onTerrain, overpassQuery, queryTrack, streetsOf,
   trackBetween, waysFromOverpass, type ClimbOccurrence, type OsmWay, type ProfilePoint, type RecurringClimb,
   type TerrainHint,
 } from '@cairn/coach';
@@ -277,6 +277,49 @@ describe('Aucune séance rapide sur un escalier', () => {
     );
     expect(fast.length).toBeGreaterThan(0);
     for (const b of fast) expect(b.where!.ground!.runs.filter((x) => x.kind === 'escalier')).toEqual([]);
+  });
+});
+
+/**
+ * Une rando-course prépare la descente sur sentier, et chaque passage
+ * redescend la montée entière : les 27/09 et 03/10 passaient six et sept fois
+ * par les escaliers de la montée Nicolas de Lange, plus haute que la rue.
+ */
+describe('Une rando-course ne passe pas par des marches', () => {
+  const HAUTES = passage([0, 0], [
+    { to: [0, 200], grade: 0.05 },
+    { to: [0, 500], grade: 0.25 },
+    { to: [0, 900], grade: 0.1 },
+  ]);
+  const terrain: TerrainHint = {
+    climbs: grounded(groupRecurring([
+      occurrence(HAUTES, '2026-08-10', 'h1'),
+      occurrence(HAUTES, '2026-08-17', 'h2'),
+      occurrence(RUE, '2026-06-04', 'b1'),
+      occurrence(RUE, '2026-08-20', 'b2'),
+    ])),
+    home: HOME,
+  };
+
+  it('écarte la montée qui passe par l\'escalier, se pose sur la rue, et le dit', () => {
+    const [trail] = longTrail(PIERRE_MODEL, 180, 750, terrain).blocks;
+    expect(trail!.where).toMatchObject({ climb: 'la montée Saint-Barthélémy', from: { role: 'pied' }, to: { role: 'haut' } });
+    expect(trail!.where!.ground!.runs.some((r) => r.kind === 'escalier')).toBe(false);
+    expect(trail!.notes).toContain("Les 750 m, c'est 7 passages de la montée Saint-Barthélémy");
+    expect(trail!.notes).toContain(
+      'Pas sur la montée des Marches, qui passe par un escalier de 500 marches : une rando-course prépare la ' +
+        'descente sur sentier, et ses descentes ne passent pas par des marches.',
+    );
+  });
+
+  it('ne se pose nulle part quand toutes ses montées ont des marches, et dit où se courir', () => {
+    const stairs = { climbs: terrain.climbs.filter((c) => describeClimb(c) === 'la montée des Marches'), home: HOME };
+    const [trail] = longTrail(PIERRE_MODEL, 180, 750, stairs).blocks;
+    expect(trail!.where).toBeUndefined();
+    expect(trail!.notes).toContain(
+      'Aucune de tes montées ne s\'y prête — la montée des Marches, qui passe par un escalier de 500 marches : ' +
+        'cours ce dénivelé sur un sentier ou une route sans marches.',
+    );
   });
 });
 

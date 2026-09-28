@@ -6,12 +6,13 @@ import type {
   DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, Readiness, ReadinessComponent, ReadinessSource,
   SessionRow,
 } from '@/lib/api';
+import type { LoadWord } from '@/lib/figures';
 import { useOutbox } from '@/lib/offline';
 import { Term } from '@/components/Term';
 
 export function Card({
   title, hint, action, children, style,
-}: { title?: string; hint?: ReactNode; action?: ReactNode; children: ReactNode; style?: React.CSSProperties }) {
+}: { title?: ReactNode; hint?: ReactNode; action?: ReactNode; children: ReactNode; style?: React.CSSProperties }) {
   return (
     <section className="card" style={style}>
       {(title || action) && (
@@ -232,7 +233,7 @@ export function AbsenceNotice({ absence, today }: { absence: DeclaredAbsence; to
             ? `${num(n)} séance${plural} retirée${plural} du plan : ni à faire, ni manquée${plural}. `
             : 'Aucune séance du plan ne tombait sur cette période. '}
         {absence.source === 'athlete' ? 'Tu l’as annoncée toi-même. ' : ''}
-        Ta charge chronique baisse sur cette période : c’est mesuré, et c’était prévu.
+        Ta forme de fond baisse sur cette période : c’est mesuré, et c’était prévu.
       </p>
     </div>
   );
@@ -259,6 +260,16 @@ const BASIS_ROWS = [
   // nom savant de la chose n'apprenait rien à qui la lit.
   ['autonomic', 'Cœur au repos'],
 ] as const;
+
+/** Un chiffre de charge nommé par son mot du vocabulaire, qui se définit d'un tap (`lib/figures.ts`). */
+export function LoadName({ w }: { w: LoadWord }) {
+  return (
+    <>
+      {w.term ? <Term k={w.term}>{w.word}</Term> : w.word}
+      {w.after}
+    </>
+  );
+}
 
 /** Ce que le score n'a pas les moyens de regarder, nommé pour être réclamé. */
 export const MISSING_LABEL: Record<'subjective' | 'autonomic', string> = {

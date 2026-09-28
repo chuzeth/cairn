@@ -1563,10 +1563,14 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   const today = input.today ?? planStart;
 
   // Une séance décidée et encore à venir se reprend dans son contenu — date,
-  // type, durée, dénivelé, charge — et se présente comme toute séance : titre,
+  // type, durée, dénivelé — et se présente comme toute séance : titre,
   // intention, « pourquoi » et consignes sont ceux des règles du jour, et ce
-  // qu'ils remplacent passe dans son historique. Les jours passés, eux, restent
-  // ce qu'ils étaient : ils sont le registre de ce qui a été prescrit.
+  // qu'ils remplacent passe dans son historique. Sa charge se remesure avec le
+  // modèle du jour : les semaines se construisent autour de ce qu'elle pèse, et
+  // les ratios du plan la comptent. Un seuil qu'elle franchit se montre ; ce
+  // sont les règles de charge qui en décident, pas la reconstruction. Les jours
+  // passés, eux, restent ce qu'ils étaient : ils sont le registre de ce qui a
+  // été prescrit.
   const context = { model: input.model, terrain: input.terrain };
   const previous = (input.previous ?? []).map((w) => ({
     ...w,

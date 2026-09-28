@@ -68,8 +68,28 @@ const GENERIC: Record<string, 'f' | 'm' | 'p'> = {
   chemin: 'm', boulevard: 'm', quai: 'm', passage: 'm', cours: 'm', sentier: 'm', escalier: 'm', square: 'm',
   parc: 'm', jardin: 'm', clos: 'm', pont: 'm', tunnel: 'm', mail: 'm', parvis: 'm', port: 'm', carrefour: 'm',
   'rond-point': 'm', raidillon: 'm', faubourg: 'm', hameau: 'm',
-  escaliers: 'p', degrés: 'p', jardins: 'p',
+  escaliers: 'p', degrés: 'p', jardins: 'p', rives: 'p', berges: 'p', quais: 'p',
+  // Les repères d'un itinéraire se disent comme les voies : « près de la tour
+  // métallique de Fourvière », « au niveau du palais de justice ».
+  tour: 'f', gare: 'f', basilique: 'f', cathédrale: 'f', primatiale: 'f', église: 'f', chapelle: 'f',
+  école: 'f', fontaine: 'f', statue: 'f', station: 'f', halle: 'f', bibliothèque: 'f',
+  palais: 'm', musée: 'm', théâtre: 'm', hôtel: 'm', lycée: 'm', collège: 'm', monument: 'm', stade: 'm',
+  funiculaire: 'm', temple: 'm', château: 'm', belvédère: 'm', odéon: 'm', espace: 'm',
 };
+
+/** « de » devant un nom écrit avec son article : « du pont Bonaparte », « de la tour », « des jardins ». */
+export function ofName(named: string): string {
+  if (named.startsWith('le ')) return `du ${named.slice(3)}`;
+  if (named.startsWith('les ')) return `des ${named.slice(4)}`;
+  return `de ${named}`;
+}
+
+/** « à » devant un nom écrit avec son article : « au pont Bonaparte », « à la tour », « aux jardins ». */
+export function toName(named: string): string {
+  if (named.startsWith('le ')) return `au ${named.slice(3)}`;
+  if (named.startsWith('les ')) return `aux ${named.slice(4)}`;
+  return `à ${named}`;
+}
 
 const firstWord = (name: string) => name.split(/[\s']/)[0]!.toLowerCase();
 const elides = (word: string) => /^[aeiouyàâéèêëîïôûœ]/i.test(word);
@@ -216,10 +236,21 @@ export interface ItineraryBlock {
   recovery?: { elevationGainM?: number; elevationLossM?: number; betweenReps?: boolean } | null;
 }
 
-/** Combien de fois un bloc parcourt sa montée entière : son dénivelé, rapporté à celui de la montée. */
-function passagesOf(b: ItineraryBlock, w: TerrainStretch): number {
-  const perPassage = w.grade * w.lengthM;
+/**
+ * Combien de fois un bloc parcourt sa montée entière : son dénivelé, rapporté à
+ * celui d'un passage. Le passage d'une boucle monte ce que son retour descend —
+ * elle revient à son pied —, bosses du chemin d'un haut à l'autre comprises.
+ */
+export function passagesOf(b: Pick<ItineraryBlock, 'elevationGainM'>, w: TerrainStretch): number {
+  const perPassage = w.back ? w.back.grade * w.back.lengthM : w.grade * w.lengthM;
   return perPassage > 0 ? Math.max(1, Math.round((b.elevationGainM ?? 0) / perPassage)) : 1;
+}
+
+/** « la place de Fourvière puis la montée Saint-Barthélémy » : les voies d'un tronçon, dans l'ordre. */
+export function viaStreets(w: TerrainStretch): string {
+  const names = (w.streets ?? []).map((s) => withArticle(streetName(s)));
+  if (names.length === 0) return w.climb;
+  return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} puis ${names[names.length - 1]}`;
 }
 
 /**
@@ -239,19 +270,22 @@ export function itinerary(b: ItineraryBlock): string {
   const mark = landmark(to, w);
   const top = mark ? `, ${mark}` : '';
 
-  // La montée entière : l'échauffement qui mène au haut, ou les passages d'une rando-course.
+  // La montée entière : l'échauffement qui mène au haut, ou les passages d'une
+  // rando-course — par le même chemin, ou en boucle.
   if (from.role === 'pied' && to.role === 'haut') {
     const n = passagesOf(b, w);
-    return n > 1
-      ? `Monte ${w.climb} jusqu'en haut${top}, redescends au pied, ${n} fois.`
-      : `Monte ${w.climb} jusqu'en haut${top}.`;
+    const down = w.back ? `redescends par ${viaStreets(w.back)}` : 'redescends au pied';
+    // Des marches se montent à pied : la séance le dit avant qu'on les voie.
+    const { steps, lengthM } = stairsOf(w.ground);
+    const up = lengthM > 0 ? `Monte à pied ${w.climb}${steps > 0 ? ` et ses ${steps} marches` : ''}` : `Monte ${w.climb}`;
+    return n > 1 ? `${up} jusqu'en haut${top}, ${down}, ${n} fois.` : `${up} jusqu'en haut${top}.`;
   }
 
   // La dernière descente ne remonte pas quand la remontée sépare les descentes :
   // la séance rentre alors par le bas.
   const back = b.recovery
     ? climbsBack(b.recovery)
-      ? `remonte en marchant${b.recovery.betweenReps ? ' entre les descentes' : ''}`
+      ? `remonte ${w.back ? `à pied par ${viaStreets(w.back)}` : 'en marchant'}${b.recovery.betweenReps ? ' entre les descentes' : ''}`
       : (b.recovery.elevationLossM ?? 0) > 0
         ? 'redescends en trottinant'
         : 'récupère'

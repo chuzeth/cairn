@@ -4,7 +4,7 @@ import {
   type Activity, type ActivityStreams, type PhysiologyModel, type PlannedSession, type RaceGoal, type SessionBlock,
 } from '@cairn/core';
 import {
-  analyzeActivity, buildPhysiologyModel, buildZones, checkHrCeiling, easySpeedOf, fractionalUtilization,
+  analyzeActivity, buildPhysiologyModel, buildZones, checkHrCeiling, easySpeedOf, easyTerrainOf, fractionalUtilization,
   gradeAdjustedSpeed, hrCeilingOf, measureEasySpeeds, outcomeOf, runDurationOf, steadyRunLoad,
   type EasyRun, type HrHistogram, type RealizedEffort,
 } from '@cairn/physiology';
@@ -32,8 +32,8 @@ const MODEL_2209: PhysiologyModel = {
   ...PIERRE_MODEL,
   vt1: { hr: 155, speedMs: 3.002 },
   vt2: { hr: 171, speedMs: 3.82 },
-  easySpeeds: { Z1: { hrCeiling: 141, speedMs: kmh(9.8), groundSpeedMs: kmh(9.17), runs: 3 } },
-  provenance: { ...PIERRE_MODEL.provenance, 'easySpeeds.Z1': 'field' },
+  easySpeeds: { Z1: { flat: { hrCeiling: 141, speedMs: kmh(9.8), groundSpeedMs: kmh(9.17), runs: 3 } } },
+  provenance: { ...PIERRE_MODEL.provenance, 'easySpeeds.Z1.flat': 'field' },
 };
 
 describe('Tenir un plafond de FC', () => {
@@ -55,10 +55,13 @@ describe('Tenir un plafond de FC', () => {
   });
 });
 
+/** Une sortie passée : durée, vitesses, FC, et le D+ par kilomètre qui dit son terrain. */
+const run = (ageDays: number, min: number, ngs: number, ground: number, hr: HrHistogram, mPerKm = 0): EasyRun => ({
+  ageDays, durationS: min * 60, normalizedGradedSpeedMs: kmh(ngs), groundSpeedMs: kmh(ground), hr,
+  distanceM: kmh(ground) * min * 60, elevationGainM: (mPerKm * kmh(ground) * min * 60) / 1000,
+});
+
 describe('L’allure facile, lue dans les sorties', () => {
-  const run = (ageDays: number, min: number, ngs: number, ground: number, hr: HrHistogram): EasyRun => ({
-    ageDays, durationS: min * 60, normalizedGradedSpeedMs: kmh(ngs), groundSpeedMs: kmh(ground), hr,
-  });
   const runs = [
     run(1, 48, 9.8, 9.16, HR_2209),
     run(39, 40, 11.24, 11.1, hist([[136, 2000], [145, 400]])),
@@ -74,13 +77,14 @@ describe('L’allure facile, lue dans les sorties', () => {
   it('range chaque sortie dans la zone la plus facile dont elle a tenu le plafond', () => {
     const { speeds, provenance } = measureEasySpeeds(buildZones(PIERRE_MODEL), runs);
     // Trois décrassages, pondérés par leur durée : 9,75 km/h à plat.
-    expect(speeds.Z1).toMatchObject({ hrCeiling: 141, runs: 3 });
-    expect(speeds.Z1!.speedMs * 3.6).toBeCloseTo(9.75, 1);
-    expect(speeds.Z1!.groundSpeedMs).toBeLessThan(speeds.Z1!.speedMs);
-    expect(provenance.Z1).toBe('field');
+    expect(speeds.Z1?.flat).toMatchObject({ hrCeiling: 141, runs: 3 });
+    expect(speeds.Z1!.flat!.speedMs * 3.6).toBeCloseTo(9.75, 1);
+    expect(speeds.Z1!.flat!.groundSpeedMs).toBeLessThan(speeds.Z1!.flat!.speedMs);
+    expect(provenance['easySpeeds.Z1.flat']).toBe('field');
     // Un seul footing ne fait pas une allure : la Z2 reste par défaut, et le dit.
     expect(speeds.Z2).toBeUndefined();
-    expect(provenance.Z2).toBe('default');
+    expect(provenance['easySpeeds.Z2.flat']).toBe('default');
+    expect(provenance['easySpeeds.Z1.trail']).toBe('default');
   });
 
   it('entre dans le modèle avec sa provenance, et retombe sur le plafond de la zone sans sorties', () => {
@@ -93,14 +97,73 @@ describe('L’allure facile, lue dans les sorties', () => {
       },
       '2026-09-23',
     );
-    expect(model.provenance['easySpeeds.Z1']).toBe('field');
+    expect(model.provenance['easySpeeds.Z1.flat']).toBe('field');
     expect(easySpeedOf(model, 'Z1').runs).toBe(3);
-    expect(model.provenance['easySpeeds.Z2']).toBe('default');
+    expect(model.provenance['easySpeeds.Z2.flat']).toBe('default');
+    // Mesurée sur le plat, elle ne dit rien du sentier.
+    expect(easySpeedOf(model, 'Z1', 'trail')).toMatchObject({ provenance: 'default', runs: 0 });
     // La valeur par défaut est la vitesse que les zones associent au plafond,
     // jamais le milieu d'une bande qui commence à 0 km/h.
     const z1 = buildZones(PIERRE_MODEL).find((z) => z.key === 'Z1')!;
     expect(easySpeedOf(PIERRE_MODEL, 'Z1')).toMatchObject({ provenance: 'default', runs: 0 });
     expect(easySpeedOf(PIERRE_MODEL, 'Z1').speedMs).toBeCloseTo(z1.speedMaxMs!, 3);
+  });
+});
+
+/**
+ * Les treize sorties des 90 jours avant le 23/09 qui ont tenu le plafond de Z2
+ * sans tenir celui de Z1 : jours, minutes, vitesse graduée et au sol en km/h, D+
+ * par kilomètre. Cinq sont de montagne — le 29/08, le 26/08, le 28/07, le 23/07
+ * et le 17/07.
+ */
+const Z2_RUNS = (
+  [
+    [21, 104, 12.09, 11.15, 17], [25, 121, 10.51, 7.57, 70], [28, 64, 10.03, 6.29, 90],
+    [29, 82, 11.51, 8.77, 38], [32, 30, 11.92, 10.68, 17], [34, 45, 12.07, 10.43, 31],
+    [43, 49, 11.76, 10.29, 29], [53, 84, 11.6, 10.22, 38], [57, 51, 10.49, 8.67, 41],
+    [62, 71, 10.77, 7.73, 74], [68, 75, 11.48, 9.56, 43], [79, 68, 11.44, 9.69, 35], [86, 97, 11.53, 10.53, 18],
+  ] as const
+).map(([age, min, ngs, ground, mPerKm]) =>
+  run(age, min, ngs, ground, hist([[145, min * 54], [150, min * 6]]), mPerKm),
+);
+
+describe('Le sentier ne se court pas à l’allure du plat', () => {
+  const { speeds, provenance } = measureEasySpeeds(buildZones(MODEL_2209), Z2_RUNS);
+  const perHour = (v: number) => steadyRunLoad(3600, v, 3.82);
+
+  it('mesure la Z2 sur chaque terrain : 60 points l’heure en montagne, 73 sur le plat', () => {
+    expect(speeds.Z2?.trail).toMatchObject({ hrCeiling: 155, runs: 5 });
+    expect(speeds.Z2?.flat).toMatchObject({ hrCeiling: 155, runs: 8 });
+    expect(Math.round(perHour(speeds.Z2!.trail!.speedMs))).toBe(60);
+    expect(Math.round(perHour(speeds.Z2!.flat!.speedMs))).toBe(73);
+    expect(provenance['easySpeeds.Z2.trail']).toBe('field');
+    // Au sol, on marche les pentes : moins de 8 km/h.
+    expect(speeds.Z2!.trail!.groundSpeedMs * 3.6).toBeLessThan(8);
+  });
+
+  it('coupe à la montagne, pas au vallonné : 38 m D+/km, c’est du plat', () => {
+    expect(easyTerrainOf({ elevationGainM: 380, distanceM: 10_000 })).toBe('flat');
+    expect(easyTerrainOf({ elevationGainM: 410, distanceM: 10_000 })).toBe('trail');
+  });
+
+  it('compte une rando-course à l’allure du sentier, son retour au calme à celle du plat', () => {
+    const model: PhysiologyModel = {
+      ...MODEL_2209,
+      easySpeeds: { ...MODEL_2209.easySpeeds, Z2: speeds.Z2 },
+      provenance: { ...MODEL_2209.provenance, ...provenance, 'easySpeeds.Z1.flat': 'field' },
+    };
+    const rando = lib.longTrail(model, 180, 680);
+    const [trail, cooldown] = rando.blocks;
+    expect(trail!.terrain).toBe('trail');
+    expect(cooldown!.terrain).toBeUndefined();
+    expect(rando.plannedLoad).toBe(
+      Math.round(steadyRunLoad(9600, speeds.Z2!.trail!.speedMs, 3.82) + steadyRunLoad(1200, kmh(9.8), 3.82)),
+    );
+    // Au plat, elle en aurait valu une trentaine de plus.
+    const flat = lib.sessionTotals(model, [{ ...trail!, terrain: undefined }, cooldown!]).load;
+    expect(flat - rando.plannedLoad).toBeGreaterThan(30);
+    // Un footing, lui, reste au plat.
+    expect(lib.endurance(model, 60).plannedLoad).toBe(Math.round(perHour(speeds.Z2!.flat!.speedMs)));
   });
 });
 

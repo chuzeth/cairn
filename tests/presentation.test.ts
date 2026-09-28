@@ -5,7 +5,7 @@ import {
 } from '@cairn/core';
 import { FLAT_RUNNING_COST, buildZones, walkingGrade } from '@cairn/physiology';
 import * as lib from '@cairn/coach';
-import type { ClimbOccurrence, RecurringClimb, TerrainHint } from '@cairn/coach';
+import type { ClimbOccurrence, MatchedTrack, RecurringClimb, TerrainHint } from '@cairn/coach';
 import { DECIDED_ON_2026_09_21, PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
@@ -165,11 +165,17 @@ describe('Une séance de terrain se prescrit comme elle se court', () => {
   });
 
   it('nomme la montée récurrente qui porte le dénivelé, et dit combien de passages le font', () => {
-    const home: [number, number] = [45.763274, 4.835536];
+    const home: [number, number] = [45.75788, 4.832];
+    // Un sentier relu sur OpenStreetMap, sans une marche : sans sol lu, rien ne
+    // dirait que ses descentes en sont exemptes.
+    const ground: MatchedTrack = {
+      ways: [{ id: 1, tags: { highway: 'path', surface: 'ground' }, geometry: [[45.764389, 4.82914], [45.763824, 4.822308]] }],
+      way: [0, 0], street: [null, null], d: [0, 942], readAt: '2026-09-23T12:00:00.000Z',
+    };
     const terrain: TerrainHint = {
       home,
       climbs: [
-        climb({ start: [45.764389, 4.82914], lengthM: 942, gainM: 121 }),
+        climb({ start: [45.764389, 4.82914], lengthM: 942, gainM: 121, ground }),
         // Trop courte : vingt passages, c'est une séance de côtes.
         climb({ start: [45.765468, 4.817018], lengthM: 190, gainM: 34 }),
       ],
@@ -179,15 +185,25 @@ describe('Une séance de terrain se prescrit comme elle se court', () => {
       "Les 680 m, c'est 6 passages de ta montée de 940 m, du pied au haut : 121 m par passage, 726 m en tout.",
     );
     // La montée, et ses deux bouts sur la carte.
-    expect(s.blocks[0]!.where).toEqual({
-      // Sans voie relevée, elle se dit par ses chiffres — jamais par sa position par rapport au domicile.
+    expect(s.blocks[0]!.where).toMatchObject({
+      // Sans voie nommée, elle se dit par ses chiffres — jamais par sa position par rapport au domicile.
       climb: 'ta montée de 940 m à 13 % (121 m), courue lors de 4 sorties — la dernière le 17/08 (« Trail dans l’après-midi »)',
       from: { role: 'pied', at: [45.764389, 4.82914] },
       to: { role: 'haut', at: [45.763824, 4.822308] },
       lengthM: 942,
       grade: 0.128,
       provenance: 'field',
+      ground: { runs: [{ kind: 'sentier', lengthM: 942 }] },
     });
+  });
+
+  it('ne se pose pas sur une montée dont le sol n\'a pas pu être lu', () => {
+    const terrain: TerrainHint = { climbs: [climb({ start: [45.764389, 4.82914], lengthM: 942, gainM: 121 })] };
+    const [trail] = lib.longTrail(PIERRE_MODEL, 180, 680, terrain).blocks;
+    expect(trail!.where).toBeUndefined();
+    expect(trail!.notes).toContain(
+      "Le sol de tes montées n'a pas pu être lu sur OpenStreetMap : cours ce dénivelé sur un sentier ou une route sans marches.",
+    );
   });
 
   it('ne nomme rien quand aucune montée ne tombe juste', () => {
@@ -201,15 +217,22 @@ describe('Une séance décidée garde son contenu, et se présente comme toute s
   const context = { model: PIERRE_MODEL };
   const [test, rando] = DECIDED_ON_2026_09_21.map((s) => structuredClone(s));
 
-  it('reprend date, type, durée, dénivelé et charge à l\'identique', () => {
+  it('reprend date, type, durée et dénivelé à l\'identique, et remesure sa charge avec le modèle du jour', () => {
     for (const s of [test!, rando!]) {
       const p = lib.presentDecided(s, context);
-      for (const k of ['id', 'date', 'type', 'plannedDurationS', 'plannedElevationGainM', 'plannedLoad', 'plannedMechanicalLoad'] as const) {
+      for (const k of ['id', 'date', 'type', 'plannedDurationS', 'plannedElevationGainM'] as const) {
         expect(p[k], `${s.date} ${k}`).toEqual(s[k]);
       }
       expect(lib.totalDuration(p.blocks)).toBe(s.plannedDurationS);
       expect(lib.elevationGainOf(p.blocks)).toBe(s.plannedElevationGainM);
+      // La charge est celle des blocs qu'elle présente, comptés avec le modèle
+      // qu'on lui donne — pas celle du jour où elle a été décidée.
+      expect(p.plannedLoad, s.date).toBe(lib.sessionTotals(PIERRE_MODEL, p.blocks).load);
+      expect(p.plannedLoad, s.date).not.toBe(s.plannedLoad);
     }
+    // Présentée à nouveau, elle ne bouge plus.
+    const p = lib.presentDecided(rando!, context);
+    expect(lib.presentDecided(p, context)).toEqual(p);
   });
 
   it('dit son « pourquoi » en une phrase, et range le raisonnement dans l\'historique', () => {

@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { frDate, num } from '@/lib/api';
 
 /**
@@ -18,7 +18,10 @@ interface Series {
   key: string;
   points: { date: string; value: number }[];
   color: string;
+  /** Le nom de la courbe, en texte : c'est lui que lit la ligne de survol. */
   label: string;
+  /** Le même nom dans la légende, quand il porte un mot qui se définit d'un tap. */
+  legend?: ReactNode;
   fill?: boolean;
   dashed?: boolean;
   width?: number;
@@ -149,7 +152,7 @@ export function TimeSeriesChart({
           {series.map((s) => (
             <span className="legend-item" key={s.key}>
               <span className="legend-swatch" style={{ background: s.color, opacity: s.dashed ? 0.7 : 1 }} />
-              {s.label}
+              {s.legend ?? s.label}
             </span>
           ))}
         </div>
@@ -173,12 +176,17 @@ export function TimeSeriesChart({
 /** Histogramme des charges hebdomadaires, avec les deux filières empilées. */
 export function WeeklyBars({
   weeks, height = 150,
+  legend = { metabolic: 'Points de charge', mechanical: 'Charge mécanique' },
 }: {
   weeks: { weekStart: string; load: number; mechanical: number; vertM: number }[];
   height?: number;
+  /** Les noms des deux filières dans la légende, s'ils doivent se définir d'un tap. */
+  legend?: { metabolic: ReactNode; mechanical: ReactNode };
 }) {
   if (weeks.length === 0) return <div className="empty">Pas encore de semaines complètes.</div>;
-  const width = 900;
+  // Dessiné pour la demi-carte qui le porte (400 à 550 px) : à 900 unités, ses
+  // dates tombaient sous les 5 px.
+  const width = 480;
   const max = Math.max(...weeks.map((w) => w.load + w.mechanical), 1);
   const bw = (width - PAD.left - PAD.right) / weeks.length;
 
@@ -199,7 +207,7 @@ export function WeeklyBars({
           const bwidth = bw * 0.64;
           return (
             <g key={w.weekStart}>
-              <title>{`${frDate(w.weekStart, { long: true })} — métabolique ${num(w.load)}, mécanique ${num(w.mechanical)}, ${num(w.vertM)} m D+`}</title>
+              <title>{`Semaine du ${frDate(w.weekStart, { long: true })} — ${num(w.load)} points de charge, ${num(w.mechanical)} de charge mécanique, ${num(w.vertM)} m D+`}</title>
               <rect x={x} y={PAD.top + inner - hMet - hMec} width={bwidth} height={hMec} fill="var(--mechanical)" opacity="0.75" rx="1.5" />
               <rect x={x} y={PAD.top + inner - hMet} width={bwidth} height={hMet} fill="var(--metabolic)" opacity="0.9" rx="1.5" />
               <text x={x + bwidth / 2} y={height - 6} textAnchor="middle" fontSize="9.5" fill="var(--text-faint)">
@@ -210,8 +218,8 @@ export function WeeklyBars({
         })}
       </svg>
       <div className="legend">
-        <span className="legend-item"><span className="legend-swatch" style={{ background: 'var(--metabolic)' }} />Charge métabolique</span>
-        <span className="legend-item"><span className="legend-swatch" style={{ background: 'var(--mechanical)' }} />Charge mécanique</span>
+        <span className="legend-item"><span className="legend-swatch" style={{ background: 'var(--metabolic)' }} />{legend.metabolic}</span>
+        <span className="legend-item"><span className="legend-swatch" style={{ background: 'var(--mechanical)' }} />{legend.mechanical}</span>
       </div>
     </div>
   );

@@ -341,18 +341,20 @@ export interface PhysiologyModel {
 
   /**
    * Ce que l'athlète court réellement sous le plafond de FC de chaque zone
-   * facile, lu dans ses sorties récentes.
+   * facile, terrain par terrain, lu dans ses sorties récentes.
    *
    * C'est sur elle que se compte la charge prévue de tout ce qui se court sous
    * un plafond : une séance facile se prescrit par une FC, pas par une allure.
    * Comptée au milieu d'une bande qui commence à 0 km/h, elle valait l'allure
    * de la marche — 8 points prévus pour le décrassage du 22/09, couru à
-   * 9,2 km/h et 133 bpm, qui en a coûté 41. Sa provenance est sous
-   * `easySpeeds.Z1` et `easySpeeds.Z2`. Une zone sans allure mesurée — moins
-   * de deux sorties, ou un modèle construit avant qu'on la mesure — se compte à
-   * la vitesse du plafond de la zone, déclarée par défaut (`easySpeedOf`).
+   * 9,2 km/h et 133 bpm, qui en a coûté 41. Le terrain compte autant que la
+   * zone : sous le plafond de Z2, les sorties en montagne de Pierre font 60
+   * points l'heure, ses footings 73. Sa provenance est sous
+   * `easySpeeds.<zone>.<terrain>`. Un couple sans allure mesurée — moins de
+   * deux sorties, ou un modèle construit avant qu'on la mesure — se compte à la
+   * vitesse du plafond de la zone, déclarée par défaut (`easySpeedOf`).
    */
-  easySpeeds?: Partial<Record<EasyZone, EasySpeed>>;
+  easySpeeds?: Partial<Record<EasyZone, Partial<Record<EasyTerrain, EasySpeed>>>>;
 
   /**
    * État de la preuve qui soutient la vitesse critique. Sans elle, un athlète ne
@@ -385,6 +387,13 @@ export type ParameterProvenance = 'lab' | 'field' | 'blended' | 'default';
 
 /** Les zones qui se prescrivent par un plafond de FC. */
 export type EasyZone = 'Z1' | 'Z2';
+
+/**
+ * Le terrain d'une allure facile : le plat — roulant ou vallonné, où la vitesse
+ * graduée corrige le relief — ou le sentier de montagne, où l'on marche les
+ * pentes et où la même FC tient une vitesse graduée plus basse.
+ */
+export type EasyTerrain = 'flat' | 'trail';
 
 /** La vitesse à laquelle l'athlète court quand il tient un plafond de FC. */
 export interface EasySpeed {
@@ -1098,6 +1107,89 @@ export interface TerrainStretch {
   ground?: StretchGround;
   /** Le tracé réel, du départ au bout : la trace GPS de l'athlète, allégée. */
   track?: [number, number][];
+  /**
+   * Le chemin du retour quand ce n'est pas celui de l'aller : une boucle. On
+   * monte le tronçon, et l'on redescend par celui-ci, du haut au pied, par
+   * d'autres voies — celles d'une autre montée de l'athlète, rejointe par le
+   * chemin qu'il a pris d'un haut à l'autre. On monte un escalier en marchant ;
+   * on ne le descend jamais vite : ce retour n'en porte pas.
+   */
+  back?: TerrainStretch;
+}
+
+/**
+ * Le domicile de l'athlète : d'où partent et où reviennent ses itinéraires.
+ *
+ * Il ne quitte Cairn que vers le moteur d'itinéraire, parce que l'athlète le
+ * demande : ni le géocodage, ni le coach, ni la montre ne le reçoivent, et il
+ * n'est écrit nulle part ailleurs qu'en base.
+ */
+export interface AthleteHome {
+  /** Latitude, longitude. */
+  at: [number, number];
+  /** L'adresse comme l'athlète la dit : un numéro et une rue, sans rien de géocodé. */
+  address: string;
+}
+
+/** Une ligne de l'itinéraire : ce qu'on fait, là où on le fait. */
+export interface RouteStep {
+  /** « Prends légèrement à droite le quai Pierre Scize. » — au présent, à la deuxième personne. */
+  text: string;
+  /** Ce que la ligne parcourt jusqu'à la suivante, m. */
+  distanceM: number;
+}
+
+/**
+ * Un segment de l'itinéraire de porte à porte : un morceau d'un bloc de la
+ * séance, avec ce qu'il dure, parcourt, monte et descend.
+ *
+ * Les segments d'un bloc font sa durée prescrite : un échauffement de 20 min
+ * dure 20 min. Quand le chemin naturel est plus court, un détour nommé le
+ * complète ; quand il est plus long, le segment le dit (`over`).
+ */
+export interface RouteLeg {
+  /** « Jusqu'au pied de la montée », « Détour par les quais », « Six descentes »… */
+  label: string;
+  /** L'indice du bloc de la séance que le segment court. */
+  block: number;
+  /**
+   * `access` : le chemin vers le motif ; `detour` : ce qui complète la durée
+   * prescrite ; `climb` : un tronçon de montée hors du motif ; `motif` : ce qui
+   * se répète ; `home` : le retour ; `still` : sur place — des gammes.
+   */
+  kind: 'access' | 'detour' | 'climb' | 'motif' | 'home' | 'still';
+  /** Répétitions d'un motif. */
+  repeat?: number;
+  durationS: number;
+  distanceM: number;
+  gainM: number;
+  lossM: number;
+  /** Longueur dont l'altitude n'a pas pu être lue sur les traces de l'athlète, m. */
+  unmeasuredM?: number;
+  steps: RouteStep[];
+  /** Le tracé, un seul passage pour un motif répété. */
+  track: [number, number][];
+}
+
+/**
+ * L'itinéraire d'une séance de terrain, de chez l'athlète à chez lui.
+ *
+ * Le trajet vient d'un moteur d'itinéraire piéton sur OpenStreetMap (OSRM) et
+ * des traces de l'athlète ; les noms, d'OpenStreetMap ; les durées, de son
+ * modèle, à l'effort de chaque bloc. Jamais d'un modèle de langage.
+ */
+export interface SessionRoute {
+  /** Ce sur quoi il repose — domicile, blocs, allures : un itinéraire dont la base a changé est périmé. */
+  basis: string;
+  computedAt: string;
+  home: AthleteHome;
+  legs: RouteLeg[];
+  durationS: number;
+  distanceM: number;
+  gainM: number;
+  lossM: number;
+  /** Ce que l'itinéraire dit de lui-même : une boucle écartée, un bloc dépassé. */
+  notes: string[];
 }
 
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */
@@ -1141,6 +1233,12 @@ export interface SessionBlock {
   effort?: string;
   /** Où le bloc se court, quand une montée de l'athlète en porte le dénivelé. */
   where?: TerrainStretch;
+  /**
+   * Le terrain où le bloc se court, s'il n'est pas du plat : `trail`, le
+   * sentier d'une rando-course. Sous un plafond de FC, c'est lui qui dit à
+   * quelle allure le bloc se compte — celle que l'athlète tient sur ce terrain.
+   */
+  terrain?: EasyTerrain;
   /** D'où viennent les cibles du bloc. */
   provenance?: TargetProvenance;
   /**
@@ -1216,6 +1314,14 @@ export interface SessionDecision {
   by: DecisionOrigin;
   /** Le motif, tel qu'il a été écrit. */
   summary: string;
+}
+
+/** Un allègement appliqué par une règle de charge : laquelle, et le jour où elle l'a fait. */
+export interface SessionLightening {
+  /** Code de la règle — `readiness_red`, `acwr_spike`… */
+  rule: string;
+  /** Jour de l'allègement, YYYY-MM-DD. */
+  on: string;
 }
 
 /**
@@ -1302,12 +1408,19 @@ export interface PlannedSession {
    *
    * Elle vaut opposition à une reconstruction : ce qu'un athlète ou un coach a
    * décidé se reprend, il ne se réécrit pas. Ce qui se reprend est son contenu
-   * — date, type, durée, dénivelé, charge —, pas son commentaire : la
-   * présentation suit les règles du jour, comme pour toute séance.
+   * — date, type, durée, dénivelé —, pas son commentaire : la présentation suit
+   * les règles du jour, comme pour toute séance. Pas sa charge non plus : c'est
+   * une mesure, qui se refait avec le modèle du jour (`remeasured`).
    */
   decision?: SessionDecision;
   /** Ce qui a façonné la séance, du plus ancien au plus récent. */
   history?: SessionHistoryEntry[];
+  /**
+   * Les allègements que les règles de charge lui ont appliqués. Une règle
+   * n'allège qu'une fois une même séance : réévaluée, elle la réallégeait —
+   * 0,75 × 0,75 — sur un signal qu'elle avait déjà pris en compte.
+   */
+  lightenings?: SessionLightening[];
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: SessionSuccessCriterion[];
   /** Directives du dossier qui ont façonné cette séance, avec leur origine. */
@@ -1371,7 +1484,9 @@ export interface PlanRevision {
     | 'initial' | 'new_activity' | 'chat_request' | 'missed_session'
     | 'readiness' | 'goal_change' | 'declared_absence'
     /** Des séances de terrain posées sur les montées de l'athlète, sans reconstruction. */
-    | 'terrain';
+    | 'terrain'
+    /** Des séances décidées dont la charge a été remesurée avec le modèle du jour. */
+    | 'recount';
   /** Qui tenait l'outil. Absent des révisions écrites avant qu'on le demande. */
   origin?: DecisionOrigin;
   summary: string;

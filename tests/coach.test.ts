@@ -600,6 +600,25 @@ describe('Règles d\'ajustement automatique', () => {
     expect(lib.transformSession(palier, spike!.factor!, model).blocks[1]!.circuit!.rounds).toBe(3);
   });
 
+  it('n\'allège jamais deux fois une séance par la même règle, et laisse passer la suivante', () => {
+    const spike = baseState({
+      today: { date: '2026-09-01', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
+    });
+    const once = session({
+      date: '2026-09-02', type: 'endurance', plannedMechanicalLoad: 5,
+      lightenings: [{ rule: 'acwr_spike', on: '2026-08-31' }],
+    });
+    // Le pic dure : la séance l'a déjà pris en compte, 0,75 × 0,75 n'est pas un allègement.
+    expect(evaluateAdjustments(spike, [once])).toEqual([]);
+    expect(evaluateAdjustments(spike, [{ ...once, lightenings: undefined }]).map((a) => a.rule)).toEqual(['acwr_spike']);
+    // Un autre signal, une autre règle : elle l'allège, une fois.
+    const red = baseState({
+      today: { date: '2026-09-01', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
+      readiness: { date: '2026-09-01', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
+    });
+    expect(evaluateAdjustments(red, [once]).map((a) => a.rule)).toEqual(['readiness_red']);
+  });
+
   it('n\'applique qu\'une règle par séance', () => {
     const state = baseState({
       today: { date: '2026-09-01', ctl: 50, atl: 95, tsb: -45, mechanicalTsb: -35, acwr: 1.9, rampRate: 12, monotony: 2.5, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },

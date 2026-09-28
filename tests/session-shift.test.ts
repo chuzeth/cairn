@@ -145,7 +145,7 @@ vi.mock('@cairn/db', () => ({
   },
 }));
 
-const { applyAdjustments, evaluateAdjustments, rematchRecent, recovery } = await import('@cairn/coach');
+const { applyAdjustments, downhillSession, evaluateAdjustments, rematchRecent, recovery } = await import('@cairn/coach');
 
 /** 20 min d'échauffement, 20 min à 14,3 km/h et 175 bpm, 21 min de retour : la forme du 21/09. */
 function testRun(): ActivityStreams {
@@ -466,5 +466,35 @@ describe('La passe des sept derniers jours rejuge ce qu’elle tient', () => {
     expect(store.updates).toBe(0);
     expect(store.analyses.has('strava-2209')).toBe(false);
     expect(store.sessions[0]!.rationale).toMatch(/^Ce n'est pas la séance prescrite/);
+  });
+});
+
+// ── Une règle n'allège qu'une fois la même séance ────────────────────────────
+
+describe('Une règle n’allège qu’une fois la même séance', () => {
+  it('garde la trace de l’allègement : un second point du jour au rouge n’allège pas la descente encore', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-24T05:30:00.000Z'));
+    const t = downhillSession(PIERRE_MODEL, 6, 3);
+    store.sessions = [{
+      id: 'ses_2409', athleteId: 'pierre', date: '2026-09-24', type: 'downhill', priority: 'support', status: 'planned',
+      title: t.title, intent: t.intent, blocks: t.blocks, plannedLoad: t.plannedLoad,
+      plannedMechanicalLoad: t.plannedMechanicalLoad, plannedDurationS: t.durationS,
+      weekStart: '2026-09-21', phase: 'build',
+    }];
+    const red = stateOn('2026-09-24', { verdict: 'red' });
+
+    const first = evaluateAdjustments(red, store.sessions.map((s) => ({ ...s })));
+    expect(first.map((a) => a.rule)).toEqual(['readiness_red']);
+    await applyAdjustments('pierre', first, 'readiness');
+    const [lightened] = store.sessions;
+    expect(lightened!.lightenings).toEqual([{ rule: 'readiness_red', on: '2026-09-24' }]);
+    // Ses remontées à pied ne raccourcissent pas : allégée, elle reste au-dessus
+    // des 40 points de la règle, et c'est ce qui la faisait réalléger.
+    expect(lightened!.plannedDurationS).toBeLessThan(t.durationS);
+    expect(lightened!.plannedLoad).toBeGreaterThan(40);
+
+    expect(evaluateAdjustments(red, store.sessions.map((s) => ({ ...s })))).toEqual([]);
+    vi.useRealTimers();
   });
 });

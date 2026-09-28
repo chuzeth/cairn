@@ -166,7 +166,7 @@ export default function PhysiologyPage() {
         </Card>
       </div>
 
-      <div className="grid grid-2" style={{ marginBottom: 14 }}>
+      <div className="grid grid-2 grid-wide" style={{ marginBottom: 14 }}>
         <Card title="Zones d'entraînement" hint="Calibrées sur tes seuils actuels — elles évoluent avec toi.">
           {/* Le moteur tire le SV2 de la vitesse critique en la divisant par 1,02 :
               le bas de Z4 est donc toujours sous l'asymptote, c'est-à-dire à une
@@ -181,7 +181,9 @@ export default function PhysiologyPage() {
               les séances de seuil se calent donc sur elle, pas sur ce plancher.
             </p>
           )}
-          <table>
+          {/* À l'étroit, chaque zone devient un bloc : son nom, ses bornes étiquetées,
+              puis son objectif en dessous (`.t-stack`). */}
+          <table className="t-stack zones-table">
             <thead><tr><th>Zone</th><th>Objectif</th><th className="right">FC</th><th className="right">Allure</th></tr></thead>
             <tbody>
               {state.zones.map((z) => (
@@ -193,13 +195,13 @@ export default function PhysiologyPage() {
                     </div>
                     <div className="tiny faint">{z.label}</div>
                   </td>
-                  <td className="tiny muted" style={{ maxWidth: 260 }}>{z.purpose}</td>
-                  <td className="right mono tiny">
+                  <td className="tiny muted t-prose" style={{ minWidth: 200, maxWidth: 260 }}>{z.purpose}</td>
+                  <td className="right mono tiny" data-label="FC">
                     {/* La première zone n'a pas de borne basse : on l'écrit comme telle
                         plutôt que d'afficher un zéro ou un tiret trompeur. */}
                     {z.hrMin > 0 ? `${num(z.hrMin)} – ${num(z.hrMax)}` : `< ${num(z.hrMax)}`}
                   </td>
-                  <td className="right mono tiny">
+                  <td className="right mono tiny" data-label="Allure">
                     {/* Et la dernière n'a pas de borne haute que quoi que ce soit de
                         mesuré fonde : elle valait 1,3 × VMA, soit 23,4 km/h pour une
                         VMA estimée à 18,0. Une zone ouverte se dit ouverte. */}
@@ -278,10 +280,10 @@ export default function PhysiologyPage() {
             <Metric label="Masse" value={num(lab.bodyMassKg, 1)} unit="kg" note={`${num(lab.bodyFatPct, 1)} % de masse grasse`} />
           </div>
 
-          <div className="grid grid-2" style={{ marginBottom: 16 }}>
+          <div className="grid grid-2 grid-wide" style={{ marginBottom: 16 }}>
             <div>
               <div className="metric-label" style={{ marginBottom: 6 }}>Seuils mesurés</div>
-              <table>
+              <table className="kv-table">
                 <tbody>
                   <tr><td>Seuil ventilatoire 1</td><td className="right mono">{num(lab.vt1.speedMs * 3.6, 1)} km/h</td><td className="right mono">{num(lab.vt1.hr)} bpm</td></tr>
                   <tr><td>Seuil ventilatoire 2</td><td className="right mono">{num(lab.vt2.speedMs * 3.6, 1)} km/h</td><td className="right mono">{num(lab.vt2.hr)} bpm</td></tr>
@@ -290,7 +292,7 @@ export default function PhysiologyPage() {
             </div>
             <div>
               <div className="metric-label" style={{ marginBottom: 6 }}>Ventilation</div>
-              <table>
+              <table className="kv-table">
                 <tbody>
                   <tr><td>Capacité vitale</td><td className="right mono">{num(lab.vitalCapacityL, 1)} L</td></tr>
                   <tr><td>Débit ventilatoire max</td><td className="right mono">{num(lab.veMaxLMin, 1)} L/min</td></tr>

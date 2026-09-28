@@ -262,6 +262,8 @@ async function easyRunsOf(
       durationS: idx.length,
       normalizedGradedSpeedMs: an.load.normalizedGradedSpeedMs,
       groundSpeedMs: idx.reduce((sum, i) => sum + (stored.streams.velocity[i] ?? 0), 0) / idx.length,
+      elevationGainM: a.totalElevationGainM,
+      distanceM: a.distanceM,
       hr,
     });
   }

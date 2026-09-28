@@ -44,6 +44,8 @@ const store = vi.hoisted(() => ({
   saved: null as { plan: TrainingPlan; weeks: TrainingWeek[] } | null,
   saves: 0,
   absences: [] as DeclaredAbsence[],
+  updates: [] as { id: string; patch: Partial<PlannedSession> }[],
+  revisions: [] as TrainingPlan['revisionLog'],
 }));
 
 const sessionsOf = () => (store.plan?.weeks ?? []).flatMap((w) => w.sessions);
@@ -61,15 +63,22 @@ vi.mock('@cairn/db', () => ({
   listCheckIns: async () => [],
   getDailyLoads: async () => [],
   getAnalyses: async () => new Map(),
-  updateSession: async () => undefined,
-  appendPlanRevision: async () => undefined,
+  updateSession: async (id: string, patch: Partial<PlannedSession>) => {
+    store.updates.push({ id, patch });
+    Object.assign(sessionsOf().find((s) => s.id === id) ?? {}, patch);
+  },
+  appendPlanRevision: async (_id: string, revision: TrainingPlan['revisionLog'][number]) => {
+    store.revisions.push(revision);
+  },
   savePlan: async (plan: TrainingPlan, weeks: TrainingWeek[]) => {
     store.saved = { plan, weeks };
     store.saves++;
   },
 }));
 
-const { carriesEccentricStrength, executeTool, elevationGainOf, isOneSentence, totalDuration } = await import('@cairn/coach');
+const {
+  carriesEccentricStrength, executeTool, elevationGainOf, isOneSentence, recountDecisions, sessionTotals, totalDuration,
+} = await import('@cairn/coach');
 
 /** Tout ce qu'une séance enregistrée donne à lire. */
 const textsOf = (s: PlannedSession): string[] => [
@@ -192,6 +201,8 @@ beforeEach(() => {
   store.saved = null;
   store.saves = 0;
   store.absences = [ABSENCE];
+  store.updates = [];
+  store.revisions = [];
 });
 
 afterAll(() => vi.useRealTimers());
@@ -210,7 +221,7 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
       // Une décision encore à venir se reprend dans son contenu, et se présente
       // comme toute séance ; le reste est le registre de ce qui a été prescrit.
       if (was.status === 'planned' && was.decision) {
-        for (const k of ['type', 'plannedLoad', 'plannedMechanicalLoad', 'plannedDurationS', 'plannedElevationGainM'] as const) {
+        for (const k of ['type', 'plannedDurationS', 'plannedElevationGainM'] as const) {
           expect(kept![k], `${expected.id} ${k}`).toEqual(was[k]);
         }
       } else {
@@ -219,13 +230,19 @@ describe('Une reconstruction ne détruit pas ce qui a été décidé', () => {
     }
   });
 
-  it('reprend la séance décidée à l\'identique, contenu et charge compris', async () => {
+  it('reprend la séance décidée dans son contenu, et la compte avec le modèle du jour', async () => {
     await write();
 
     const rando = saved().find((s) => s.id === 'p4')!;
     const before = PREVIOUS[1]!.sessions.find((s) => s.id === 'p4')!;
     expect(rando.plannedElevationGainM).toBe(760);
-    expect(rando.plannedLoad).toBe(before.plannedLoad);
+    expect(rando.blocks).toEqual(before.blocks);
+    // 118 points comptés le jour de la décision ; ses blocs en valent ce que le
+    // modèle d'aujourd'hui leur donne.
+    expect(rando.plannedLoad).toBe(sessionTotals(PIERRE_MODEL, before.blocks).load);
+    expect(rando.plannedLoad).not.toBe(before.plannedLoad);
+    // Sans distance enregistrée, rien ne dit ce que l'impact à plat y comptait :
+    // la charge mécanique reste celle qui a été décidée.
     expect(rando.plannedMechanicalLoad).toBe(before.plannedMechanicalLoad);
     expect(rando.decision?.summary).toContain('seuil de ratio mécanique');
   });
@@ -475,13 +492,12 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
     for (const kept of DECIDED_ON_2026_09_21) {
       const s = days.get(kept.date)!;
       expect(s.id).toBe(kept.id);
-      // Une décision, c'est son contenu : date, type, durée, dénivelé, charge.
-      for (const k of [
-        'type', 'priority', 'status', 'plannedDurationS', 'plannedElevationGainM', 'plannedLoad',
-        'plannedMechanicalLoad', 'plannedDistanceM',
-      ] as const) {
+      // Une décision, c'est son contenu : date, type, durée, dénivelé. Sa
+      // charge se remesure sur les blocs qu'elle présente.
+      for (const k of ['type', 'priority', 'status', 'plannedDurationS', 'plannedElevationGainM'] as const) {
         expect(s[k], `${kept.date} ${k}`).toEqual(kept[k]);
       }
+      expect(s.plannedLoad, kept.date).toBe(sessionTotals(PIERRE_MODEL, s.blocks).load);
       expect(s.decision).toMatchObject({ at: kept.decision!.at, by: kept.decision!.by });
       // Les blocs présentés portent la séance décidée, ni plus ni moins.
       expect(totalDuration(s.blocks), kept.date).toBe(kept.plannedDurationS);
@@ -544,6 +560,18 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
     }
   });
 
+  it('compte les rando-courses du 27/09 et du 03/10 à ce qu\'elles pèsent, sur le sentier', async () => {
+    const days = byDate(await written());
+    for (const date of ['2026-09-27', '2026-10-03']) {
+      const s = days.get(date)!;
+      expect(s.blocks[0]!.terrain, date).toBe('trail');
+      expect(s.plannedLoad, date).toBeGreaterThan(DECIDED_ON_2026_09_21.find((k) => k.date === date)!.plannedLoad);
+    }
+    // La semaine que le plan mesure les porte à leur nouveau poids.
+    const week = store.saved!.weeks.find((w) => w.weekStart === '2026-09-21')!;
+    expect(week.sessions.find((s) => s.date === '2026-09-27')!.plannedLoad).toBe(days.get('2026-09-27')!.plannedLoad);
+  });
+
   it('ne verse pas deux fois le même raisonnement quand on reconstruit encore', async () => {
     await written();
     const first = byDate(store.saved!.weeks);
@@ -557,5 +585,42 @@ describe('Une séance conservée est un point fixe de la semaine', () => {
       expect(b.rationale, kept.date).toBe(a.rationale);
       expect(b.blocks, kept.date).toEqual(a.blocks);
     }
+  });
+});
+
+/**
+ * Entre deux reconstructions, le modèle bouge après chaque sortie : la charge
+ * d'une décision se recompte avec lui, sans que son contenu change.
+ */
+describe('Une décision garde son contenu, pas sa charge', () => {
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-09-23T07:00:00.000Z'));
+    store.absences = [];
+    const kept = DECIDED_ON_2026_09_21.map((s) => structuredClone(s));
+    store.plan = plan([
+      { ...PREVIOUS[1]!, sessions: kept.filter((s) => s.date < '2026-09-28') },
+      { ...PREVIOUS[2]!, sessions: kept.filter((s) => s.date >= '2026-09-28') },
+    ]);
+  });
+
+  it('se remesure au recompte, ne touche qu\'à ce qu\'elle pèse, et le dit au journal', async () => {
+    const changes = await recountDecisions('pierre', '2026-09-23');
+
+    // Le test du 22/09 est passé : il est le registre de ce qui a été prescrit.
+    expect(changes.map((c) => c.date)).toEqual(['2026-09-27', '2026-10-03']);
+    for (const u of store.updates) {
+      expect(Object.keys(u.patch).sort()).toEqual(['plannedDistanceM', 'plannedLoad', 'plannedMechanicalLoad']);
+    }
+    const rando = sessionsOf().find((s) => s.date === '2026-09-27')!;
+    expect(rando.plannedLoad).toBe(sessionTotals(PIERRE_MODEL, rando.blocks.map((b) =>
+      b.elevationGainM ? { ...b, terrain: 'trail' as const } : b)).load);
+    expect(rando.plannedLoad).not.toBe(138);
+    expect(changes[0]!.before).toBe('charge 138, charge mécanique 39');
+    expect(store.revisions.at(-1)).toMatchObject({ trigger: 'recount' });
+
+    // Rien de neuf au recompte suivant : rien ne s'écrit.
+    store.updates = [];
+    expect(await recountDecisions('pierre', '2026-09-23')).toEqual([]);
+    expect(store.updates).toEqual([]);
   });
 });

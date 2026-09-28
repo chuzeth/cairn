@@ -280,7 +280,9 @@ export default function RacesPage() {
                     )}
 
                     <div className="metric-label" style={{ marginBottom: 8 }}>Plan d'allure</div>
-                    <table>
+                    {/* Huit colonnes ; à l'étroit, chaque tronçon devient une ligne
+                        d'étiquettes, sa consigne en dessous (`.t-stack`). */}
+                    <table className="t-stack">
                       <thead>
                         <tr><th>Tronçon</th><th className="right">D+ / D−</th><th className="right">Pente</th><th className="right">Allure</th><th className="right">VAM</th><th className="right">FC</th><th className="right">Cumul</th><th>Consigne</th></tr>
                       </thead>
@@ -288,13 +290,13 @@ export default function RacesPage() {
                         {prediction.data.plan_allure.map((p, i) => (
                           <tr key={i}>
                             <td className="mono tiny">{p.troncon}</td>
-                            <td className="right mono tiny">+{num(p.denivele_pos_m)} / −{num(p.denivele_neg_m)}</td>
-                            <td className="right mono tiny">{num(p.pente_pct, 1)} %</td>
-                            <td className="right mono">{p.allure_cible}</td>
-                            <td className="right mono tiny">{p.vam_cible_mh ? `${num(p.vam_cible_mh)} m/h` : '—'}</td>
-                            <td className="right mono tiny">{num(p.fc_cible[0])}-{num(p.fc_cible[1])}</td>
-                            <td className="right mono">{p.temps_cumule}</td>
-                            <td className="tiny faint" style={{ maxWidth: 300 }}>{p.cue}</td>
+                            <td className="right mono tiny">+{num(p.denivele_pos_m)} / −{num(p.denivele_neg_m)} m</td>
+                            <td className="right mono tiny" data-label="pente">{num(p.pente_pct, 1)} %</td>
+                            <td className="right mono" data-label="allure">{p.allure_cible}</td>
+                            <td className="right mono tiny" data-label="VAM">{p.vam_cible_mh ? `${num(p.vam_cible_mh)} m/h` : '—'}</td>
+                            <td className="right mono tiny" data-label="FC">{num(p.fc_cible[0])}-{num(p.fc_cible[1])}</td>
+                            <td className="right mono" data-label="cumul">{p.temps_cumule}</td>
+                            <td className="tiny faint t-prose" style={{ minWidth: 200, maxWidth: 300 }}>{p.cue}</td>
                           </tr>
                         ))}
                       </tbody>

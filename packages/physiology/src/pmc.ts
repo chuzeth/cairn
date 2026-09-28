@@ -330,7 +330,8 @@ export function interpretAcwr(
   spike: number = ACWR_SPIKE.metabolic,
 ): { label: string; risk: 'low' | 'moderate' | 'high' } {
   if (acwr === 0) return { label: 'Données insuffisantes', risk: 'low' };
-  if (acwr < 0.8) return { label: 'Charge aiguë faible : détraînement possible', risk: 'moderate' };
+  // Ce libellé s'affiche tel quel sous le chiffre : dans les mots de l'athlète.
+  if (acwr < 0.8) return { label: 'Moins que d’habitude : si ça dure, tu perds de la forme', risk: 'moderate' };
   if (acwr <= 1.3) return { label: 'Zone optimale de progression', risk: 'low' };
   if (acwr <= spike) return { label: 'Progression rapide — vigilance', risk: 'moderate' };
   return { label: 'Pic de charge : risque de blessure nettement accru', risk: 'high' };

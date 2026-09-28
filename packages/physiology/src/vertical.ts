@@ -185,6 +185,9 @@ export function climbingEfficiency(
   };
 }
 
+/** D+ par kilomètre à partir duquel une sortie est de montagne, m/km. */
+export const MOUNTAIN_M_PER_KM = 40;
+
 /**
  * Classement de la sortie sur l'échelle de « verticalité » : m D+ par kilomètre.
  * Convention usuelle du trail : < 20 roulant, 20-40 vallonné, 40-70 montagne,
@@ -196,7 +199,7 @@ export function verticalityIndex(elevationGainM: number, distanceM: number): {
 } {
   const mPerKm = distanceM > 0 ? (elevationGainM / distanceM) * 1000 : 0;
   const label =
-    mPerKm < 20 ? 'roulant' : mPerKm < 40 ? 'vallonné' : mPerKm < 70 ? 'montagne' : 'très montagneux';
+    mPerKm < 20 ? 'roulant' : mPerKm < MOUNTAIN_M_PER_KM ? 'vallonné' : mPerKm < 70 ? 'montagne' : 'très montagneux';
   return { mPerKm: Math.round(mPerKm), label };
 }
 

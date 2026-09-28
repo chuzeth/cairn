@@ -1,8 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, longDate, markdown, nbsp, num, prime, shortRace, signed, spelledDuration,
+  duration, frDate, longDate, markdown, nbsp, num, prime, shortRace, spelledDuration,
   type CheckInResult, type DeclaredAbsence, type PlanResponse, type Readiness, type SessionRow,
   type StateResponse,
 } from '@/lib/api';
@@ -13,12 +13,14 @@ import {
   slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
+import { loadFigures } from '@/lib/figures';
 import {
-  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale, unweighed,
-  Waiting, WhereLine,
+  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale,
+  unweighed, Waiting, WhereLine,
 } from '@/components/ui';
 import { Glossed, Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
+import { HomeForm, Itinerary } from '@/components/Itinerary';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -110,7 +112,7 @@ export function Morning({
 
       <Headline session={session} absence={absence} done={doneToday} early={early} />
 
-      {work && <Session session={work} />}
+      {work && <Session session={work} home={plan.home ?? null} onReload={onReload} />}
 
       {early && (
         <>
@@ -285,10 +287,19 @@ function subline(session: SessionRow): string {
  * comment exécuter la séance avant de savoir si le système a une réserve
  * dessus.
  */
-function Session({ session }: { session: SessionRow }) {
+function Session({
+  session, home, onReload,
+}: {
+  session: SessionRow;
+  /** Le domicile, s'il est connu : sans lui, pas d'itinéraire de porte à porte. */
+  home: { address: string } | null;
+  onReload: () => Promise<void> | void;
+}) {
   const [why, setWhy] = useState(false);
   const [said, setSaid] = useState(false);
   const [past, setPast] = useState(false);
+  const [way, setWay] = useState(false);
+  const onTerrain = session.blocks.some((b) => b.where);
   const profile = sessionProfile(session);
   const notes = session.blocks.map(blockNote);
   const hasSaid = session.blocks.some((b, i) => targets(b) || notes[i]);
@@ -326,9 +337,9 @@ function Session({ session }: { session: SessionRow }) {
         ))}
       </div>
 
-      {/* Où courir : le tracé réel sur le fond d'OpenStreetMap, chaque point
-          clé par son adresse, et le chemin à pied jusqu'au départ. */}
-      <SessionMap blocks={session.blocks} />
+      {/* Où courir : l'itinéraire de porte à porte quand il y en a un, sinon le
+          tracé réel des montées, chaque point clé par son adresse. */}
+      <SessionMap blocks={session.blocks} route={session.route} />
 
       {/* Ce que la montre porte de cette séance, relu sur Garmin : jamais
           « envoyée » sans relecture. */}
@@ -342,6 +353,11 @@ function Session({ session }: { session: SessionRow }) {
           )}
         </span>
         <span className="m-foot-more">
+          {onTerrain && (
+            <button type="button" className="m-more" aria-expanded={way} onClick={() => setWay((w) => !w)}>
+              {way ? 'masquer' : 'l’itinéraire'}
+            </button>
+          )}
           {hasSaid && (
             <button type="button" className="m-more" aria-expanded={said} onClick={() => setSaid((s) => !s)}>
               {said ? 'masquer' : 'les consignes'}
@@ -361,6 +377,22 @@ function Session({ session }: { session: SessionRow }) {
           )}
         </span>
       </div>
+
+      {way && session.route && (
+        <Itinerary route={session.route} date={session.date} title={sessionHeadline(session)} onHomeSaved={onReload} />
+      )}
+      {way && !session.route && (
+        home ? (
+          <p className="route-note">
+            L&apos;itinéraire depuis {home.address} n&apos;est pas encore calculé : il le sera à la prochaine relève.
+          </p>
+        ) : (
+          <>
+            <p className="route-note">Dis d&apos;où tu pars : Cairn trace l&apos;itinéraire de porte à porte.</p>
+            <HomeForm onSaved={onReload} />
+          </>
+        )
+      )}
 
       {past && session.history && <SessionHistory history={session.history} />}
 
@@ -464,8 +496,37 @@ function blockNote(b: SessionRow['blocks'][number]): string {
   return b.vamTargetMh || b.hrRange ? b.notes.replace(/^\s*Cible[^.]*\.\s*/i, '') : b.notes;
 }
 
-/** Part de la largeur du tracé qu'occupe le repère de fin, aligné à droite. */
+/** Part de la largeur du tracé qu'occupe le repère de fin, aligné à droite, sur un tracé de 350. */
 const END_MARK_SPAN = 0.13;
+
+/** Le tracé tel qu'il a été dessiné : 350 unités de large, jamais agrandi au-delà de 1,2. */
+const TRACE_W = 350;
+const TRACE_MAX_SCALE = 1.2;
+
+/**
+ * La largeur du tracé, en unités.
+ *
+ * Au téléphone, le dessin remplit l'écran à l'échelle où il a été pensé. Dans
+ * la colonne d'une tablette, l'agrandir d'autant ferait des repères de 20 px
+ * et un tracé de deux cent cinquante de haut : au-delà de 1,2, c'est la durée
+ * qui s'allonge, pas le dessin qui grossit.
+ */
+function useTraceWidth(): [(el: SVGSVGElement | null) => void, number] {
+  const [el, setEl] = useState<SVGSVGElement | null>(null);
+  const [w, setW] = useState(TRACE_W);
+  useEffect(() => {
+    if (!el) return;
+    const read = () => {
+      const px = el.getBoundingClientRect().width;
+      setW(px > TRACE_W * TRACE_MAX_SCALE ? Math.round(px / TRACE_MAX_SCALE) : TRACE_W);
+    };
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [el]);
+  return [setEl, w];
+}
 
 /**
  * Le tracé.
@@ -477,7 +538,9 @@ function Trace({
   session, profile, muted,
 }: { session: SessionRow; profile?: SessionProfile; muted?: boolean }) {
   const p = profile ?? sessionProfile(session);
-  const W = 350;
+  const [ref, W] = useTraceWidth();
+  // Les écarts entre repères se mesurent en unités de tracé : plus long, il en loge davantage.
+  const unit = TRACE_W / W;
   const TOP = 24;
   const BASE = 94;
   const GROUND = 100;
@@ -508,11 +571,12 @@ function Trace({
     (m, i, all) =>
       i === 0 ||
       i === all.length - 1 ||
-      (m.at - all[i - 1]!.at > 0.08 && all[all.length - 1]!.at - m.at > END_MARK_SPAN),
+      (m.at - all[i - 1]!.at > 0.08 * unit && all[all.length - 1]!.at - m.at > END_MARK_SPAN * unit),
   );
 
   return (
     <svg
+      ref={ref}
       className="m-trace"
       viewBox={`0 ${viewTop.toFixed(1)} ${W} ${(134 - viewTop).toFixed(1)}`}
       role="img"
@@ -603,7 +667,6 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
   const missing = unweighed(readiness).map((k) => MISSING_LABEL[k]);
   const verdict = VERDICT[readiness.verdict];
   const [lead, rest] = verdictLead(readiness.recommendation, verdict.word);
-  const t = state.today;
 
   const answerFatigue = async (value: number) => {
     setSending(value);
@@ -668,19 +731,13 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
               {missing.length > 1 ? 'ils ne pèsent' : 'il ne pèse'} rien, plutôt que de peser une moyenne.
             </p>
           )}
-          {/* Quatre chiffres du modèle, nommés par ce qu'ils veulent dire. Le
-              vocabulaire interne — charge chronique, TSB, ratio — reste au
-              coach et à l'écran de physiologie ; ici, il se traduit, et chaque
+          {/* Quatre chiffres du modèle, nommés par ce qu'ils veulent dire — les
+              mêmes mots que le tableau de bord (`lib/figures.ts`), et chaque
               mot se définit d'un tap. */}
           <div className="m-figures">
-            {[
-              { key: 'ctl', name: <Term k="forme">Forme de fond</Term>, value: num(t.ctl), note: `${signed(t.rampRate, 1)} point${Math.abs(t.rampRate) >= 2 ? 's' : ''} par semaine` },
-              { key: 'tsb', name: <Term k="fraicheur">Fraîcheur</Term>, value: signed(t.tsb), note: t.tsbLabel },
-              { key: 'mech', name: <><Term k="fraicheur">Fraîcheur</Term> des jambes</>, value: signed(t.mechanicalTsb), note: 'ce que la descente a abîmé' },
-              { key: 'acwr', name: 'Ces 7 jours, contre tes 4 dernières semaines', value: num(t.acwr, 2), note: t.acwrLabel },
-            ].map((f) => (
+            {loadFigures(state.today).map((f) => (
               <div className="m-figure" key={f.key}>
-                <span>{f.name}</span>
+                <span><LoadName w={f} /></span>
                 <span className="m-figure-value">{f.value}</span>
                 <span className="m-faint">{f.note}</span>
               </div>

@@ -5,7 +5,8 @@ import { directivesFor } from '@cairn/core';
 import {
   CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, describeAdjustments,
   describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, labGaps,
-  loadAthleteState, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, summarizeWeek, type SessionState,
+  loadAthleteState, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, routeBasis, routeUpcoming, summarizeWeek,
+  type SessionState,
 } from '@cairn/coach';
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
@@ -441,6 +442,16 @@ export async function buildServer() {
       req.log.warn({ err: e }, 'état Garmin illisible');
       return null;
     });
+    // L'itinéraire de porte à porte, quand il décrit encore la séance : un
+    // itinéraire dont la base — domicile, blocs, allures — a changé attend la
+    // prochaine relève plutôt que d'envoyer quelqu'un sur un chemin périmé.
+    const home = await db.getHome(A);
+    const routes = home ? await db.getSessionRoutes(sessions.map((s) => s.id)) : new Map();
+    const model = routes.size > 0 ? await currentModel(A) : null;
+    const routeOf = (s: PlannedSession) => {
+      const r = routes.get(s.id);
+      return r && home && model && r.basis === routeBasis(s, home, model) ? r.route : null;
+    };
     return {
       plan: plan?.plan ?? null,
       raceDay: plan ? await raceDayView(plan.plan) : null,
@@ -449,13 +460,45 @@ export async function buildServer() {
       sessions: sessions.map((s) => ({
         ...(s.directives ? { ...s, directives: describeDirectives(s, dossier) } : s),
         garmin: garmin?.bySession[s.id] ?? null,
+        route: routeOf(s),
       })),
+      home: home ? { address: home.address } : null,
       garmin: garmin?.overview ?? null,
       absences,
       completedByDate: Object.fromEntries(
         activities.map((a) => [a.startDateLocal.slice(0, 10), { id: a.id, name: a.name }]),
       ),
     };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Domicile
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // D'où partent les itinéraires. Il ne se lit et ne s'écrit que d'ici, et ne
+  // part que vers le moteur d'itinéraire : aucun géocodage de l'adresse — elle
+  // se dit telle que l'athlète la tape, les coordonnées viennent de son
+  // téléphone ou de lui.
+  app.get('/api/home', async () => ({ home: await db.getHome(A) }));
+
+  app.put<{ Body: { lat?: unknown; lng?: unknown; address?: unknown } }>('/api/home', async (req, reply) => {
+    const lat = numeric(req.body?.lat, -90, 90);
+    const lng = numeric(req.body?.lng, -180, 180);
+    const address = typeof req.body?.address === 'string' ? req.body.address.trim() : '';
+    if (lat == null || lng == null || address.length === 0 || address.length > 120) {
+      return reply.code(400).send({ error: 'Il faut une adresse (120 caractères au plus), une latitude et une longitude.' });
+    }
+    const home = { at: [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6] as [number, number], address };
+    await db.setHome(A, home);
+    // Les itinéraires se refont en arrière-plan : l'écran les trouvera à la
+    // prochaine lecture du plan, sans attendre le moteur d'itinéraire.
+    void routeUpcoming(A).catch((e) => req.log.warn({ err: e instanceof Error ? e.message : String(e) }, 'itinéraires non refaits'));
+    return { home };
+  });
+
+  app.delete('/api/home', async () => {
+    await db.setHome(A, null);
+    return { home: null };
   });
 
   app.get('/api/insights', async (req) => {

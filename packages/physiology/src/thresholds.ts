@@ -381,8 +381,7 @@ export function buildPhysiologyModel(
   // eux que les séances faciles se prescrivent et se jugent.
   const easy = measureEasySpeeds(buildZones(model), field.easyRuns ?? []);
   model.easySpeeds = easy.speeds;
-  provenance['easySpeeds.Z1'] = easy.provenance.Z1;
-  provenance['easySpeeds.Z2'] = easy.provenance.Z2;
+  Object.assign(provenance, easy.provenance);
   return model;
 }
 

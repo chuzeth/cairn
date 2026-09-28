@@ -2,25 +2,36 @@ import type { PlannedSession, TerrainPoint, TerrainStretch } from '@cairn/core';
 import { canonicalAddress, streetKey, streetName } from '@cairn/core';
 import * as db from '@cairn/db';
 import { distanceToTrack, matchTrack, type OsmWay, type TrackPoint } from './ground.js';
-import { HOME_GROUND_RADIUS_M, haversineM, type RecurringClimb } from './terrain.js';
+import { HOME_GROUND_RADIUS_M, haversineM, type ClimbLoop, type RecurringClimb } from './terrain.js';
 
 /**
  * OpenStreetMap, lu depuis Cairn.
  *
- * Deux questions, posées à deux services publics et bénévoles :
+ * Trois questions, posées à trois services publics et bénévoles :
  *   - Overpass : les voies autour de la trace d'une montée, de quoi en lire le
  *     sol (`ground.ts`) ;
- *   - Nominatim : l'adresse d'un point clé d'une séance — pied, haut, demi-tour.
+ *   - Nominatim : l'adresse d'un point clé d'une séance — pied, haut, demi-tour
+ *     —, le nom d'une voie de l'itinéraire, un repère ;
+ *   - OSRM, sur le serveur de FOSSGIS : le trajet à pied d'un point à un autre
+ *     (`routing.ts`).
  *
  * Leurs règles d'usage tiennent ici : un User-Agent qui dit qui demande, une
- * requête Nominatim par seconde au plus, et aucune question posée deux fois —
- * chaque réponse est gardée en base pour toujours (`geo_cache`). On n'envoie
- * que des points des montées, jamais le domicile de l'athlète : son départ
- * habituel sert à choisir les montées proches, il ne quitte pas ce processus.
+ * requête par seconde au plus à Nominatim et à OSRM, et aucune question posée
+ * deux fois — chaque réponse est gardée en base pour toujours (`geo_cache`).
+ *
+ * Le domicile de l'athlète ne part que vers OSRM, parce qu'il le demande : un
+ * itinéraire de porte à porte commence chez lui. Nominatim et Overpass ne
+ * reçoivent aucun point à moins de `HOME_PRIVACY_M` de chez lui.
  *
  * Ni clé ni compte. Un service injoignable laisse le sol inconnu : une séance
  * rapide ne se pose alors pas sur la montée, et le dit.
  */
+
+/**
+ * Rayon autour du domicile d'où aucun point ne part vers Nominatim ni Overpass,
+ * m : plusieurs pâtés de maisons, pour qu'aucune question ne désigne l'immeuble.
+ */
+export const HOME_PRIVACY_M = 250;
 
 /** Qui demande : l'application, pas une bibliothèque HTTP. */
 export const USER_AGENT = 'Cairn/1.0 (coaching trail personnel, mono-utilisateur)';
@@ -195,6 +206,43 @@ export async function withGround(
   });
 }
 
+/** Le raccord d'une boucle, lu comme un passage : la clé est le morceau de trace lui-même. */
+const crossingKey = (l: ClimbLoop) => `osm-ways:v1:${l.over.activityId}:${l.over.startIndex}-${l.over.endIndex}`;
+
+/**
+ * Les boucles, munies du sol du chemin qui relie leurs hauts — lu sur
+ * OpenStreetMap comme celui d'une montée, en une requête pour tous ceux qui
+ * manquent. Un raccord qu'Overpass n'a pas pu lire porte `ground: null`, et sa
+ * boucle ne se court pas en descendant (`loopRefusal`).
+ */
+export async function withLoopGround(loops: readonly ClimbLoop[]): Promise<ClimbLoop[]> {
+  const read = new Map<string, { ways: OsmWay[]; readAt: string }>();
+  const missing: ClimbLoop[] = [];
+  for (const l of loops) {
+    const key = crossingKey(l);
+    if (read.has(key) || missing.some((m) => crossingKey(m) === key)) continue;
+    const cached = await db.getGeo<{ ways: OsmWay[] }>(key);
+    if (cached) read.set(key, { ways: cached.value.ways, readAt: cached.fetchedAt });
+    else missing.push(l);
+  }
+  const tracks = missing.map((l) => queryTrack(l.over.profile)).filter((t) => t.length >= 2);
+  if (tracks.length > 0) {
+    const ways = await overpass(overpassQuery(tracks));
+    if (ways) {
+      const readAt = new Date().toISOString();
+      for (const l of missing) {
+        const own = waysNear(ways, queryTrack(l.over.profile));
+        await db.putGeo(crossingKey(l), { ways: own }, readAt);
+        read.set(crossingKey(l), { ways: own, readAt });
+      }
+    }
+  }
+  return loops.map((l) => {
+    const r = read.get(crossingKey(l));
+    return { ...l, over: { ...l.over, ground: r ? matchTrack(l.over.profile, r.ways, r.readAt) : null } };
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Nominatim : l'adresse d'un point
 // ─────────────────────────────────────────────────────────────────────────────
@@ -264,6 +312,81 @@ export async function addressOf(at: readonly [number, number]): Promise<string |
   const street = await reverse(at, 17);
   const house = await reverse(at, 18);
   return addressFrom(street, house);
+}
+
+/** Le point est-il assez loin du domicile pour partir vers Nominatim ou Overpass ? */
+export const awayFromHome = (at: readonly [number, number], home: readonly [number, number] | null | undefined) =>
+  !home || haversineM(at, home) >= HOME_PRIVACY_M;
+
+/**
+ * La voie où passe un point de l'itinéraire, par géocodage inverse — `null` à
+ * moins de `HOME_PRIVACY_M` du domicile : ce point-là ne part pas.
+ */
+export async function roadAt(
+  at: readonly [number, number],
+  home: readonly [number, number] | null | undefined,
+): Promise<string | null> {
+  if (!awayFromHome(at, home)) return null;
+  const hit = await reverse(at, 17);
+  return hit?.road ? streetName(hit.road) : null;
+}
+
+/** Un repère : un lieu qu'on reconnaît en courant, et sa distance au point, m. */
+export interface Landmark {
+  name: string;
+  /** Ce que c'est, pour OpenStreetMap : `man_made/tower`, `amenity/courthouse`… */
+  kind: string;
+  distanceM: number;
+}
+
+/**
+ * Ce qui fait un repère : un pont, un monument, un bâtiment public, une gare,
+ * un parc. Un restaurant ou un parking change d'enseigne ou ne se voit pas ;
+ * une poubelle n'est pas un lieu.
+ */
+const LANDMARK_KINDS = new Set([
+  'amenity/courthouse', 'amenity/place_of_worship', 'amenity/townhall', 'amenity/theatre', 'amenity/library',
+  'amenity/university', 'amenity/college', 'amenity/school', 'amenity/hospital', 'amenity/fountain',
+  'amenity/arts_centre', 'amenity/cinema', 'man_made/tower', 'man_made/bridge', 'man_made/lighthouse',
+  'railway/station', 'railway/halt', 'railway/funicular', 'leisure/park', 'leisure/garden', 'leisure/stadium',
+  'tourism/museum', 'tourism/attraction', 'tourism/viewpoint', 'historic/monument', 'historic/memorial',
+  'historic/church', 'historic/castle', 'historic/building', 'building/church', 'building/cathedral',
+  'place/square',
+]);
+/** Au-delà, le repère n'est plus au point : on ne le voit pas en y passant, m. */
+const LANDMARK_REACH_M = 45;
+
+/** Le repère d'une réponse Nominatim, s'il en est un. */
+export function landmarkFrom(json: unknown, at: readonly [number, number]): Landmark | null {
+  const j = json as { category?: string; type?: string; name?: string; lat?: string; lon?: string };
+  const kind = `${j.category}/${j.type}`;
+  if (!j.name || !LANDMARK_KINDS.has(kind) || j.lat == null || j.lon == null) return null;
+  const distanceM = Math.round(haversineM(at, [Number(j.lat), Number(j.lon)]));
+  return distanceM <= LANDMARK_REACH_M ? { name: j.name, kind, distanceM } : null;
+}
+
+/** Le repère le plus proche d'un point de l'itinéraire, s'il en est un — jamais près du domicile. */
+export async function landmarkAt(
+  at: readonly [number, number],
+  home: readonly [number, number] | null | undefined,
+): Promise<Landmark | null> {
+  if (!awayFromHome(at, home)) return null;
+  const key = `nominatim-poi:v1:${at[0].toFixed(5)},${at[1].toFixed(5)}`;
+  const cached = await db.getGeo<{ landmark: Landmark | null }>(key);
+  if (cached) return cached.value.landmark;
+  await nominatimSlot();
+  try {
+    const url =
+      `${NOMINATIM}?format=jsonv2&lat=${at[0].toFixed(6)}&lon=${at[1].toFixed(6)}&zoom=18&layer=poi` +
+      `&accept-language=fr`;
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const landmark = landmarkFrom(await res.json(), at);
+    await db.putGeo(key, { landmark });
+    return landmark;
+  } catch {
+    return null;
+  }
 }
 
 /** Le point, muni de son adresse, écrite comme le tronçon écrit déjà ses voies. */

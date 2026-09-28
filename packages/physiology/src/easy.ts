@@ -1,8 +1,9 @@
 import type {
-  ActivityStreams, EasySpeed, EasyZone, ParameterProvenance, PhysiologyModel, ZoneDefinition,
+  ActivityStreams, EasySpeed, EasyTerrain, EasyZone, ParameterProvenance, PhysiologyModel, ZoneDefinition,
 } from '@cairn/core';
 import { cleanHeartRate } from './decoupling.js';
 import { movingIndices } from './streams.js';
+import { MOUNTAIN_M_PER_KM } from './vertical.js';
 import { buildZones } from './zones.js';
 
 /**
@@ -111,8 +112,23 @@ export interface EasyRun {
   normalizedGradedSpeedMs: number;
   /** Vitesse au sol en mouvement, m/s. */
   groundSpeedMs: number;
+  /** Dénivelé positif et distance de la sortie, m : c'est par eux qu'elle dit son terrain. */
+  elevationGainM: number;
+  distanceM: number;
   hr: HrHistogram;
 }
+
+/**
+ * Le terrain d'une sortie : le sentier dès qu'elle est de montagne au sens de
+ * la convention de verticalité (`MOUNTAIN_M_PER_KM`), le plat sinon.
+ *
+ * La coupure est là, et pas entre roulant et vallonné : la vitesse graduée
+ * corrige le relief d'une sortie vallonnée — 11,6 km/h sous le plafond de Z2,
+ * contre 11,8 sur le roulant —, pas celui d'une sortie où l'on marche les
+ * pentes et où l'on freine en descente, 10,7 km/h sur les siennes.
+ */
+export const easyTerrainOf = (run: Pick<EasyRun, 'elevationGainM' | 'distanceM'>): EasyTerrain =>
+  run.distanceM > 0 && (run.elevationGainM / run.distanceM) * 1000 >= MOUNTAIN_M_PER_KM ? 'trail' : 'flat';
 
 /**
  * Fenêtre des sorties qui disent l'allure facile, jours. Assez longue pour
@@ -125,44 +141,61 @@ export const EASY_SPEED_WINDOW_DAYS = 90;
 export const EASY_SPEED_MIN_RUNS = 2;
 
 const EASY_ZONES: readonly EasyZone[] = ['Z1', 'Z2'];
+export const EASY_TERRAINS: readonly EasyTerrain[] = ['flat', 'trail'];
+
+/** Les allures faciles d'un modèle, zone par zone et terrain par terrain. */
+export type EasySpeeds = NonNullable<PhysiologyModel['easySpeeds']>;
+
+/** Clé de provenance d'une allure facile : `easySpeeds.Z2.trail`. */
+export const easySpeedKey = (zone: EasyZone, terrain: EasyTerrain) => `easySpeeds.${zone}.${terrain}`;
 
 /**
- * L'allure facile de l'athlète, zone par zone, lue dans ses sorties récentes.
+ * L'allure facile de l'athlète, zone par zone et terrain par terrain, lue dans
+ * ses sorties récentes.
  *
  * Une sortie se range dans la zone la plus facile dont elle a tenu le plafond :
  * un décrassage couru à 133 bpm tient aussi le plafond de la Z2, mais il ne dit
- * rien de ce que l'athlète court entre 141 et 155. L'allure d'une zone est la
- * moyenne de ses sorties pondérée par leur durée — en vitesse graduée
- * normalisée pour la charge, au sol pour la distance.
+ * rien de ce que l'athlète court entre 141 et 155. Elle se range ensuite dans
+ * son terrain (`easyTerrainOf`) : une rando-course ne se court pas à l'allure
+ * d'un footing, et la moyenne des deux ne décrit ni l'une ni l'autre. L'allure
+ * d'un couple est la moyenne de ses sorties pondérée par leur durée — en
+ * vitesse graduée normalisée pour la charge, au sol pour la distance.
  *
  * Seule une allure mesurée — deux sorties au moins — est rendue. Faute de quoi
- * la zone n'en a pas, et `easySpeedOf` retombe sur la valeur par défaut, lue
+ * le couple n'en a pas, et `easySpeedOf` retombe sur la valeur par défaut, lue
  * sur les zones du modèle au moment où on la demande : stockée, elle survivrait
  * aux seuils qui l'ont produite.
  */
 export function measureEasySpeeds(
   zones: readonly ZoneDefinition[],
   runs: readonly EasyRun[],
-): { speeds: Partial<Record<EasyZone, EasySpeed>>; provenance: Record<EasyZone, ParameterProvenance> } {
+): { speeds: EasySpeeds; provenance: Record<string, ParameterProvenance> } {
   const ceilingOf = (key: EasyZone) => Math.round(zones.find((z) => z.key === key)!.hrMax);
   const recent = runs.filter((r) => r.ageDays <= EASY_SPEED_WINDOW_DAYS && r.durationS > 0);
   const holds = (r: EasyRun, key: EasyZone) => checkHrCeiling(r.hr, ceilingOf(key))?.respected === true;
 
-  const speeds: Partial<Record<EasyZone, EasySpeed>> = {};
-  const provenance = { Z1: 'default', Z2: 'default' } as Record<EasyZone, ParameterProvenance>;
+  const speeds: EasySpeeds = {};
+  const provenance: Record<string, ParameterProvenance> = {};
   EASY_ZONES.forEach((key, i) => {
     const easier = EASY_ZONES.slice(0, i);
-    const held = recent.filter((r) => holds(r, key) && !easier.some((e) => holds(r, e)));
-    const seconds = held.reduce((a, r) => a + r.durationS, 0);
-    if (held.length < EASY_SPEED_MIN_RUNS || seconds <= 0) return;
-    const weighted = (f: (r: EasyRun) => number) => held.reduce((a, r) => a + f(r) * r.durationS, 0) / seconds;
-    speeds[key] = {
-      hrCeiling: ceilingOf(key),
-      speedMs: round3(weighted((r) => r.normalizedGradedSpeedMs)),
-      groundSpeedMs: round3(weighted((r) => r.groundSpeedMs)),
-      runs: held.length,
-    };
-    provenance[key] = 'field';
+    const inZone = recent.filter((r) => holds(r, key) && !easier.some((e) => holds(r, e)));
+    for (const terrain of EASY_TERRAINS) {
+      provenance[easySpeedKey(key, terrain)] = 'default';
+      const held = inZone.filter((r) => easyTerrainOf(r) === terrain);
+      const seconds = held.reduce((a, r) => a + r.durationS, 0);
+      if (held.length < EASY_SPEED_MIN_RUNS || seconds <= 0) continue;
+      const weighted = (f: (r: EasyRun) => number) => held.reduce((a, r) => a + f(r) * r.durationS, 0) / seconds;
+      speeds[key] = {
+        ...speeds[key],
+        [terrain]: {
+          hrCeiling: ceilingOf(key),
+          speedMs: round3(weighted((r) => r.normalizedGradedSpeedMs)),
+          groundSpeedMs: round3(weighted((r) => r.groundSpeedMs)),
+          runs: held.length,
+        },
+      };
+      provenance[easySpeedKey(key, terrain)] = 'field';
+    }
   });
   return { speeds, provenance };
 }
@@ -174,17 +207,21 @@ function zoneDefault(zones: readonly ZoneDefinition[], key: EasyZone): EasySpeed
 }
 
 /**
- * L'allure facile d'une zone, avec sa provenance : mesurée quand le modèle la
- * porte, sinon la vitesse du plafond de la zone — celle que les seuils
- * associent à cette FC —, déclarée par défaut. Un modèle construit avant qu'on
- * la mesure n'en porte aucune.
+ * L'allure facile d'une zone sur un terrain, avec sa provenance : mesurée quand
+ * le modèle la porte, sinon la vitesse du plafond de la zone — celle que les
+ * seuils associent à cette FC —, déclarée par défaut. Un modèle construit avant
+ * qu'on la mesure n'en porte aucune ; un modèle qui la mesurait tous terrains
+ * confondus non plus, faute de dire lequel.
  */
 export function easySpeedOf(
   model: PhysiologyModel,
   zone: EasyZone,
+  terrain: EasyTerrain = 'flat',
 ): EasySpeed & { provenance: ParameterProvenance } {
-  const measured = model.easySpeeds?.[zone];
-  if (measured) return { ...measured, provenance: model.provenance?.[`easySpeeds.${zone}`] ?? 'field' };
+  const measured = model.easySpeeds?.[zone]?.[terrain];
+  if (measured?.speedMs) {
+    return { ...measured, provenance: model.provenance?.[easySpeedKey(zone, terrain)] ?? 'field' };
+  }
   return { ...zoneDefault(buildZones(model), zone), provenance: 'default' };
 }
 

@@ -1,5 +1,5 @@
 import { sessionDuration } from '@cairn/core/format';
-import type { EccentricMovement, TerrainStretch } from '@cairn/core';
+import type { EccentricMovement, SessionRoute, TerrainStretch } from '@cairn/core';
 
 /**
  * Les appels partent de l'origine qui a servi la page — `/api/...`, jamais
@@ -34,6 +34,19 @@ export async function getStamped<T>(path: string): Promise<Stamped<T>> {
 export async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    const parsed = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error((parsed as { error?: string }).error ?? `Erreur ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function put<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
@@ -161,9 +174,13 @@ export function spelledDuration(seconds: number | null | undefined): string {
  * Ponctuation française : l'espace qui précède « : » ou ferme un guillemet ne
  * doit pas se retrouver en début de ligne. À 390 px, une ligne sur trois casse
  * à cet endroit.
+ *
+ * Et le dernier mot part avec l'avant-dernier : seul sur sa ligne,
+ * « l'échauffement. » finissait la recommandation du matin — `text-wrap:
+ * pretty` ne retient pas un mot long.
  */
 export const nbsp = (text: string): string =>
-  text.replace(/ ([:;!?»])/g, '\u00a0$1').replace(/«\u0020/g, '«\u00a0');
+  text.replace(/ ([:;!?»])/g, '\u00a0$1').replace(/«\u0020/g, '«\u00a0').replace(/ ([^ ]+)$/, '\u00a0$1');
 
 const DAYS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -253,11 +270,15 @@ export function markdown(src: string): string {
   let table: string[][] | null = null;
 
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  // Le titre de sa colonne, porté par chaque case : dans une carte étroite, le
+  // tableau se replie en blocs et chaque valeur dit ce qu'elle est.
+  const label = (c: string | undefined) =>
+    c ? ` data-label="${esc(c.replace(/[*`]/g, '')).replace(/"/g, '&quot;')}"` : '';
   const closeTable = () => {
     if (!table) return;
     const [head, ...rows] = table;
     out.push('<table><thead><tr>' + (head ?? []).map((c) => `<th>${inline(c)}</th>`).join('') + '</tr></thead><tbody>');
-    for (const r of rows) out.push('<tr>' + r.map((c) => `<td>${inline(c)}</td>`).join('') + '</tr>');
+    for (const r of rows) out.push('<tr>' + r.map((c, i) => `<td${label(head?.[i])}>${inline(c)}</td>`).join('') + '</tr>');
     out.push('</tbody></table>');
     table = null;
   };
@@ -515,6 +536,8 @@ export interface PlanResponse {
   sessions: SessionRow[];
   absences: DeclaredAbsence[];
   completedByDate: Record<string, { id: string; name: string }>;
+  /** Le domicile, par son adresse : `null` tant que l'athlète ne l'a pas donné. */
+  home?: { address: string } | null;
 }
 
 /** D'où vient une consigne : le document, sa date, l'extrait littéral. */
@@ -584,4 +607,6 @@ export interface SessionRow {
   absenceId?: string;
   /** L'état de la séance sur Garmin, pour les sept prochains jours seulement. */
   garmin?: GarminStatus | null;
+  /** L'itinéraire de porte à porte d'une séance de terrain, quand il est à jour. */
+  route?: SessionRoute | null;
 }

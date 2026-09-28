@@ -254,6 +254,12 @@ export const plannedSessions = sqliteTable(
      * Ajoutée par `ensureSessionColumns`, le service ne passant pas `db:push`.
      */
     history: text('history', { mode: 'json' }),
+    /**
+     * SessionLightening[] — les allègements des règles de charge, règle et jour :
+     * une règle n'allège qu'une fois une même séance. Ajoutée par
+     * `ensureSessionColumns`.
+     */
+    lightenings: text('lightenings', { mode: 'json' }),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },
@@ -435,6 +441,37 @@ export const geoCache = sqliteTable('geo_cache', {
   /** La réponse, réduite à ce qu'on en lit. */
   value: text('value', { mode: 'json' }).notNull(),
   fetchedAt: text('fetched_at').notNull(),
+});
+
+/**
+ * Le domicile de l'athlète : d'où partent et où reviennent ses itinéraires.
+ *
+ * À part du profil, pour une raison : ce qui lit le profil — le coach, le
+ * serveur MCP, l'écran de physiologie — n'a pas à le lire, et ne peut donc pas
+ * l'emporter. Seuls `getHome` et `setHome` y touchent ; il ne quitte Cairn que
+ * vers le moteur d'itinéraire. Créée au démarrage par `ensureRouteTables`.
+ */
+export const athleteHomes = sqliteTable('athlete_homes', {
+  athleteId: text('athlete_id').primaryKey(),
+  /** AthleteHome, sérialisé. */
+  value: text('value', { mode: 'json' }).notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+/**
+ * L'itinéraire de porte à porte d'une séance, tel qu'il a été construit.
+ *
+ * Dérivé, jamais autoritaire : il se refait quand sa base — domicile, blocs,
+ * allures — ne correspond plus à la séance. Il porte le domicile : seule
+ * l'application le lit, pour l'écran et le fichier GPX de l'athlète.
+ */
+export const sessionRoutes = sqliteTable('session_routes', {
+  sessionId: text('session_id').primaryKey(),
+  /** Ce sur quoi il repose (`routeBasis`). */
+  basis: text('basis').notNull(),
+  /** SessionRoute, sérialisé. */
+  value: text('value', { mode: 'json' }).notNull(),
+  computedAt: text('computed_at').notNull(),
 });
 
 export type AthleteRow = typeof athletes.$inferSelect;

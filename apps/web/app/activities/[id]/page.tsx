@@ -139,7 +139,7 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
             </Card>
           )}
 
-          <div className="grid grid-2" style={{ marginBottom: 14 }}>
+          <div className="grid grid-2 grid-wide" style={{ marginBottom: 14 }}>
             <Card title="Répartition d'intensité" hint={`Indice de polarisation ${num(analysis.zones.polarizationIndex, 2)}`}>
               <ZoneBar fractions={analysis.zones.fraction} />
               <Legend items={[
@@ -167,21 +167,23 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
 
           {analysis.intervals.length > 0 && (
             <Card title={`Blocs d'effort détectés (${num(analysis.intervals.length)})`} style={{ marginBottom: 14 }}>
-              <table>
+              {/* Neuf colonnes ; à l'étroit, chaque bloc devient une ligne d'étiquettes
+                  (`.t-stack`) : la case dit ce qu'elle mesure, puisque l'en-tête n'est plus là. */}
+              <table className="t-stack">
                 <thead>
                   <tr><th>#</th><th className="right">Durée</th><th className="right">Distance</th><th className="right">Allure</th><th className="right">Allure corrigée</th><th className="right">Pente</th><th className="right">FC</th><th className="right">Cadence</th><th>Zone</th></tr>
                 </thead>
                 <tbody>
                   {analysis.intervals.map((iv) => (
                     <tr key={iv.index}>
-                      <td className="mono faint">{num(iv.index)}</td>
-                      <td className="right mono">{clock(iv.durationS)}</td>
+                      <td className="mono faint" data-label="Bloc">{num(iv.index)}</td>
+                      <td className="right mono" data-label="Durée">{clock(iv.durationS)}</td>
                       <td className="right mono">{num(iv.distanceM)} m</td>
-                      <td className="right mono">{pace(iv.avgSpeedMs)}</td>
-                      <td className="right mono" style={{ color: 'var(--metabolic)' }}>{pace(iv.avgGradedSpeedMs)}</td>
-                      <td className="right mono">{num(iv.avgGrade * 100, 1)} %</td>
-                      <td className="right mono">{iv.avgHr != null ? num(iv.avgHr) : '—'}</td>
-                      <td className="right mono">{iv.avgCadence != null ? num(iv.avgCadence) : '—'}</td>
+                      <td className="right mono" data-label="Allure">{pace(iv.avgSpeedMs)}</td>
+                      <td className="right mono" data-label="corrigée" style={{ color: 'var(--metabolic)' }}>{pace(iv.avgGradedSpeedMs)}</td>
+                      <td className="right mono" data-label="Pente">{num(iv.avgGrade * 100, 1)} %</td>
+                      <td className="right mono" data-label="FC">{iv.avgHr != null ? num(iv.avgHr) : '—'}</td>
+                      <td className="right mono" data-label="Cadence">{iv.avgCadence != null ? num(iv.avgCadence) : '—'}</td>
                       <td><span className="badge">{iv.zone}</span></td>
                     </tr>
                   ))}
