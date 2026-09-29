@@ -13,3 +13,5 @@ data/*.sqlite*
 
 # Captures de réponses Strava : données de localisation personnelles.
 .cairn-capture/
+# Copies de travail des sessions de build parallèles (claude --worktree)
+.claude/worktrees/

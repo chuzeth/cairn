@@ -46,8 +46,17 @@ selon l'interprétation retenue. Si la demande te paraît fausse, ou qu'une meil
 approche existe, dis-le en une phrase et poursuis la tâche telle que demandée —
 plutôt que de la rétrécir, l'élargir ou la transformer en silence.
 
-Écris peu. Le rapport de fin de tâche tient en quelques phrases : ce qui a changé,
-ce qui a été mesuré, ce qui reste ouvert. Ni récapitulatif structuré, ni section
+Enchaîne les étapes qui ne demandent pas l'avis de Pierre. Ne rends la main que si
+rien ne peut avancer sans lui, ou avant une action destructrice ou irréversible.
+Ne t'arrête pas sur un compte rendu qui annonce l'étape suivante : fais-la. Si tu
+ne peux pas finir, dis ce qui manque et pourquoi.
+
+Pour un défaut, écris d'abord le test qui le reproduit, et montre qu'il échouait
+avant le correctif. Un test qui passe des deux côtés ne prouve rien.
+
+Écris peu. Le rapport de fin de tâche tient en quelques phrases : d'abord ce qui
+attend une décision de Pierre, s'il y en a ; puis ce qui a changé, ce qui a été
+mesuré, ce qui reste ouvert. Ni récapitulatif structuré, ni section
 « prochaines étapes » non demandée. Les fichiers que tu écris suivent la même
 règle : couvrir le fond, sans remplissage.
 
