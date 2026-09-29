@@ -2240,6 +2240,47 @@ export function restDay(): SessionTemplate {
 }
 
 /**
+ * Ce qu'une séance devient quand le coach change son type : le nom sous lequel
+ * elle se présente et l'intention de ce type.
+ *
+ * Le nom est un format sans nombres — « Seuil », pas « Seuil 5 × 5 min » : les
+ * blocs sont ceux que le coach écrit, et le titre ne peut annoncer que ce
+ * qu'ils portent. L'intention est celle du modèle de séance du type, sauf quand
+ * elle chiffre un format que rien ne garantit ici. Un type absent de la table
+ * ne s'atteint pas par un changement de type : une course s'enregistre comme
+ * objectif, un repos se décide par l'annulation.
+ */
+const TYPE_PRESENTATION: Partial<
+  Record<SessionType, { format: string; intent: (model: PhysiologyModel) => string }>
+> = {
+  recovery: { format: 'Décrassage', intent: (m) => recovery(m).intent },
+  endurance: { format: 'Footing', intent: (m) => endurance(m).intent },
+  long_run: { format: 'Sortie longue', intent: (m) => longRun(m).intent },
+  long_trail: { format: 'Rando-course', intent: (m) => longTrail(m).intent },
+  tempo: { format: 'Tempo', intent: (m) => tempo(m).intent },
+  threshold: { format: 'Seuil', intent: (m) => threshold(m).intent },
+  vo2max: {
+    format: 'PMA',
+    intent: () => "Accumuler du temps près du plafond de VO2max : c'est ce temps-là le stimulus, pas la vitesse.",
+  },
+  hill_repeats: { format: 'Côtes', intent: (m) => hillRepeats(m).intent },
+  downhill: { format: 'Descente technique', intent: (m) => downhillSession(m).intent },
+  race_pace: { format: 'Allure spécifique', intent: (m) => racePace(m).intent },
+  strength: { format: 'Renforcement', intent: (m) => strength(m).intent },
+};
+
+/** Les types qu'une séance peut prendre par un changement de type. */
+export const RETYPABLE_SESSION_TYPES = Object.keys(TYPE_PRESENTATION) as SessionType[];
+
+export function typePresentation(
+  type: SessionType,
+  model: PhysiologyModel,
+): { format: string; intent: string } | null {
+  const p = TYPE_PRESENTATION[type];
+  return p ? { format: p.format, intent: p.intent(model) } : null;
+}
+
+/**
  * Rend une séance lisible en texte, pour le chat et l'export.
  *
  * Le critère de réussite y figure quand il y en a un : une séance dont on ne

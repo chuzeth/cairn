@@ -59,7 +59,8 @@ paquet : le serveur trouve la bonne base quel que soit le répertoire de lanceme
 | `list_races` / `upsert_race` | Objectifs de course, profil de parcours, ambition. |
 | `predict_race` | Temps prédit, intervalle, plan d'allure, ravitaillement, facteurs limitants. |
 | `rebuild_plan` | Reconstruction complète de la préparation — un aperçu, sauf avec `apply: true`. |
-| `modify_session` | Déplacement, changement de statut, ajustement de charge d'une séance. |
+| `modify_session` | Déplacement, changement de statut ou de type, ajustement de charge, remplacement du contenu d'une séance — un aperçu (avant, après, charge, ratios), sauf avec `apply: true`. |
+| `declare_absence` | Période datée sans entraînement ; retire les séances qu'elle recouvre — un aperçu, sauf avec `apply: true`. |
 | `get_check_ins` | Relevés quotidiens déclarés. |
 | `update_availability` | Contraintes de disponibilité. |
 | `compare_periods` | Comparaison objective de deux blocs d'entraînement. |

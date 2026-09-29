@@ -147,6 +147,9 @@ vi.mock('@cairn/db', () => ({
 
 const { applyAdjustments, downhillSession, evaluateAdjustments, rematchRecent, recovery } = await import('@cairn/coach');
 
+/** Un point du tracé, `d` mètres à l'est du départ : les sorties d'ici se courent dehors, au GPS. */
+const east = (d: number): [number, number] => [45.76, 4.83 + d / 77_700];
+
 /** 20 min d'échauffement, 20 min à 14,3 km/h et 175 bpm, 21 min de retour : la forme du 21/09. */
 function testRun(): ActivityStreams {
   const phases = [
@@ -155,7 +158,7 @@ function testRun(): ActivityStreams {
     { s: 1260, v: 3.0, hr: 145 },
   ];
   const out: ActivityStreams = {
-    time: [], distance: [], altitude: [], velocity: [], grade: [], heartrate: [], moving: [],
+    time: [], distance: [], altitude: [], velocity: [], grade: [], heartrate: [], moving: [], latlng: [],
   };
   let d = 0;
   for (const p of phases) {
@@ -168,6 +171,7 @@ function testRun(): ActivityStreams {
       out.grade.push(0);
       out.heartrate!.push(p.hr);
       out.moving!.push(true);
+      out.latlng!.push(east(d));
     }
   }
   return out;
@@ -419,7 +423,7 @@ function recoveryRun(hr: [number, number][] = [[125, 600], [133, 1500], [139, 39
   return {
     time: velocity.map((_, i) => i), distance: velocity.map((v, i) => v * (i + 1)),
     altitude: new Array<number>(n).fill(200), velocity, grade: new Array<number>(n).fill(0), heartrate,
-    moving: new Array<boolean>(n).fill(true),
+    moving: new Array<boolean>(n).fill(true), latlng: velocity.map((v, i) => east(v * (i + 1))),
   };
 }
 

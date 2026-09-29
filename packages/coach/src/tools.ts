@@ -1,6 +1,6 @@
 import type {
   AbsenceKind, CourseProfile, CourseUnknown, DecisionOrigin, PhysiologyModel, PlannedSession,
-  RaceGoal, SessionBlock,
+  RaceGoal, SessionBlock, SessionType,
 } from '@cairn/core';
 import {
   anchorRelativeDates, localDate, sessionDuration, signedDecimal, courseFromLapFormat, courseHasUnknown,
@@ -31,7 +31,8 @@ import { countDescents, readTerrain, terrainHint } from './terrainSessions.js';
 import { withAddresses } from './geo.js';
 import { parseSessionBlocks } from './sessionContent.js';
 import {
-  eccentricStrengthOf, renderSession, sessionTotals, transformSession,
+  RETYPABLE_SESSION_TYPES, eccentricStrengthOf, renderSession, retitleFromContent, sessionTotals, transformSession,
+  typePresentation,
 } from './sessionLibrary.js';
 import {
   currentCriticalSpeed, currentModel, fitnessAtPlanStart, knownLoadsBefore, loadAthleteState,
@@ -372,11 +373,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'modify_session',
     description:
-      "Modifie une séance planifiée : déplacement, changement de statut, ajustement de charge, ou remplacement du contenu prescrit. Ce que tu décides est le contenu — date, type, durée, dénivelé, charge — ; la présentation, elle, suit les règles comme pour toute séance : titre, intention, « pourquoi » en une phrase, et les consignes d'une rando-course ou d'un test maximal. Ton raisonnement (`rationale`) n'est pas affiché sous « pourquoi » : il rejoint l'historique de la séance, daté, avec les consignes que la présentation remplace. Une date relative — « ce soir », « demain » — y est remplacée par la date qu'elle désigne aujourd'hui. Toute modification est journalisée. La réponse porte les jours où le plan, modification comprise, dépasse le seuil de ratio charge aiguë/chronique d'une filière, et ceux d'avant la modification : un dépassement se lit au moment où la séance s'écrit.",
+      "Modifie une séance planifiée : déplacement, changement de statut, changement de type, ajustement de charge, ou remplacement du contenu prescrit. Ce que tu décides est le contenu — date, type, durée, dénivelé, charge — ; la présentation, elle, suit les règles comme pour toute séance : titre, intention, « pourquoi » en une phrase, et les consignes d'une rando-course ou d'un test maximal. Ton raisonnement (`rationale`) n'est pas affiché sous « pourquoi » : il rejoint l'historique de la séance, daté, avec les consignes que la présentation remplace. Une date relative — « ce soir », « demain » — y est remplacée par la date qu'elle désigne aujourd'hui. Toute modification est journalisée. La réponse porte les jours où le plan, modification comprise, dépasse le seuil de ratio charge aiguë/chronique d'une filière, et ceux d'avant la modification : un dépassement se lit au moment où la séance s'écrit. " +
+      "Sans `apply: true`, rien n'est enregistré : l'outil rend un aperçu — la séance avant et après, sa charge, les ratios. " +
+      "Procédure : appelle-le sans `apply`, soumets l'aperçu à Pierre, et ne le rappelle avec `apply: true` qu'après sa confirmation. Une clé absente de ce schéma est refusée.",
     input_schema: obj(
       {
         session_id: str('Identifiant de la séance.'),
         new_date: str('Nouvelle date, YYYY-MM-DD.'),
+        type: str(
+          "Nouveau type de séance. Le titre et l'intention suivent le nouveau type. Un changement de type remplace le contenu : `blocks` est alors obligatoire.",
+          { enum: RETYPABLE_SESSION_TYPES },
+        ),
         status: str(
           "Nouveau statut. « completed » : la séance prescrite a eu lieu ; « replaced » : autre chose a été fait ce jour-là.",
           { enum: ['planned', 'completed', 'partial', 'missed', 'moved', 'cancelled', 'replaced'] },
@@ -397,6 +404,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           "Ton raisonnement : pourquoi cette modification. Obligatoire. Il rejoint l'historique de la séance ; " +
             "sa première phrase résume la décision dans le journal et dans les aperçus de reconstruction.",
         ),
+        apply: bool(
+          "Enregistrer la modification. Seul `true` enregistre ; absent ou faux, l'outil rend l'aperçu et ne touche à rien.",
+        ),
       },
       ['session_id', 'rationale'],
     ),
@@ -411,7 +421,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: 'declare_absence',
     description:
       "Enregistre une absence que Pierre a annoncée : une période datée pendant laquelle il ne s'entraînera pas — coupure choisie, maladie, blessure, déplacement. Les séances que la période recouvre sont retirées du plan : ni à faire, ni manquées, et la règle « séance manquée » ne se déclenche pas dessus. " +
-      "Procédure : tu interprètes la phrase, tu lui soumets les dates que tu en as comprises avec `preview` pour lui montrer les séances concernées, tu attends sa confirmation, puis tu enregistres. N'enregistre jamais une absence qu'il n'a pas confirmée. " +
+      "Sans `apply: true`, rien n'est enregistré : l'outil rend un aperçu — les séances que la période recouvre, celles qui seraient retirées et celles qui resteraient. " +
+      "Procédure : tu interprètes la phrase, tu l'appelles sans `apply` pour lui soumettre les dates que tu en as comprises et les séances concernées, tu attends sa confirmation, puis tu le rappelles avec `apply: true`. N'enregistre jamais une absence qu'il n'a pas confirmée. Une clé absente de ce schéma est refusée. " +
       "`reason` reprend ses mots, pas ta reformulation. " +
       "Le plan n'est pas reconstruit : la charge qui suit la coupure est une décision d'entraînement, à prendre avec lui ensuite (`rebuild_plan`). La chute de CTL, elle, est réelle et reste mesurée — ne la raconte pas comme un abandon.",
     input_schema: obj(
@@ -426,8 +437,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         from_check_in_date: str(
           "Date du point du jour d'où vient la phrase, YYYY-MM-DD. La note cesse alors d'être en attente dans l'application.",
         ),
-        preview: bool(
-          "Si vrai, ne rien enregistrer : renvoyer seulement les séances que la période recouvre, pour les lui soumettre avant confirmation.",
+        apply: bool(
+          "Enregistrer l'absence. Seul `true` enregistre ; absent ou faux, l'outil rend l'aperçu et ne touche à rien.",
         ),
       },
       ['start_date', 'end_date', 'kind', 'reason'],
@@ -1455,6 +1466,13 @@ export async function executeTool(
           );
         }
       }
+      // Même règle que rebuild_plan : une clé mal nommée ne transforme pas un
+      // aperçu en écriture, et écrire se demande.
+      refuseUnknownKeys(name, input);
+      const apply = input.apply;
+      if (apply !== undefined && typeof apply !== 'boolean') {
+        throw new Error(`apply attend un booléen — reçu ${JSON.stringify(apply)}. Rien n'a été modifié.`);
+      }
 
       const at = new Date().toISOString();
       const said = anchorRelativeDates(rationale.trim(), at);
@@ -1476,6 +1494,29 @@ export async function executeTool(
       const target = all.find((s) => s.id === sessionId);
       if (!target) throw new Error(`Séance ${sessionId} introuvable.`);
       const model = await currentModel(athleteId);
+
+      // Un changement de type change la séance : ses blocs, son titre, son
+      // intention. Une pyramide devenue footing sans cela restait « Seuil ».
+      const newType = arg<SessionType>(input, 'type');
+      const retyped = newType !== undefined && newType !== target.type;
+      if (newType !== undefined && !RETYPABLE_SESSION_TYPES.includes(newType)) {
+        throw new Error(
+          `type attendu parmi ${RETYPABLE_SESSION_TYPES.join(', ')} — reçu « ${String(newType)} ». Rien n'a été modifié.`,
+        );
+      }
+      if (retyped && rawBlocks === undefined) {
+        throw new Error(
+          `Changer le type (${target.type} → ${newType}) change le contenu : décris-le dans \`blocks\`. ` +
+            "Sans eux, la séance porterait les blocs de l'ancien type sous le nom du nouveau. Rien n'a été modifié.",
+        );
+      }
+      if (retyped) {
+        const p = typePresentation(newType, model)!;
+        patch.type = newType;
+        patch.intent = p.intent;
+        // Le format du nouveau type ; les nombres du titre viendront des blocs.
+        patch.title = p.format;
+      }
 
       let blocks: SessionBlock[] | undefined;
       let amendments: string[] = [];
@@ -1519,6 +1560,7 @@ export async function executeTool(
         decision,
         rationale: reasoning,
       };
+      if (retyped) decided.title = retitleFromContent(decided);
       // Encore à venir, elle se présente comme toute séance ; un statut, lui,
       // se dit par la première phrase de ce qui l'a fixé.
       const upcoming = decided.status === 'planned' && decided.date >= localDate(at);
@@ -1562,6 +1604,49 @@ export async function executeTool(
         ? ` ⚠ Ratio de charge projeté au-delà de son seuil : ${describeRatioExceedances(ratios.after)}.`
         : '';
 
+      const ratiosContent = ratios
+        ? {
+            ratios_de_charge: {
+              ...ratioContent(ratios.after),
+              du: ratios.from,
+              au: ratios.to,
+              depassements_avant_modification: ratioContent(ratios.before).depassements,
+            },
+          }
+        : {};
+
+      // ── L'aperçu, par défaut : la séance avant et après, ce qu'elle pèse, les
+      // ratios. Rien ne s'écrit avant qu'il ait été montré et confirmé.
+      if (apply !== true) {
+        const weighs = (x: PlannedSession) => ({
+          type: x.type,
+          titre: x.title,
+          date: x.date,
+          statut: x.status,
+          duree_s: x.plannedDurationS,
+          denivele_m: x.plannedElevationGainM ?? null,
+          charge: x.plannedLoad,
+          charge_mecanique: x.plannedMechanicalLoad ?? null,
+          detail: renderSession(x),
+        });
+        return {
+          summary:
+            `Aperçu, rien n'est enregistré — séance ${sessionId} : « ${target.title} » → « ${presented.title} »` +
+            (ratios?.after.length ? ` — ⚠ ${ratios.after.length} jour(s) au-delà d'un seuil de ratio de charge` : ''),
+          content: {
+            enregistre: false,
+            session_id: sessionId,
+            avant: weighs(target),
+            apres: weighs({ ...decided, ...presented } as PlannedSession),
+            ...(amendments.length ? { amendements: amendments } : {}),
+            ...ratiosContent,
+            a_faire:
+              "Soumets à Pierre la séance avant et après, sa charge et les ratios. S'il confirme, rappelle cet outil " +
+              'avec les mêmes arguments et `apply: true`.',
+          },
+        };
+      }
+
       await db.updateSession(sessionId, patch as never);
       const plan = await db.getActivePlan(athleteId);
       if (plan) {
@@ -1580,20 +1665,12 @@ export async function executeTool(
             : `Séance ${sessionId} modifiée${amendments.length ? ' — le dénivelé a dû céder' : ''}`) +
           (ratios?.after.length ? ` — ⚠ ${ratios.after.length} jour(s) au-delà d'un seuil de ratio de charge` : ''),
         content: {
+          enregistre: true,
           session_id: sessionId,
           modifications: patch,
           // Ce que la séance a dû céder pour rester exécutable : à relayer tel quel.
           ...(amendments.length ? { amendements: amendments } : {}),
-          ...(ratios
-            ? {
-                ratios_de_charge: {
-                  ...ratioContent(ratios.after),
-                  du: ratios.from,
-                  au: ratios.to,
-                  depassements_avant_modification: ratioContent(ratios.before).depassements,
-                },
-              }
-            : {}),
+          ...ratiosContent,
           // Ce que l'athlète lira : le contenu prescrit, présenté comme il le verra.
           apercu: renderSession(presented),
           historique: presented.history ?? [],
@@ -1611,6 +1688,14 @@ export async function executeTool(
     }
 
     case 'declare_absence': {
+      // Il écrivait par défaut, et l'aperçu se demandait : l'inverse de
+      // rebuild_plan. Une clé ignorée — `preview` d'hier — ne doit pas devenir
+      // une écriture.
+      refuseUnknownKeys(name, input);
+      const apply = input.apply;
+      if (apply !== undefined && typeof apply !== 'boolean') {
+        throw new Error(`apply attend un booléen — reçu ${JSON.stringify(apply)}. Rien n'a été enregistré.`);
+      }
       const startDate = arg<string>(input, 'start_date');
       const endDate = arg<string>(input, 'end_date');
       const reason = arg<string>(input, 'reason');
@@ -1637,7 +1722,7 @@ export async function executeTool(
         statut: s.status,
       });
 
-      if (arg<boolean>(input, 'preview')) {
+      if (apply !== true) {
         // La règle de retrait est la même que celle qui s'appliquera : ce qu'il
         // confirme est exactement ce qui sera fait.
         const would = withdrawalsFor(
@@ -1652,7 +1737,8 @@ export async function executeTool(
             periode: { du: startDate, au: endDate, jours: days },
             seances_retirees: covered.filter((s) => ids.has(s.id)).map(describe),
             seances_conservees: covered.filter((s) => !ids.has(s.id)).map(describe),
-            a_faire: "Soumets ces dates et ces séances à Pierre. S'il confirme, rappelle cet outil sans preview.",
+            a_faire:
+              "Soumets ces dates et ces séances à Pierre. S'il confirme, rappelle cet outil avec les mêmes arguments et `apply: true`.",
           },
         };
       }

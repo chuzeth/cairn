@@ -464,6 +464,9 @@ export interface ActivityStreams {
   moving?: boolean[];
 }
 
+/** Qualité GPS d'une sortie, jugée sur ses coordonnées (`gpsQualityOf`). */
+export type GpsQuality = 'good' | 'poor' | 'none';
+
 export interface Activity {
   id: string;
   stravaId?: number;
@@ -626,6 +629,13 @@ export interface IntervalDetection {
 export interface ActivityAnalysis {
   activityId: string;
   computedAt: string;
+  /**
+   * La qualité GPS avec laquelle la sortie a été lue. Avec `trainer`, elle dit
+   * si la sortie mesure sa vitesse au sol (`measuresGroundSpeed`) ; sinon, elle
+   * ne porte ni courbe de vitesse, ni blocs, ni preuve d'effort maximal, et sa
+   * charge se lit sur la FC. Absente des analyses antérieures au moteur 1.4.0.
+   */
+  gpsQuality?: GpsQuality;
 
   load: TrainingLoad;
   zones: ZoneDistribution;

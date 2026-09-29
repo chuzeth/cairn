@@ -5,10 +5,10 @@ import type {
 import * as db from '@cairn/db';
 import {
   EASY_SPEED_WINDOW_DAYS, aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
-  computeReadiness, decayedEnvelopeWithCompanion, estimateHrMax, fitCriticalSpeed, hrHistogramOf, interpretAcwr,
-  interpretTsb, maximalEffortSupport, modelFromLabOnly, monotonize, movingIndices, projectFrom, projectLoadRatios,
-  ratioExceedances, type DailyLoad, type EasyRun, type FieldEvidence, type LoadRatioExceedance, type MmpCurve,
-  type ReadinessDay,
+  computeReadiness, decayedEnvelopeWithCompanion, estimateHrMax, fitCriticalSpeed, gpsQualityOf, hrHistogramOf,
+  interpretAcwr, interpretTsb, maximalEffortSupport, measuresGroundSpeed, modelFromLabOnly, monotonize,
+  movingIndices, projectFrom, projectLoadRatios, ratioExceedances, type DailyLoad, type EasyRun, type FieldEvidence,
+  type LoadRatioExceedance, type MmpCurve, type ReadinessDay,
 } from '@cairn/physiology';
 import { absenceCovering } from './adapt.js';
 import { addDays, mondayOf } from './periodization.js';
@@ -127,9 +127,15 @@ export async function rebuildPhysiologyModel(
   const runLike = activities.filter((a) =>
     ['Run', 'TrailRun', 'VirtualRun', 'Hike'].includes(a.sportType),
   );
+  // Celles dont la vitesse est une mesure. Sur tapis, ou sans coordonnées, elle
+  // est celle de l'accéléromètre — des meilleures 20 min à 16,7 km/h pour
+  // 146 bpm le 26/09 — et rien de ce qu'elle dit de la vitesse n'entre dans le
+  // modèle : ni la courbe, ni les seuils, ni les allures faciles, ni la
+  // durabilité, ni la descente. Sa FC et son dénivelé, eux, restent des mesures.
+  const paced = runLike.filter((a) => measuresGroundSpeed(a, analyses.get(a.id)?.gpsQuality));
 
   // ── Courbe vitesse-durée, pondérée par la fraîcheur ────────────────────────
-  const curveEntries = runLike
+  const curveEntries = paced
     .map((a) => {
       const an = analyses.get(a.id);
       if (!an) return null;
@@ -158,7 +164,7 @@ export async function rebuildPhysiologyModel(
 
   // ── Couples vitesse graduée / FC pour recaler le seuil ─────────────────────
   const hrSpeedPairs: { gradedSpeedMs: number; hr: number }[] = [];
-  for (const a of runLike) {
+  for (const a of paced) {
     const an = analyses.get(a.id);
     if (!an) continue;
     for (const interval of an.intervals) {
@@ -169,7 +175,7 @@ export async function rebuildPhysiologyModel(
   }
 
   // ── Durabilité ─────────────────────────────────────────────────────────────
-  const durabilityEntries = runLike
+  const durabilityEntries = paced
     .map((a) => {
       const an = analyses.get(a.id);
       if (!an) return null;
@@ -207,7 +213,7 @@ export async function rebuildPhysiologyModel(
   // La FC de chaque sortie récente dit sous quel plafond elle s'est courue :
   // c'est là que se lit l'allure à laquelle se comptent les séances faciles.
   const easyRuns = await easyRunsOf(
-    activities, analyses, now, estimateHrMax(observedMaxHrs, lab.hrMax).value,
+    paced, analyses, now, estimateHrMax(observedMaxHrs, lab.hrMax).value,
   );
 
   const evidence: FieldEvidence = {
@@ -228,7 +234,7 @@ export async function rebuildPhysiologyModel(
   const model = buildPhysiologyModel(lab, evidence, asOf);
 
   // ── Aisance en descente, apprise depuis le terrain ─────────────────────────
-  model.descentSkill = estimateDescentSkill(runLike, analyses);
+  model.descentSkill = estimateDescentSkill(paced, analyses);
 
   if (opts.persist !== false) await db.saveModel(athleteId, model);
   return model;
@@ -463,7 +469,9 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     recentActivities
       .map((a) => {
         const an = analyses.get(a.id);
-        return an ? { curve: an.meanMaximalSpeed, companion: an.meanMaximalSpeedHr, ageDays: 0 } : null;
+        return an && measuresGroundSpeed(a, an.gpsQuality)
+          ? { curve: an.meanMaximalSpeed, companion: an.meanMaximalSpeedHr, ageDays: 0 }
+          : null;
       })
       .filter((x): x is CurveEntry => x != null),
     60,
@@ -768,7 +776,9 @@ export async function analyzeAndStore(
 
   const analysis = analyzeActivity(activity, stored.streams, model, {
     sex: 'M',
-    gpsQuality: stored.gpsQuality as 'good' | 'poor' | 'none',
+    // Rejugée sur les coordonnées du flux : celle enregistrée avant le moteur
+    // 1.4.0 se lisait sur la distance.
+    gpsQuality: gpsQualityOf(stored.streams),
     plannedSessions: planned,
   });
 

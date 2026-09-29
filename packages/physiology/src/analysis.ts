@@ -1,5 +1,5 @@
 import type {
-  Activity, ActivityAnalysis, ActivityStreams, AnalysisFlag,
+  Activity, ActivityAnalysis, ActivityStreams, AnalysisFlag, GpsQuality,
   PhysiologyModel, PlannedSession, SessionCompliance,
 } from '@cairn/core';
 import { analyzeDurability, type DurabilitySample } from './durability.js';
@@ -9,7 +9,7 @@ import { elevationChange, gradeAdjustedSpeed } from './grade.js';
 import { assessSeries, detectIntervals, inferSessionShape } from './intervals.js';
 import { computeTrainingLoad, energyExpenditure, fuelingTargets, type LoadSample } from './load.js';
 import { companionAtMeanMaximal, meanMaximal } from './mmp.js';
-import { cumulativeVertical, movingIndices } from './streams.js';
+import { cumulativeVertical, measuresGroundSpeed, movingIndices } from './streams.js';
 import { buildZones, computeZoneDistribution } from './zones.js';
 import {
   VERTICAL_CURVE_DURATIONS, descentCurve, gradeProfile, vamCurve, verticalityIndex,
@@ -34,7 +34,8 @@ import { formatDuration, mean, movingAverage } from './units.js';
 
 export interface AnalyzeOptions {
   sex?: 'M' | 'F';
-  gpsQuality?: 'good' | 'poor' | 'none';
+  /** Jugée sur les coordonnées du flux (`gpsQualityOf`). Absente : bonne. */
+  gpsQuality?: GpsQuality;
   /**
    * Séances prescrites de la veille au lendemain de l'activité. C'est le
    * rattachement, et non la date, qui décide laquelle — au plus une — cette
@@ -68,9 +69,15 @@ export function analyzeActivity(
     hr: hr[i] ?? null,
   }));
 
+  // Une sortie qui ne mesure pas sa vitesse au sol — tapis, ou sans coordonnées
+  // — se compte sur sa FC, et ne produit ni courbe de vitesse, ni blocs, ni
+  // preuve d'effort maximal : rien qui fasse de sa vitesse une mesure.
+  const gpsQuality = opts.gpsQuality ?? 'good';
+  const groundSpeed = measuresGroundSpeed(activity, gpsQuality);
+
   const load = computeTrainingLoad(loadSamples, model, {
     sex: opts.sex ?? 'M',
-    gpsQuality: opts.gpsQuality ?? 'good',
+    gpsQuality: groundSpeed ? gpsQuality : 'none',
     rpe: activity.rpe,
   });
 
@@ -88,8 +95,10 @@ export function analyzeActivity(
   // ── Courbes maximales ─────────────────────────────────────────────────────
   const gapSeries = idx.map((i) => gradeAdjustedSpeed(streams.velocity[i] ?? 0, streams.grade[i] ?? 0));
   const durationS = idx.length;
-  const relevantDurations = [5, 10, 20, 30, 60, 120, 180, 300, 420, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200]
-    .filter((d) => d <= durationS);
+  // Sans vitesse au sol, aucune durée n'a de meilleure vitesse, ni de FC qui l'aurait prouvée.
+  const relevantDurations = groundSpeed
+    ? [5, 10, 20, 30, 60, 120, 180, 300, 420, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200].filter((d) => d <= durationS)
+    : [];
   const mms = meanMaximal(gapSeries, relevantDurations);
   const roundedMms: Record<string, number> = {};
   for (const [k, v] of Object.entries(mms)) roundedMms[k] = Math.round(v * 1000) / 1000;
@@ -144,19 +153,22 @@ export function analyzeActivity(
   });
 
   // ── Blocs d'effort ────────────────────────────────────────────────────────
-  const intervals = detectIntervals(
-    idx.map((i) => ({
-      t: streams.time[i] ?? 0,
-      speedMs: streams.velocity[i] ?? 0,
-      grade: streams.grade[i] ?? 0,
-      hr: hr[i] ?? null,
-      cadence: streams.cadence?.[i] ?? null,
-    })),
-    zones,
-  );
+  // Détectés sur la vitesse : sans elle, ni blocs, ni intensité à juger.
+  const intervals = groundSpeed
+    ? detectIntervals(
+        idx.map((i) => ({
+          t: streams.time[i] ?? 0,
+          speedMs: streams.velocity[i] ?? 0,
+          grade: streams.grade[i] ?? 0,
+          hr: hr[i] ?? null,
+          cadence: streams.cadence?.[i] ?? null,
+        })),
+        zones,
+      )
+    : [];
 
   // ── W'bal ─────────────────────────────────────────────────────────────────
-  const wbal = wPrimeBalance(gapSeries, model.criticalSpeedMs, model.dPrimeM);
+  const wbal = groundSpeed ? wPrimeBalance(gapSeries, model.criticalSpeedMs, model.dPrimeM) : [];
   const wPrimeMin = wbal.length ? Math.round(Math.min(...wbal)) : null;
 
   // ── Environnement ─────────────────────────────────────────────────────────
@@ -181,6 +193,7 @@ export function analyzeActivity(
   const analysis: ActivityAnalysis = {
     activityId: activity.id,
     computedAt: new Date().toISOString(),
+    gpsQuality,
     load,
     zones: zoneDist,
     decoupling,
@@ -221,10 +234,12 @@ export function analyzeActivity(
   // ── Rattachement ──────────────────────────────────────────────────────────
   const planned = opts.plannedSessions ?? [];
   // L'effort d'un test se juge sur la durée de son bloc, qui n'est pas toujours
-  // une durée de la courbe.
-  const testDurations = planned
-    .map((s) => s.blocks[maximalEffortIndex(s.blocks, model)]?.durationS)
-    .filter((d): d is number => d != null && !(String(d) in hrAtMms));
+  // une durée de la courbe — et, sans vitesse au sol, ne se juge pas.
+  const testDurations = groundSpeed
+    ? planned
+        .map((s) => s.blocks[maximalEffortIndex(s.blocks, model)]?.durationS)
+        .filter((d): d is number => d != null && !(String(d) in hrAtMms))
+    : [];
   const realized: RealizedEffort = {
     activityId: activity.id,
     sportType: activity.sportType,
@@ -240,7 +255,7 @@ export function analyzeActivity(
   const hrSeconds = movingHrHistogram(idx.map((i) => hr[i]));
   if (hrSeconds) realized.hrSeconds = hrSeconds;
   const match = matchPlannedSession(planned, realized, model);
-  if (match) analysis.compliance = assessCompliance(match, realized, model);
+  if (match) analysis.compliance = assessCompliance(match, realized, model, groundSpeed);
 
   return analysis;
 }
@@ -369,11 +384,12 @@ function buildFlags(
   return flags;
 }
 
-/** Compare l'exécution à la prescription. */
+/** Compare l'exécution à la prescription. `groundSpeed` : l'activité mesure-t-elle sa vitesse au sol ? */
 function assessCompliance(
   planned: PlannedSession,
   realized: RealizedEffort,
   model: PhysiologyModel,
+  groundSpeed: boolean,
 ): SessionCompliance {
   const { loadPct: loadDev, durationPct: durDev, intensityPct: intensityDev } = deviationsFrom(planned, realized);
 
@@ -414,8 +430,10 @@ function assessCompliance(
     const test = maximalTestProof(planned, realized, model);
     const why =
       test && !test.proven
-        ? `aucun effort de ${formatDuration(test.effortS)} tenu au-dessus de ${Math.round(model.vt2.hr)} bpm, ` +
-          `la FC du seuil 2${test.hr != null ? ` (${Math.round(test.hr)} bpm sur le meilleur)` : ''}`
+        ? groundSpeed
+          ? `aucun effort de ${formatDuration(test.effortS)} tenu au-dessus de ${Math.round(model.vt2.hr)} bpm, ` +
+            `la FC du seuil 2${test.hr != null ? ` (${Math.round(test.hr)} bpm sur le meilleur)` : ''}`
+          : `sa vitesse n'est pas mesurée au sol — tapis, ou sortie sans coordonnées —, et rien n'y prouve un effort maximal`
         : `${formatDuration(realized.durationS)} pour ${formatDuration(runDurationOf(planned))} et ` +
           `${Math.round(realized.load)} points de charge pour ${Math.round(planned.plannedLoad)} prévus`;
     detail = `Ce n'est pas la séance prescrite : ${why}. ${detail}`;

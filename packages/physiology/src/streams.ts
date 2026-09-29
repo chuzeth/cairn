@@ -1,4 +1,4 @@
-import type { ActivityStreams } from '@cairn/core';
+import type { Activity, ActivityStreams, GpsQuality } from '@cairn/core';
 import { computeGrade, smoothAltitude } from './grade.js';
 import { clamp, movingAverage } from './units.js';
 
@@ -64,8 +64,8 @@ export interface NormalizeOptions {
 
 export interface NormalizedResult {
   streams: ActivityStreams;
-  /** Qualité du signal GPS, déduite de la cohérence distance/vitesse. */
-  gpsQuality: 'good' | 'poor' | 'none';
+  /** Qualité du signal GPS, jugée sur les coordonnées (`gpsQualityOf`). */
+  gpsQuality: GpsQuality;
   /** Part d'échantillons portant une FC exploitable. */
   hrCoverage: number;
   /** Durée réellement en mouvement, s. */
@@ -156,12 +156,7 @@ export function normalizeStreams(raw: RawStreams, opts: NormalizeOptions = {}): 
   const movingTimeS = moving.filter(Boolean).length;
 
   // ── Diagnostic de qualité ──────────────────────────────────────────────────
-  const totalDistance = (distance[n - 1] as number) - (distance[0] as number);
-  const gpsQuality: NormalizedResult['gpsQuality'] =
-    totalDistance < 100 ? 'none'
-      : !raw.distance ? 'poor'
-      : movingTimeS < n * 0.3 ? 'poor'
-      : 'good';
+  const gpsQuality = gpsQualityOf({ time, latlng });
 
   const hrCoverage = heartrate ? heartrate.filter((h) => h != null).length / n : 0;
 
@@ -180,6 +175,42 @@ export function normalizeStreams(raw: RawStreams, opts: NormalizeOptions = {}): 
   if (latlng) streams.latlng = latlng;
 
   return { streams, gpsQuality, hrCoverage, movingTimeS, warnings };
+}
+
+/**
+ * Part des secondes que les coordonnées doivent couvrir : en deçà de la moitié,
+ * la distance de la sortie est surtout celle de l'accéléromètre ; en deçà de
+ * 90 %, elle l'est par endroits.
+ */
+const GPS_COVERAGE = { none: 0.5, poor: 0.9 } as const;
+
+/**
+ * La qualité GPS d'une sortie, jugée sur ses coordonnées.
+ *
+ * La distance ne dit rien du GPS : sans coordonnées, la montre la compte à
+ * l'accéléromètre. Le 26/09, 54 min sur tapis ont fait 11,9 km au poignet pour
+ * 8,0 au compteur — et une sortie « GPS bon », tant que la qualité se lisait
+ * sur la distance.
+ */
+export function gpsQualityOf(streams: Pick<ActivityStreams, 'time' | 'latlng'>): GpsQuality {
+  const n = streams.time.length;
+  if (!streams.latlng || n === 0) return 'none';
+  const fixes = streams.latlng.filter((p) => p != null && Number.isFinite(p[0]) && Number.isFinite(p[1])).length;
+  const coverage = fixes / n;
+  return coverage < GPS_COVERAGE.none ? 'none' : coverage < GPS_COVERAGE.poor ? 'poor' : 'good';
+}
+
+/**
+ * Une sortie mesure-t-elle sa vitesse au sol ?
+ *
+ * Ni sur tapis — Strava la marque `trainer` —, ni sans coordonnées : sa vitesse
+ * y est celle de l'accéléromètre, et elle ne prouve rien — ni vitesse critique,
+ * ni VMA, ni allure facile, ni effort maximal. Sa FC, elle, reste une mesure.
+ * Une qualité GPS inconnue — une analyse antérieure au moteur 1.4.0 — ne dit
+ * rien contre la sortie.
+ */
+export function measuresGroundSpeed(activity: Pick<Activity, 'trainer'>, gpsQuality?: GpsQuality): boolean {
+  return !activity.trainer && gpsQuality !== 'none';
 }
 
 /** La distance cumulée ne peut pas décroître : corrige les reculs de GPS. */

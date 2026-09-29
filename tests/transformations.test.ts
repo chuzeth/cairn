@@ -120,7 +120,7 @@ describe('Aucune transformation ne rend une séance impossible', () => {
     db.sessions = [rando()];
     db.updates = [];
     await executeTool('pierre', 'modify_session', {
-      session_id: 'rando', scale_load: 0.6, rationale: 'Semaine chargée : on raccourcit.',
+      session_id: 'rando', scale_load: 0.6, rationale: 'Semaine chargée : on raccourcit.', apply: true,
     });
     const patch = db.updates.find((u) => u.id === 'rando')!.patch;
     expect(impossible(patch.blocks as SessionBlock[], PIERRE_MODEL)).toEqual([]);
@@ -210,7 +210,7 @@ describe('Ce que le coach décide est le contenu ; ce qu\'il explique va à l\'h
       db.updates = [];
       const rationale =
         'Ta sortie de ce soir compte déjà 400 m de descente. Je coupe donc le 03/10 de 40 % pour tenir le ratio mécanique.';
-      await executeTool('pierre', 'modify_session', { session_id: 'rando', scale_load: 0.6, rationale });
+      await executeTool('pierre', 'modify_session', { session_id: 'rando', scale_load: 0.6, rationale, apply: true });
       const patch = db.updates.find((u) => u.id === 'rando')!.patch as Partial<PlannedSession>;
       expect(patch.history).toEqual([
         expect.objectContaining({

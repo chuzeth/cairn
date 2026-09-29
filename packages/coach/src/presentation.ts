@@ -4,7 +4,7 @@ import type {
 import { anchorRelativeDates, decimal, sessionDuration, signedDecimal, writtenOn } from '@cairn/core';
 import {
   CS_FIT_MAX_S, CS_FIT_MIN_S, DURABILITY_MEASURABLE, READINESS_VERDICT, TAU_MECHANICAL, TAU_METABOLIC, VMA_EFFORT_S,
-  vmaSources,
+  buildZones, vmaSources,
 } from '@cairn/physiology';
 import { firstDescentNote } from './eccentric.js';
 import { locateVertical } from './plausibility.js';
@@ -609,6 +609,11 @@ function trailForm(
   ctx: PresentationContext,
 ): Pick<PlannedSession, 'title' | 'intent' | 'blocks'> | null {
   if (s.blocks.length === 0) return null;
+  // La forme standard est un effort de Z2. Une rando-course qui porte de
+  // l'intensité — trois blocs à l'effort de course dans une sortie facile —
+  // n'est pas la même séance à durée et dénivelé égaux : la présenter sous la
+  // forme standard effaçait ses blocs, et avec eux ce qu'elle avait de décidé.
+  if (carriesIntensity(s.blocks, ctx.model)) return null;
   // Un contenu dont les blocs ne portent pas le dénivelé décidé n'est pas une
   // rando-course qu'on puisse présenter autrement sans la changer.
   const gain = lib.elevationGainOf(s.blocks);
@@ -619,6 +624,20 @@ function trailForm(
     t.elevationGainM === gain &&
     t.elevationLossM === lib.elevationLossOf(locateVertical(s.blocks, s.type));
   return intact ? { title: t.title, intent: t.intent, blocks: t.blocks } : null;
+}
+
+/**
+ * Un bloc au-dessus de Z2 : par sa zone, ou par une fourchette de FC dont le
+ * bas dépasse le plafond de Z2 — une cible explicite qu'on aurait laissée
+ * étiquetée Z2 n'en reste pas moins de l'intensité.
+ */
+function carriesIntensity(blocks: readonly SessionBlock[], model: PhysiologyModel): boolean {
+  const z2Ceiling = buildZones(model).find((z) => z.key === 'Z2')?.hrMax;
+  return blocks.some(
+    (b) =>
+      (b.zone !== 'Z1' && b.zone !== 'Z2') ||
+      (b.hrRange != null && z2Ceiling != null && b.hrRange[0] > z2Ceiling),
+  );
 }
 
 /**
