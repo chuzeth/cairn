@@ -30,7 +30,12 @@ dépendante de cette clé sans dire ce qui cesse de fonctionner sans elle.
 npm test                              npx tsc -b
 npm run dev                           npm run sync -w @cairn/api -- sync [n]
 npm run service -- update             npm run service -- status
+npm run service -- passkey            npm run service -- logout-all
 ```
+
+Internet n'atteint Cairn que par Tailscale Funnel, et Funnel que la porte
+(`apps/gate`, 3100) : session par clé d'accès exigée avant tout relais. Le site
+(3000) reste sans connexion pour le Mac seul ; rien ne doit jamais l'exposer.
 
 Le téléphone ouvre le service installé, qui tourne sur un instantané vérifié.
 Commiter sur main, c'est déployer : un crochet git met le service à jour en

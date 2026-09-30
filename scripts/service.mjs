@@ -1,8 +1,11 @@
 /**
  * Cairn installé comme une application : un LaunchAgent utilisateur démarre
- * l'API et le site en mode production à l'ouverture de session et les relance
- * s'ils tombent ; Tailscale Serve les expose en HTTPS au réseau privé, et à lui
- * seul — les deux serveurs n'écoutent que sur 127.0.0.1.
+ * l'API, le site et la porte en mode production à l'ouverture de session et les
+ * relance s'ils tombent. Les trois n'écoutent que sur 127.0.0.1. Le site (3000)
+ * reste sans connexion, pour le Mac seul ; Tailscale Funnel expose la porte
+ * (3100), et elle seule, à internet en HTTPS : elle exige une session ouverte
+ * par clé d'accès avant de relayer quoi que ce soit vers le site
+ * (`apps/gate`). Le téléphone l'ouvre sans Tailscale, avec Face ID.
  *
  * Le service n'exécute que du code construit et vérifié, et ce code est un
  * commit. `install` et `update` extraient HEAD dans un instantané
@@ -23,7 +26,9 @@
  *   npm run service -- install     vérifie, construit, installe, démarre, expose, pose les crochets
  *   npm run service -- update      met HEAD en service sans attendre de commit, ou retente un refus
  *   npm run service -- uninstall   arrête, désinstalle, retire l'exposition, les crochets, les instantanés
- *   npm run service -- status      état launchd, version, dernière tentative, réponses, adresse HTTPS
+ *   npm run service -- status      état launchd, version, dernière tentative, réponses, adresse publique, porte
+ *   npm run service -- passkey     affiche un code, dix minutes, pour enregistrer une clé d'accès
+ *   npm run service -- logout-all  ferme toutes les sessions : chaque appareil redemande Face ID
  *
  * `run` est la commande que launchd exécute, depuis l'instantané ; `follow` celle
  * des crochets, qui détache `deploy`.
@@ -33,10 +38,12 @@ import {
   chmodSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync,
   renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
+import { request as httpRequest } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { parseEnv } from 'node:util';
 
 const SELF = fileURLToPath(import.meta.url);
@@ -71,10 +78,22 @@ const DEPLOY_LOG = join(homedir(), 'Library/Logs/Cairn/deploy.log');
 /** Le service garde les ports documentés ; `npm run dev` prend 3001 et 4001. */
 const WEB_PORT = 3000;
 const API_PORT = Number(readEnv(CODE).API_PORT ?? 4000);
+/** La porte : le seul port que Funnel atteint. Jamais WEB_PORT. */
+const GATE_PORT = Number(readEnv(CODE).CAIRN_GATE_PORT ?? 3100);
+const GATE_URL = `http://127.0.0.1:${GATE_PORT}`;
+/** Clés d'accès et sessions : à côté de la base, hors des instantanés qu'`update` efface. */
+const AUTH_DB = join(REPO, 'data/auth.sqlite');
 /** Tailscale standalone n'installe pas de commande dans le PATH : c'est le binaire de l'application. */
 const TAILSCALE = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale'];
 /** La maille de la surveillance : assez fine pour qu'un réveil se rattrape avant le matin. */
 const WATCH_EVERY_MS = 5 * 60_000;
+/**
+ * Le premier passage attend que le service ait répondu, et encore un peu : la
+ * mise à jour qui vient de le lancer peut être celle d'un code plus ancien, qui
+ * finit en pointant l'exposition sur le site. La surveillance passe après elle
+ * et remet la porte à sa place, plutôt que l'inverse.
+ */
+const WATCH_FIRST_AFTER_MS = 90_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -117,6 +136,17 @@ function run() {
     ...(version?.short && { CAIRN_COMMIT: version.short }),
     ...(version?.deployedAt && { CAIRN_DEPLOYED_AT: version.deployedAt }),
   };
+  // L'adresse que WebAuthn vérifie : celle que `.env` impose, sinon celle du Mac
+  // sur Tailscale, que la porte relit tant qu'elle ne l'a pas. Jamais celle
+  // qu'une requête annonce.
+  const gateEnv = {
+    ...env,
+    CAIRN_GATE_PORT: String(GATE_PORT),
+    CAIRN_GATE_UPSTREAM: String(WEB_PORT),
+    CAIRN_AUTH_DB: AUTH_DB,
+    CAIRN_PUBLIC_ORIGIN: readEnv(CODE).CAIRN_PUBLIC_ORIGIN ?? '',
+    CAIRN_TAILSCALE: TAILSCALE.find((p) => existsSync(p)) ?? 'tailscale',
+  };
   const stdio = ['ignore', 'pipe', 'pipe'];
   const servers = {
     api: spawn(process.execPath, [`--env-file-if-exists=${join(CODE, '.env')}`, '--import', 'tsx', 'src/index.ts'], {
@@ -124,6 +154,9 @@ function run() {
     }),
     web: spawn(process.execPath, [NEXT, 'start', '-p', String(WEB_PORT), '-H', '127.0.0.1'], {
       cwd: join(CODE, 'apps/web'), env, stdio,
+    }),
+    gate: spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+      cwd: join(CODE, 'apps/gate'), env: gateEnv, stdio,
     }),
   };
 
@@ -152,13 +185,12 @@ function run() {
   process.on('SIGINT', () => stop(0));
 
   const t0 = Date.now();
-  void waitReady(120_000).then((ok) =>
+  void waitReady(120_000).then((ok) => {
     log('service', ok
       ? `prêt en ${((Date.now() - t0) / 1000).toFixed(1)} s, instantané ${basename(CODE)}`
-      : 'ne répond toujours pas après 2 min'),
-  );
-
-  watch();
+      : 'ne répond toujours pas après 2 min');
+    setTimeout(watch, WATCH_FIRST_AFTER_MS).unref();
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,9 +203,9 @@ function run() {
  * s'arrête au réveil ou perd son `serve` sans que rien ne le signale — sinon
  * une erreur réseau sur le téléphone, au moment précis où on en a besoin.
  *
- * Toutes les cinq minutes : le démon tourne-t-il, et sert-il le site ? Sinon,
- * `tailscale up --accept-routes` puis réaffirmation de `tailscale serve`, et la
- * reprise est journalisée — c'est la trace qui dira, au bout d'un mois, si le
+ * Toutes les cinq minutes : le démon tourne-t-il, et expose-t-il la porte ?
+ * Sinon, `tailscale up --accept-routes` puis réaffirmation de l'exposition
+ * (`exposeGate`), et la reprise est journalisée — c'est la trace qui dira, au bout d'un mois, si le
  * problème du 19 septembre était le sommeil du Mac ou autre chose.
  *
  * Le dernier passage où la chaîne tenait est écrit dans `watch.json` : c'est la
@@ -181,10 +213,10 @@ function run() {
  * `status` affiche.
  */
 function watch() {
-  const tick = () => {
+  const tick = async () => {
     let seen;
     try {
-      seen = inspect();
+      seen = await inspect();
     } catch (e) {
       log('veille', `surveillance en échec : ${e.message}`);
       return;
@@ -211,7 +243,7 @@ function watch() {
  * serveurs sont des processus séparés : ils continuent de répondre pendant ce
  * temps, seul le journal attend.
  */
-function inspect() {
+async function inspect() {
   const state = backendState();
   if (state === null) {
     log('veille', 'tailscale introuvable : rien à relancer');
@@ -232,15 +264,17 @@ function inspect() {
     recovered = true;
   }
 
-  // `up` remet le démon en route, pas l'exposition : un `serve` perdu rend le
-  // site aussi injoignable qu'un démon arrêté.
-  if (!serving()) {
-    const res = tailscaleCli('serve', '--bg', '--https=443', `http://127.0.0.1:${WEB_PORT}`);
-    if (res.status !== 0) {
-      log('veille', `tailscale serve : ${message(res)}`);
+  // `up` remet le démon en route, pas l'exposition : une exposition perdue rend
+  // le site aussi injoignable qu'un démon arrêté — et une exposition qui mène
+  // ailleurs qu'à la porte est pire que pas d'exposition du tout.
+  const seen = exposure();
+  if (seen.target !== GATE_URL || seen.site) {
+    const res = await exposeGate();
+    if (!res.ok) {
+      log('veille', `exposition : ${res.message}`);
       return { reachable: false, recovered };
     }
-    log('veille', `reprise : serve réaffirmé, https://…:443 → 127.0.0.1:${WEB_PORT}`);
+    log('veille', `reprise : ${res.message}`);
     recovered = true;
   }
 
@@ -335,7 +369,7 @@ async function waitReady(timeoutMs) {
   while (Date.now() < deadline) {
     if ((await probe(API_PORT, '/health')).ok) {
       const state = await probe(WEB_PORT, '/api/state');
-      if (state.ok && state.body.includes('"athlete"')) return true;
+      if (state.ok && state.body.includes('"athlete"') && (await gateGuards()).ok) return true;
     }
     await sleep(500);
   }
@@ -357,7 +391,7 @@ async function install() {
   writeFileSync(PLIST, plist());
   await activate(built);
   hooks();
-  expose();
+  await expose();
   await status();
 }
 
@@ -369,7 +403,7 @@ async function update() {
   rotateLog(LOG);
   await activate(built);
   hooks();
-  expose();
+  await expose();
   await status();
 }
 
@@ -412,13 +446,13 @@ async function deploy() {
   const built = release(sha, 'commit');
   rotateLog(LOG);
   await activate(built);
-  expose();
+  await expose();
   await status();
 }
 
 async function uninstall() {
   lock();
-  if (!tailnet().error && serving()) tailscaleCli('serve', '--https=443', 'off');
+  if (!tailnet().error && exposure().target) unexpose();
   await unload();
   rmSync(PLIST, { force: true });
   for (const file of ourHooks()) rmSync(file, { force: true });
@@ -451,8 +485,12 @@ async function status() {
   const assertion = pid && spawnSync('/usr/bin/pgrep', ['-f', `caffeinate -s -w ${pid}`]).status === 0;
   console.log(`veille    ${assertion ? 'assertion caffeinate -s en place' : 'aucune assertion'} ; sur ${power}, ${power === 'secteur' ? 'le Mac reste éveillé' : 'il dort normalement'}`);
 
+  const guards = await gateGuards();
+  const keys = authCounts();
+  console.log(`porte     ${GATE_URL} → ${guards.ok ? 'authentification active' : `⚠ ${guards.message}`} ; ${keys}`);
   const tailscale = tailnet();
-  console.log(`https     ${tailscale.error ?? (serving() ? tailscale.url : `${tailscale.url} (Serve non configuré : npm run service -- install)`)}`);
+  const seenExposure = tailscale.error ? null : exposure();
+  console.log(`public    ${tailscale.error ?? describeExposure(tailscale.url, seenExposure)}`);
 
   // Ce que le téléphone aurait trouvé s'il avait ouvert Cairn : la dernière fois
   // que Tailscale tournait et servait le site. Un contact vieux de deux jours
@@ -844,16 +882,131 @@ function tailnet() {
   return { url: `https://${state.Self.DNSName.replace(/\.$/, '')}` };
 }
 
-function serving() {
-  return tailscaleCli('serve', 'status', '--json').stdout?.includes(`http://127.0.0.1:${WEB_PORT}`) ?? false;
+/**
+ * Ce que Tailscale expose sur 443 : la cible du relais, et si Funnel l'ouvre à
+ * internet. `site` signale le défaut à ne jamais laisser en place — une
+ * exposition, quelle qu'elle soit, qui mène au site sans passer par la porte.
+ */
+function exposure() {
+  let config;
+  try {
+    config = JSON.parse(tailscaleCli('serve', 'status', '--json').stdout || '{}');
+  } catch {
+    return { target: null, funnel: false, site: false };
+  }
+  const web = Object.entries(config.Web ?? {}).find(([hostPort]) => hostPort.endsWith(':443'));
+  const target = web?.[1]?.Handlers?.['/']?.Proxy ?? null;
+  const funnel = Object.entries(config.AllowFunnel ?? {}).some(([hostPort, on]) => on && hostPort.endsWith(':443'));
+  const site = JSON.stringify(config.Web ?? {}).includes(`:${WEB_PORT}"`);
+  return { target, funnel, site };
 }
 
-function expose() {
+function describeExposure(url, seen) {
+  if (!seen?.target) return `${url} : rien d'exposé (npm run service -- update)`;
+  if (seen.site || seen.target !== GATE_URL) return `⚠ ${url} mène à ${seen.target}, pas à la porte : npm run service -- update`;
+  return seen.funnel
+    ? `${url} ouvert à internet par Funnel → porte ${GATE_URL}`
+    : `${url} sur le tailnet seulement → porte ${GATE_URL} (Funnel non actif : npm run service -- update)`;
+}
+
+/**
+ * La porte tient-elle ? Sans cookie, l'app lui est demandée comme la demanderait
+ * internet — avec un Host et un X-Forwarded-For de la boucle locale en prime —,
+ * et elle doit refuser ; ses routes de connexion, elles, doivent répondre.
+ * Rien n'est exposé tant que ces deux réponses ne sont pas les bonnes.
+ */
+async function gateGuards() {
+  const forged = { host: `127.0.0.1:${WEB_PORT}`, 'x-forwarded-for': '127.0.0.1' };
+  const checks = await Promise.all([
+    probeWith(GATE_PORT, '/', forged), probeWith(GATE_PORT, '/api/state', forged), probeWith(GATE_PORT, '/sw.js', forged),
+  ]);
+  const open = checks.find((c) => c.status !== 401);
+  if (open) return { ok: false, message: `sans session, ${open.path} → ${open.status} (401 attendu)` };
+  const login = await probe(GATE_PORT, '/connexion/etat');
+  if (!login.ok) return { ok: false, message: `/connexion/etat → ${login.status}` };
+  return { ok: true, message: 'sans session, tout rend 401' };
+}
+
+/** `fetch` réécrit l'en-tête Host sans le dire : la requête forgée part par `node:http`. */
+function probeWith(port, path, headers) {
+  return new Promise((resolve) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, headers, timeout: 5000 }, (res) => {
+      res.resume();
+      resolve({ path, status: res.statusCode });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (e) => resolve({ path, status: e.code ?? e.message }));
+    req.end();
+  });
+}
+
+/** Clés d'accès et sessions, comptées dans la base de la porte, en lecture seule. */
+function authCounts() {
+  if (!existsSync(AUTH_DB)) return 'aucune clé d\'accès : npm run service -- passkey';
+  try {
+    const db = new DatabaseSync(AUTH_DB, { readOnly: true });
+    const keys = db.prepare('SELECT COUNT(*) AS n FROM passkeys').get().n;
+    const sessions = db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?').get(Date.now()).n;
+    db.close();
+    const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
+    return keys === 0
+      ? 'aucune clé d\'accès : npm run service -- passkey'
+      : `${plural(keys, 'clé')} d'accès, ${plural(sessions, 'session')} ouverte${sessions > 1 ? 's' : ''}`;
+  } catch (e) {
+    return `base illisible (${e.message})`;
+  }
+}
+
+/**
+ * 443 → la porte, ouverte à internet par Funnel ; jamais le site. Seulement si
+ * la porte refuse bien sans session : sinon, plus rien d'exposé du tout. Si le
+ * compte Tailscale n'autorise pas Funnel, la porte reste exposée au tailnet
+ * seul, et on dit pourquoi.
+ */
+async function exposeGate() {
+  const guards = await gateGuards();
+  if (!guards.ok) {
+    unexpose();
+    return { ok: false, message: `porte non vérifiée (${guards.message}) : rien n'est exposé` };
+  }
+  const before = exposure();
+  // Une exposition qui mène ailleurs tombe d'abord, Funnel compris : on ne
+  // repointe jamais une cible déjà ouverte à internet.
+  if ((before.target && before.target !== GATE_URL) || before.site) unexpose();
+  const funnel = tailscaleCli('funnel', '--bg', '--https=443', GATE_URL);
+  if (funnel.status === 0 && exposure().funnel) return { ok: true, message: `Funnel : https://…:443 → porte ${GATE_URL}` };
+  const serve = tailscaleCli('serve', '--bg', '--https=443', GATE_URL);
+  const why = message(funnel);
+  if (serve.status !== 0) return { ok: false, message: `funnel : ${why} ; serve : ${message(serve)}` };
+  return { ok: true, message: `tailnet seulement, porte ${GATE_URL} ; Funnel refusé : ${why}` };
+}
+
+function unexpose() {
+  tailscaleCli('funnel', '--https=443', 'off');
+  tailscaleCli('serve', '--https=443', 'off');
+}
+
+async function expose() {
   const tailscale = tailnet();
   if (tailscale.error) return console.log(`⚠ ${tailscale.error}`);
-  const res = tailscaleCli('serve', '--bg', '--https=443', `http://127.0.0.1:${WEB_PORT}`);
-  if (res.status !== 0) console.log(`⚠ tailscale serve : ${(res.stderr || res.stdout || String(res.error)).trim()}`);
+  const res = await exposeGate();
+  console.log(`${res.ok ? '' : '⚠ '}exposition : ${res.message}`);
 }
+
+/**
+ * `passkey` et `logout-all` passent par le code de la porte en service, sur sa
+ * base : ce qui écrit les sessions est ce qui les lit.
+ */
+function gateCli(command) {
+  const code = currentRelease() ?? CODE;
+  const res = spawnSync(process.execPath, ['--import', 'tsx', join(code, 'apps/gate/src/cli.ts'), command], {
+    cwd: join(code, 'apps/gate'), stdio: 'inherit', env: { ...process.env, CAIRN_AUTH_DB: AUTH_DB },
+  });
+  process.exitCode = res.status ?? 1;
+}
+
+const passkey = () => gateCli('passkey');
+const logoutAll = () => gateCli('logout-all');
 
 function fail(message, withLog = false) {
   console.error(`✗ ${message}`);
@@ -861,10 +1014,10 @@ function fail(message, withLog = false) {
   process.exit(1);
 }
 
-const commands = { install, update, uninstall, status, run, follow, deploy };
+const commands = { install, update, uninstall, status, passkey, 'logout-all': logoutAll, run, follow, deploy };
 const command = commands[process.argv[2]];
 if (!command) {
-  console.error('usage : npm run service -- install | update | uninstall | status');
+  console.error('usage : npm run service -- install | update | uninstall | status | passkey | logout-all');
   process.exit(1);
 }
 await command();

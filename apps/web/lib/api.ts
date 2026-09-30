@@ -22,8 +22,20 @@ export interface Stamped<T> {
   recordedAt: string | null;
 }
 
+/**
+ * La porte a refusé la requête : ouverte depuis internet, la page n'a plus de
+ * session — expirée, ou fermée par `logout-all`. Elle part vers la connexion,
+ * qui la ramènera ici. Un 401 sans la marque de la porte n'est pas le sien, et
+ * reste une erreur comme une autre.
+ */
+export function requireSession(res: Response): void {
+  if (res.status !== 401 || res.headers.get('x-cairn-connexion') !== 'requise') return;
+  location.assign(`/connexion?suite=${encodeURIComponent(location.pathname + location.search)}`);
+}
+
 export async function getStamped<T>(path: string): Promise<Stamped<T>> {
   const res = await fetch(path, { cache: 'no-store' });
+  requireSession(res);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((body as { error?: string }).error ?? `Erreur ${res.status}`);
@@ -37,6 +49,7 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
+  requireSession(res);
   if (!res.ok) {
     const parsed = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((parsed as { error?: string }).error ?? `Erreur ${res.status}`);
@@ -50,6 +63,7 @@ export async function put<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
+  requireSession(res);
   if (!res.ok) {
     const parsed = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((parsed as { error?: string }).error ?? `Erreur ${res.status}`);
@@ -59,6 +73,7 @@ export async function put<T>(path: string, body?: unknown): Promise<T> {
 
 export async function del<T>(path: string): Promise<T> {
   const res = await fetch(path, { method: 'DELETE' });
+  requireSession(res);
   if (!res.ok) throw new Error(`Erreur ${res.status}`);
   return res.json() as Promise<T>;
 }

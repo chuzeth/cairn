@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { get, markdown } from '@/lib/api';
+import { get, markdown, requireSession } from '@/lib/api';
 import { Card } from '@/components/ui';
 
 interface ToolCall { name: string; summary?: string; state: 'running' | 'done' | 'error' }
@@ -90,6 +90,7 @@ export default function CoachPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
       });
+      requireSession(res);
       if (!res.ok || !res.body) throw new Error(`L'API a répondu ${res.status}`);
 
       const reader = res.body.getReader();

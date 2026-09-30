@@ -18,6 +18,10 @@
  *              a été obtenue. Resservie, elle porte cette date dans l'en-tête
  *              `x-cairn-recorded-at`, que l'écran affiche. Une réponse du
  *              réseau ne porte rien : elle est d'aujourd'hui.
+ *   porte      une réponse de la porte (`x-cairn-connexion`), un 401 ou une
+ *              page atteinte par redirection ne se rangent jamais : la page de
+ *              connexion ne prend pas la place de l'app, ni un refus celle de la
+ *              dernière lecture (`cacheable`).
  *   écriture   rien ici. Une file tenue par un service worker ne peut pas dire
  *              « en attente d'envoi » à l'athlète : c'est la page qui la tient
  *              (`lib/offline.ts`), et qui le dit.
@@ -132,7 +136,7 @@ async function renew(commit) {
   const pages = await Promise.all(
     SHELL_ROUTES.map(async (route) => {
       const res = await fetch(route, { cache: 'no-store' });
-      return { route, res, html: res.ok ? await res.clone().text() : '' };
+      return { route, res, html: cacheable(res) ? await res.clone().text() : '' };
     }),
   );
   if (pages.some(({ html }) => commitOf(html) !== commit)) return false;
@@ -143,8 +147,8 @@ async function renew(commit) {
     [...fragments].map(async (url) => {
       if (await cache.match(url, { ignoreVary: true })) return true;
       const res = await fetch(url);
-      if (res.ok) await put(cache, url, res);
-      return res.ok;
+      if (cacheable(res)) await put(cache, url, res);
+      return cacheable(res);
     }),
   );
   if (stored.includes(false)) return false;
@@ -175,7 +179,7 @@ async function shell(event) {
 
   try {
     const res = await fetch(event.request);
-    if (res.ok && SHELL_ROUTES.includes(route)) await put(cache, route, res.clone());
+    if (cacheable(res) && SHELL_ROUTES.includes(route)) await put(cache, route, res.clone());
     return res;
   } catch {
     return absent(route);
@@ -188,7 +192,7 @@ async function fragment(request) {
   const hit = await cache.match(request, { ignoreVary: true });
   if (hit) return hit;
   const res = await fetch(request);
-  if (res.ok) await put(cache, request, res.clone());
+  if (cacheable(res)) await put(cache, request, res.clone());
   return res;
 }
 
@@ -208,7 +212,7 @@ async function reserve(request) {
     const res = await fetch(request);
     // Un 5xx n'est pas une réponse : le serveur est là, la donnée n'y est pas.
     if (res.status >= 500) throw new Error(`${res.status}`);
-    if (res.ok) await cache.put(key, stamped(await res.clone().blob(), res.headers));
+    if (cacheable(res)) await cache.put(key, stamped(await res.clone().blob(), res.headers));
     return res;
   } catch (networkError) {
     const cached = await cache.match(key, { ignoreVary: true });
@@ -224,10 +228,20 @@ async function reserve(request) {
 async function keep(cache, route) {
   try {
     const res = await fetch(route, { cache: 'no-store' });
-    if (res.ok) await put(cache, route, res);
+    if (cacheable(res)) await put(cache, route, res);
   } catch {
     // Hors réseau à l'installation : la coquille se remplira au premier passage.
   }
+}
+
+/**
+ * Ce qui peut se ranger : une réponse réussie de l'app elle-même. La porte
+ * répond sans session par un 401 marqué, jamais par une redirection — mais une
+ * redirection suivie arriverait ici en 200, et la page de connexion se
+ * rangerait sous l'adresse qui l'a demandée.
+ */
+function cacheable(res) {
+  return res.ok && !res.redirected && !res.headers.has('x-cairn-connexion');
 }
 
 async function put(cache, key, res) {
