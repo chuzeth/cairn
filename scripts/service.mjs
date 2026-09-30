@@ -42,9 +42,10 @@ import { request as httpRequest } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { parseEnv } from 'node:util';
+import { tailscaleBinary, tailscaleCli as runTailscale } from './tailscale.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 /** Le code qui s'exécute : le dossier de travail pour les commandes, l'instantané pour `run`. */
@@ -83,8 +84,6 @@ const GATE_PORT = Number(readEnv(CODE).CAIRN_GATE_PORT ?? 3100);
 const GATE_URL = `http://127.0.0.1:${GATE_PORT}`;
 /** Clés d'accès et sessions : à côté de la base, hors des instantanés qu'`update` efface. */
 const AUTH_DB = join(REPO, 'data/auth.sqlite');
-/** Tailscale standalone n'installe pas de commande dans le PATH : c'est le binaire de l'application. */
-const TAILSCALE = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale'];
 /** La maille de la surveillance : assez fine pour qu'un réveil se rattrape avant le matin. */
 const WATCH_EVERY_MS = 5 * 60_000;
 /**
@@ -145,7 +144,7 @@ function run() {
     CAIRN_GATE_UPSTREAM: String(WEB_PORT),
     CAIRN_AUTH_DB: AUTH_DB,
     CAIRN_PUBLIC_ORIGIN: readEnv(CODE).CAIRN_PUBLIC_ORIGIN ?? '',
-    CAIRN_TAILSCALE: TAILSCALE.find((p) => existsSync(p)) ?? 'tailscale',
+    CAIRN_TAILSCALE: tailscaleBinary(),
   };
   const stdio = ['ignore', 'pipe', 'pipe'];
   const servers = {
@@ -868,9 +867,7 @@ async function unload() {
   if (servicePid() != null) fail("launchd n'a pas déchargé le service.");
 }
 
-function tailscaleCli(...args) {
-  return spawnSync(TAILSCALE.find((p) => existsSync(p)) ?? 'tailscale', args, { encoding: 'utf8', timeout: 30_000 });
-}
+const tailscaleCli = (...args) => runTailscale(args);
 
 function tailnet() {
   const res = tailscaleCli('status', '--json');
@@ -973,9 +970,9 @@ async function exposeGate() {
   // Une exposition qui mène ailleurs tombe d'abord, Funnel compris : on ne
   // repointe jamais une cible déjà ouverte à internet.
   if ((before.target && before.target !== GATE_URL) || before.site) unexpose();
-  const funnel = tailscaleCli('funnel', '--bg', '--https=443', GATE_URL);
+  const funnel = tailscaleCli('funnel', '--bg', '--yes', '--https=443', GATE_URL);
   if (funnel.status === 0 && exposure().funnel) return { ok: true, message: `Funnel : https://…:443 → porte ${GATE_URL}` };
-  const serve = tailscaleCli('serve', '--bg', '--https=443', GATE_URL);
+  const serve = tailscaleCli('serve', '--bg', '--yes', '--https=443', GATE_URL);
   const why = message(funnel);
   if (serve.status !== 0) return { ok: false, message: `funnel : ${why} ; serve : ${message(serve)}` };
   return { ok: true, message: `tailnet seulement, porte ${GATE_URL} ; Funnel refusé : ${why}` };

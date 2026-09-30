@@ -39,7 +39,11 @@ let known: string | null = configured;
 function origin(): string | null {
   if (known) return known;
   try {
-    const out = execFileSync(process.env.CAIRN_TAILSCALE ?? 'tailscale', ['status', '--json'], { encoding: 'utf8', timeout: 5000 });
+    // Lancée par launchd, sans terminal : sans TAILSCALE_BE_CLI, le binaire de
+    // Tailscale.app se prend pour l'interface et échoue (`scripts/tailscale.mjs`).
+    const out = execFileSync(process.env.CAIRN_TAILSCALE ?? 'tailscale', ['status', '--json'], {
+      encoding: 'utf8', timeout: 5000, env: { ...process.env, TAILSCALE_BE_CLI: '1' },
+    });
     const state = JSON.parse(out) as { BackendState?: string; Self?: { DNSName?: string } };
     if (state.BackendState === 'Running' && state.Self?.DNSName) known = `https://${state.Self.DNSName.replace(/\.$/, '')}`;
   } catch {
