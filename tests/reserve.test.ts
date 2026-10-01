@@ -188,17 +188,18 @@ describe('Le dossier borne le format du fractionné', () => {
   it('fait passer les règles de charge par ce chemin', () => {
     const state = {
       today: {
-        date: '2026-09-21', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.0,
-        mechanicalAcwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'low',
+        date: '2026-09-21', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8,
+        mechanicalAcwr: 1.0, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high',
       },
-      readiness: { date: '2026-09-21', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
+      readiness: { date: '2026-09-21', score: 75, verdict: 'green', components: {}, recommendation: '' },
       absences: [], model, profile: PIERRE,
     } as never;
-    const seuil = planned(lib.threshold(model, 5, 5));
+    // Le pic de charge allège les séances secondaires : ce seuil n'est pas une séance clef.
+    const seuil = { ...planned(lib.threshold(model, 5, 5)), priority: 'support' as const };
     const [adj] = lib.evaluateAdjustments(state, [{ ...seuil, date: '2026-09-22' }]);
-    expect(adj!.rule).toBe('readiness_red');
+    expect(adj!.rule).toBe('acwr_spike');
     expect(adj!.repeats).toBe(adj!.factor);
-    expect(adj!.reason).toMatch(/répétitions ramenées de 5 à 2/);
+    expect(adj!.reason).toMatch(/répétitions ramenées de 5 à 3/);
   });
 
   it('ne décale pas un fractionné dans une semaine qui porte déjà le sien', () => {

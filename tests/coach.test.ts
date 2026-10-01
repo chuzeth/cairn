@@ -537,27 +537,19 @@ describe('Règles d\'ajustement automatique', () => {
     expect(evaluateAdjustments(earlier, [tomorrow]).some((a) => a.rule === 'readiness_red')).toBe(false);
   });
 
-  it('annonce la durée que la séance portera, pas une minute de plus', () => {
+  it('annonce au rouge un footing de la durée de la séance, et le jour où la qualité passe', () => {
     const state = baseState({
       readiness: { date: '2026-09-01', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
     });
-    // 4 089 s allégées de 55 % font 1 840 s, que la maille humaine prescrit à
-    // 30 min. Arrondie à part, la phrase en promettait 31 : deux nombres pour la
-    // même séance, et c'est la phrase qu'on croit.
     const tomorrow = session({
-      date: '2026-09-02', type: 'threshold', plannedLoad: 80, plannedMechanicalLoad: 5,
+      date: '2026-09-02', type: 'threshold', title: 'Seuil — 1 h 08', plannedLoad: 80, plannedMechanicalLoad: 5,
       plannedDurationS: 4089, blocks: [{ label: 'Bloc continu', zone: 'Z3', durationS: 4089 }],
     });
     const [adj] = evaluateAdjustments(state, [tomorrow]);
-    expect(adj!.rule).toBe('readiness_red');
-    expect(lib.transformSession(tomorrow, adj!.factor!, model).plannedDurationS).toBe(1800);
-    expect(adj!.reason).toContain('ramenée à 30 min');
-    expect(adj!.reason).not.toContain('31 min');
-    // Ce qui s'affiche dit ce que la séance devient, pas le facteur de la règle :
-    // une descente « allégée de 55 % » passait de 1 h 35 à 1 h 20.
-    const said = lib.describeAdjustments([adj!]);
-    expect(said).toContain('séance allégée. Séance ramenée à 30 min');
-    expect(said).not.toMatch(/allégée de \d+ %/);
+    expect(adj).toMatchObject({ rule: 'readiness_red', action: 'defer', newDate: '2026-09-03' });
+    expect(adj!.reason).toContain('1 h 08 de footing facile à la place de « Seuil », qui passe au 03/09');
+    // Ce qui s'affiche dit ce que la séance devient.
+    expect(lib.describeAdjustments([adj!])).toContain('séance courue facile, qualité déplacée au 2026-09-03.');
   });
 
   it('protège la filière mécanique quand son ratio s\'emballe, circuit excentrique compris', () => {
@@ -612,11 +604,16 @@ describe('Règles d\'ajustement automatique', () => {
     expect(evaluateAdjustments(spike, [once])).toEqual([]);
     expect(evaluateAdjustments(spike, [{ ...once, lightenings: undefined }]).map((a) => a.rule)).toEqual(['acwr_spike']);
     // Un autre signal, une autre règle : elle l'allège, une fois.
+    const ramp = baseState({
+      today: { date: '2026-09-01', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8, rampRate: 12, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
+    });
+    expect(evaluateAdjustments(ramp, [{ ...once, priority: 'optional' }]).map((a) => a.rule)).toEqual(['ramp_too_fast']);
+    // La disponibilité, elle, ne touche jamais un footing.
     const red = baseState({
       today: { date: '2026-09-01', ctl: 50, atl: 90, tsb: -40, mechanicalTsb: 0, acwr: 1.8, rampRate: 3, monotony: 1.4, tsbLabel: '', acwrLabel: '', acwrRisk: 'high' },
       readiness: { date: '2026-09-01', score: 30, verdict: 'red', components: {}, recommendation: 'Repos.' },
     });
-    expect(evaluateAdjustments(red, [once]).map((a) => a.rule)).toEqual(['readiness_red']);
+    expect(evaluateAdjustments(red, [once])).toEqual([]);
   });
 
   it('n\'applique qu\'une règle par séance', () => {

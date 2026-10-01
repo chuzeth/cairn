@@ -537,6 +537,121 @@ export function elevationLossOf(blocks: readonly SessionBlock[]): number {
   );
 }
 
+/** Un bloc d'intensité : couru au-dessus de l'endurance. Ni annexe, ni circuit. */
+export const isIntensityBlock = (b: SessionBlock): boolean =>
+  !isPrescribed(b) && b.zone !== 'Z1' && b.zone !== 'Z2' && (b.durationS ?? 0) > 0;
+
+const isEasyRun = (b: SessionBlock): boolean =>
+  !isPrescribed(b) && (b.zone === 'Z1' || b.zone === 'Z2') && !b.recovery && (b.durationS ?? 0) > 0;
+
+/** Ce qu'une séance de qualité devient un jour de vigilance. */
+export interface SoftenedQuality {
+  blocks: SessionBlock[];
+  /** Des cibles d'intensité ont été calées sur le bas de leur fourchette. */
+  lowered: boolean;
+  /** La dernière répétition est devenue facultative. */
+  lastOptional: boolean;
+  /** Le bloc d'intensité continu écourté, de combien à combien, en secondes. */
+  shortened?: { fromS: number; toS: number };
+}
+
+/**
+ * La séance de qualité d'un jour de vigilance : même forme, moins de marge.
+ *
+ * Les cibles d'intensité se calent sur la moitié basse de leur fourchette, FC
+ * et allure. La dernière répétition devient facultative ; un bloc continu — un
+ * tempo, le bloc à l'effort de course d'une sortie longue — n'a pas de dernière
+ * répétition, il perd d'autant : un cinquième, sur la maille de cinq minutes,
+ * et les minutes retirées se courent facile dans le bloc qui suit. La séance
+ * garde ainsi sa durée, et une sortie longue reste longue.
+ */
+export function softenedQuality(blocks: readonly SessionBlock[]): SoftenedQuality {
+  let lowered = false;
+  const out = blocks.map((b): SessionBlock => {
+    if (!isIntensityBlock(b)) return b;
+    const next: SessionBlock = { ...b };
+    if (b.hrRange && b.hrRange[1] > b.hrRange[0]) {
+      next.hrRange = [b.hrRange[0], Math.round((b.hrRange[0] + b.hrRange[1]) / 2)];
+      lowered = true;
+    }
+    if (b.speedRangeMs && b.speedRangeMs[1] > b.speedRangeMs[0]) {
+      const [lo, hi] = b.speedRangeMs;
+      next.speedRangeMs = [lo, Math.round(((lo + hi) / 2) * 1e5) / 1e5];
+      next.paceRange = paceRange(lo, next.speedRangeMs[1]);
+      lowered = true;
+    }
+    return next;
+  });
+
+  const last = out.findLastIndex(isIntensityBlock);
+  if (last < 0) return { blocks: out, lowered, lastOptional: false };
+  const work = out[last]!;
+  if ((work.repeat ?? 1) > 1) {
+    out[last] = { ...work, lastOptional: true };
+    return { blocks: out, lowered, lastOptional: true };
+  }
+
+  const fromS = work.durationS!;
+  const grid = fromS >= 600 ? 300 : 60;
+  let toS = Math.round((fromS * 0.8) / grid) * grid;
+  if (toS >= fromS) toS = fromS - grid;
+  if (toS < grid) return { blocks: out, lowered, lastOptional: false };
+  const kept = toS / fromS;
+  const shed = (m: number | undefined) => (m ? m - Math.round(m * kept) : 0);
+  out[last] = {
+    ...work,
+    durationS: toS,
+    ...(work.elevationGainM !== undefined ? { elevationGainM: Math.round(work.elevationGainM * kept) } : {}),
+    ...(work.elevationLossM !== undefined ? { elevationLossM: Math.round(work.elevationLossM * kept) } : {}),
+  };
+  const after = out.findIndex((b, i) => i > last && isEasyRun(b));
+  const receiver = after >= 0 ? after : out.findLastIndex((b, i) => i < last && isEasyRun(b));
+  if (receiver >= 0) {
+    const r = out[receiver]!;
+    const gain = shed(work.elevationGainM);
+    const loss = shed(work.elevationLossM);
+    out[receiver] = {
+      ...r,
+      durationS: r.durationS! + (fromS - toS),
+      ...(gain ? { elevationGainM: (r.elevationGainM ?? 0) + gain } : {}),
+      ...(loss ? { elevationLossM: (r.elevationLossM ?? 0) + loss } : {}),
+    };
+  }
+  return { blocks: out, lowered, lastOptional: false, shortened: { fromS, toS } };
+}
+
+/**
+ * Une sortie longue un jour rouge : ses blocs d'intensité se courent facile, à
+ * durée et dénivelé égaux, aux cibles du bloc facile le plus proche. La sortie
+ * reste ce qu'elle est — de la durée et du terrain ; seule l'intensité part.
+ */
+export function easedLongRun(blocks: readonly SessionBlock[]): SessionBlock[] {
+  const easy = (i: number) =>
+    blocks
+      .map((b, j) => ({ b, d: Math.abs(i - j) }))
+      .filter(({ b }) => isEasyRun(b))
+      .sort((x, y) => x.d - y.d || (y.b.zone === 'Z2' ? 1 : 0) - (x.b.zone === 'Z2' ? 1 : 0))[0]?.b;
+  return blocks.map((b, i): SessionBlock => {
+    if (!isIntensityBlock(b)) return b;
+    const ref = easy(i);
+    const gain = elevationGainOf([b]);
+    const loss = elevationLossOf([b]);
+    return {
+      label: `${b.label}, couru facile`,
+      zone: ref?.zone ?? 'Z2',
+      durationS: totalDuration([b]),
+      ...(ref?.hrRange ? { hrRange: ref.hrRange } : {}),
+      ...(ref?.speedRangeMs ? { speedRangeMs: ref.speedRangeMs } : {}),
+      ...(ref?.paceRange ? { paceRange: ref.paceRange } : {}),
+      ...(ref?.provenance ? { provenance: ref.provenance } : {}),
+      ...(b.terrain ?? ref?.terrain ? { terrain: b.terrain ?? ref?.terrain } : {}),
+      ...(b.where ? { where: b.where } : {}),
+      ...(gain ? { elevationGainM: gain } : {}),
+      ...(loss ? { elevationLossM: loss } : {}),
+    };
+  });
+}
+
 export function totalDuration(blocks: readonly SessionBlock[]): number {
   return blocks.reduce(
     (a, b) => a + (b.repeat ?? 1) * (b.durationS ?? 0) + recoveryTimes(b) * (b.recovery?.durationS ?? 0),

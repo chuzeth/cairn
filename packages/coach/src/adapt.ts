@@ -11,8 +11,9 @@ import { addDays, mondayOf } from './periodization.js';
 import { RECOVERY_MIN, isHardSession, isLongType } from './planner.js';
 import { firstSentence, presentDecided, withHistory } from './presentation.js';
 import {
-  STRENGTH_INTENT, carriesEccentricStrength, elevationGainOf, formatOf, isMaximalTest, recovery as decrassage,
-  restDay, retitleFromContent, scaledRounds, transformSession, withoutEccentricStrength,
+  STRENGTH_INTENT, carriesEccentricStrength, easedLongRun, elevationGainOf, endurance, formatOf, isIntensityBlock,
+  isMaximalTest, isPrescribed, recovery as decrassage, restDay, retitleFromContent, scaledRounds, sessionTotals,
+  softenedQuality, totalDuration, transformSession, withoutEccentricStrength,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
 
@@ -41,8 +42,17 @@ export interface Adjustment {
    * `drop_strength` retire le renforcement excentrique de la séance, et laisse le reste.
    * `recover` fait de la séance le lendemain d'une séance clef — repos ou décrassage —,
    * au jour `newDate` quand il est donné. `free` libère un jour qui ne protège plus rien.
+   * `soften` garde la forme d'une séance de qualité et en calme l'intensité ; `ease` la
+   * fait courir facile, à durée égale ; `defer` la décale à `newDate` et laisse à sa
+   * place un footing facile de même durée (`readinessAdjustment`).
    */
-  action: 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw' | 'drop_strength' | 'recover' | 'free';
+  action:
+    | 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw' | 'drop_strength' | 'recover' | 'free'
+    | 'soften' | 'ease' | 'defer';
+  /** Sur `defer` : le footing que la séance décalée remplace à `newDate`, retiré. */
+  displaces?: string;
+  /** Sur `ease` : la semaine fermée qui a arrêté le report — affûtage ou semaine de course. */
+  heldBy?: WeekClosure;
   /** Sur `recover` : ce que la séance devient. */
   recovery?: 'rest' | 'recovery';
   /** Sur `recover` : le jour est vide, la séance s'écrit sous l'identifiant `sessionId`. */
@@ -185,7 +195,7 @@ const rulesMay = (s: PlannedSession) => !s.decision || s.decision.by === 'rules'
 const live = (s: PlannedSession) => s.status !== 'cancelled' && s.status !== 'withdrawn';
 
 /** Ce qui allège une séance : ce qu'une même règle ne fait qu'une fois. */
-const LIGHTENING: ReadonlySet<Adjustment['action']> = new Set(['scale', 'drop_strength']);
+const LIGHTENING: ReadonlySet<Adjustment['action']> = new Set(['scale', 'drop_strength', 'soften', 'ease', 'defer']);
 
 /**
  * La règle a-t-elle déjà allégé cette séance ?
@@ -372,6 +382,220 @@ function recoveryContent(kind: 'rest' | 'recovery', from: PlannedSession | undef
   };
 }
 
+/**
+ * Une séance de qualité : fractionné, seuil, allure spécifique, descente, test —
+ * ou une sortie longue qui porte un bloc d'intensité. Sans lui, une sortie
+ * longue est du volume facile, et un footing n'est jamais une séance de qualité.
+ */
+export function isQualitySession(s: Pick<PlannedSession, 'type' | 'blocks'>, model: PhysiologyModel): boolean {
+  if (EASY_TYPES.has(s.type) || s.type === 'race') return false;
+  if (isLongType(s.type)) return s.blocks.some(isIntensityBlock);
+  return isHardSession(s, model);
+}
+
+/** Ce qui ferme une semaine à toute séance de qualité venue d'ailleurs. */
+export type WeekClosure = 'taper' | 'race';
+
+const CLOSURE_FR: Record<WeekClosure, string> = { taper: "l'affûtage", race: 'la semaine de course' };
+
+/**
+ * Une semaine fermée à toute séance de qualité venue d'ailleurs : l'affûtage
+ * et la semaine de course gardent leurs propres séances d'intensité, et n'en
+ * accueillent pas d'autres. La semaine de course se lit à sa course, quelle que
+ * soit la phase que le plan lui donne.
+ */
+function weekClosure(
+  state: Pick<AthleteState, 'plan'>,
+  sessions: readonly PlannedSession[],
+  date: string,
+): WeekClosure | null {
+  const week = mondayOf(date);
+  const weeks = state.plan?.weeks ?? [];
+  const phase = weeks.find((w) => w.weekStart === week)?.phase;
+  if (phase === 'taper' || phase === 'race') return 'taper';
+  const all = [...weeks.flatMap((w) => w.sessions), ...sessions];
+  return all.some((s) => s.type === 'race' && live(s) && mondayOf(s.date) === week) ? 'race' : null;
+}
+
+/** Jusqu'où une séance de qualité décalée par la disponibilité cherche son jour. */
+const DEFER_WINDOW_DAYS = 7;
+
+/**
+ * Ce que la disponibilité du jour fait à la séance de qualité du jour ou du
+ * lendemain.
+ *
+ * Les protocoles d'entraînement guidé par l'état du jour ajustent l'intensité
+ * des séances dures, et laissent les footings tels quels :
+ *  · vert, rien ne change ;
+ *  · vigilance, la séance garde sa forme : ses cibles se calent sur le bas de
+ *    leur fourchette, et sa dernière répétition devient facultative — ou son
+ *    bloc d'intensité continu perd d'autant (`softenedQuality`). Un test
+ *    maximal n'a ni fourchette à baisser ni répétition à retirer : il reste ;
+ *  · rouge, la séance se court facile, à durée égale, et la qualité passe au
+ *    premier jour libre — vide, ou qu'un footing posé par les règles occupe —
+ *    sans séance exigeante la veille ni le lendemain, et dans une semaine qui
+ *    peut encore porter un fractionné. Sans jour libre dans la semaine, elle
+ *    n'est pas reprogrammée, et le motif le dit. Une sortie longue ne se
+ *    décale pas : c'est son bloc d'intensité qui se court facile.
+ *
+ * Une séance facile n'est jamais touchée. La règle ne décide rien d'autre que ce
+ * qui précède, et le même niveau ne s'applique qu'une fois à une séance
+ * (`lightenedBy`) : un second point du jour au rouge ne décale pas deux fois.
+ */
+export function readinessAdjustment(
+  state: AthleteState,
+  upcoming: readonly PlannedSession[],
+): Adjustment | null {
+  const { verdict, score } = state.readiness;
+  if (verdict === 'green') return null;
+  const today = state.today.date;
+  const model = state.model;
+  const tomorrow = addDays(today, 1);
+  const quality = upcoming
+    .filter(
+      (s) =>
+        s.date >= today && s.date <= tomorrow && (s.status === 'planned' || s.status === 'moved') &&
+        !absenceCovering(state.absences, s.date) && isQualitySession(s, model),
+    )
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (!quality) return null;
+  const name = `« ${formatOf(quality.title)} »`;
+  const base = { sessionId: quality.id, date: quality.date };
+
+  // Un test maximal ne se court pas fatigué : à l'orange, il se décale comme au rouge.
+  const test = isMaximalTest(quality, model);
+  if (verdict === 'amber' && !test) {
+    const soft = softenedQuality(quality.blocks);
+    const parts = [
+      ...(soft.lowered ? ['ses cibles se calent sur le bas de leur fourchette'] : []),
+      ...(soft.lastOptional ? ['sa dernière répétition devient facultative'] : []),
+      ...(soft.shortened
+        ? [
+            `son bloc d'intensité passe de ${sessionDuration(soft.shortened.fromS)} à ` +
+              `${sessionDuration(soft.shortened.toS)}, le reste couru facile`,
+          ]
+        : []),
+    ];
+    if (parts.length === 0) return null;
+    return {
+      ...base,
+      action: 'soften',
+      rule: 'readiness_amber',
+      reason:
+        `Disponibilité en vigilance (${score}/100) : ${name} garde sa forme, ${joined(parts)}. ` +
+        `Un jour de vigilance ajuste l'intensité des séances dures, jamais les footings.`,
+    };
+  }
+
+  const rule = verdict === 'red' ? 'readiness_red' : 'readiness_amber';
+  const signal = verdict === 'red' ? `Disponibilité au rouge (${score}/100)` : `Disponibilité en vigilance (${score}/100)`;
+  if (isLongType(quality.type)) {
+    return {
+      ...base,
+      action: 'ease',
+      rule,
+      reason:
+        `${signal} : le bloc d'intensité de ${name} se court facile, à durée égale — la sortie garde ses ` +
+        `${sessionDuration(quality.plannedDurationS)} et son dénivelé.`,
+    };
+  }
+  const easy = `${sessionDuration(quality.plannedDurationS)} de footing facile à la place de ${name}`;
+  const why = test
+    ? ` Un test maximal couru fatigué mesure la fatigue, pas la capacité : la vitesse critique qu'il nourrit en ` +
+      `sortirait sous-estimée, et toutes les allures avec elle.`
+    : '';
+  const day = freeDayFor(state, upcoming, quality);
+  if (!day || 'heldBy' in day) {
+    return {
+      ...base,
+      action: 'ease',
+      rule,
+      ...(day ? { heldBy: day.heldBy } : {}),
+      reason: day
+        ? `${signal} : ${easy}, sans report : à partir du ${dayMonth(day.from)}, ${CLOSURE_FR[day.heldBy]} garde ` +
+          `ses propres séances d'intensité et n'en accueille pas d'autres.${why}`
+        : `${signal} : ${easy}. Aucun jour d'ici le ${dayMonth(addDays(quality.date, DEFER_WINDOW_DAYS))} ne la ` +
+          `loge sans séance exigeante la veille ou le lendemain : elle n'est pas reprogrammée.${why}`,
+    };
+  }
+  return {
+    ...base,
+    action: 'defer',
+    rule,
+    newDate: day.date,
+    ...(day.displaces ? { displaces: day.displaces } : {}),
+    reason:
+      `${signal} : ${easy}, qui passe au ${dayMonth(day.date)} — le premier jour libre sans séance exigeante ` +
+      `la veille ni le lendemain.${day.displaces ? " Le footing qui l'occupait est retiré." : ''}${why}`,
+  };
+}
+
+const joined = (parts: string[]) =>
+  parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')} et ${parts.at(-1)}`;
+
+/**
+ * Le premier jour où loger une séance de qualité décalée : disponible, hors
+ * absence, vide ou occupé par un seul footing que les règles ont posé et qui ne
+ * porte rien du dossier, sans
+ * séance exigeante la veille ni le lendemain, et dans une semaine qui peut
+ * encore porter le fractionné qu'elle est.
+ */
+function freeDayFor(
+  state: AthleteState,
+  upcoming: readonly PlannedSession[],
+  quality: PlannedSession,
+): { date: string; displaces?: string } | { heldBy: WeekClosure; from: string } | null {
+  const model = state.model;
+  const known = new Map<string, PlannedSession>();
+  for (const s of [...(state.plan?.weeks.flatMap((w) => w.sessions) ?? []), ...upcoming]) known.set(s.id, s);
+  const all = [...known.values()].filter((s) => live(s) && s.id !== quality.id);
+  const available = new Set(state.profile?.constraints.availableDays ?? [0, 1, 2, 3, 4, 5, 6]);
+  const perWeek = intervalPolicy(state)?.maxPerWeek ?? Infinity;
+
+  for (let d = 1; d <= DEFER_WINDOW_DAYS; d++) {
+    const date = addDays(quality.date, d);
+    // Le report s'arrête à la première semaine fermée : les suivantes mènent à la course.
+    const closure = weekClosure(state, upcoming, date);
+    if (closure) return { heldBy: closure, from: date };
+    if (!available.has(new Date(`${date}T00:00:00Z`).getUTCDay()) || absenceCovering(state.absences, date)) continue;
+    const there = all.filter((s) => s.date === date);
+    // Un footing qui porte la souplesse ou la respiration du dossier ne se retire
+    // pas : sa fréquence hebdomadaire est prescrite.
+    const footing = (s: PlannedSession) =>
+      s.status === 'planned' && (s.type === 'endurance' || s.type === 'recovery') && rulesMay(s) &&
+      !s.blocks.some(isPrescribed);
+    if (there.length > 1 || !there.every(footing)) continue;
+    const near = [addDays(date, -1), addDays(date, 1)];
+    if (all.some((s) => near.includes(s.date) && isHardSession(s, model))) continue;
+    if (
+      // Un test maximal n'est pas un fractionné, quel que soit son type.
+      isIntervalSession(quality.type) && !isMaximalTest(quality, model) && Number.isFinite(perWeek) &&
+      all.filter((s) => isIntervalSession(s.type) && mondayOf(s.date) === mondayOf(date)).length >= perWeek
+    ) {
+      continue;
+    }
+    return { date, ...(there[0] ? { displaces: there[0].id } : {}) };
+  }
+  return null;
+}
+
+/**
+ * Une séance facile de même durée, à la place d'une séance de qualité un jour
+ * rouge — à la seconde près : la maille de cinq minutes du footing en ferait
+ * une séance plus longue que celle qu'elle remplace.
+ */
+function easyContent(model: PhysiologyModel, durationS: number) {
+  const t = endurance(model, Math.max(1, Math.round(durationS / 60)));
+  const blocks = t.blocks.map((b, i) => (i === 0 ? { ...b, durationS } : b));
+  const totals = sessionTotals(model, blocks);
+  return {
+    type: t.type, title: t.title, intent: t.intent, priority: t.priority, blocks,
+    plannedLoad: totals.load, plannedMechanicalLoad: totals.mechanicalLoad, plannedDurationS: totals.durationS,
+    plannedElevationGainM: t.elevationGainM, plannedDistanceM: Math.round(totals.distanceM),
+    directives: undefined, successCriteria: undefined,
+  };
+}
+
 export function evaluateAdjustments(
   state: AthleteState,
   upcoming: PlannedSession[],
@@ -470,7 +694,13 @@ export function evaluateAdjustments(
     }
   }
 
-  // ── Règle 2 : fatigue musculaire excentrique ──────────────────────────────
+  // ── Règle 2 : disponibilité au rouge ──────────────────────────────────────
+  // Elle passe avant les règles de fatigue : courir facile protège plus qu'un
+  // allègement d'un quart, et une séance n'en reçoit qu'une.
+  const readiness = readinessAdjustment(state, upcoming);
+  if (readiness?.rule === 'readiness_red') push(readiness);
+
+  // ── Règle 2 bis : fatigue musculaire excentrique ──────────────────────────
   // La charge mécanique récupère plus lentement que la métabolique : on protège
   // spécifiquement les séances qui la sollicitent à nouveau.
   if (state.today.mechanicalTsb < -22) {
@@ -536,29 +766,10 @@ export function evaluateAdjustments(
     }
   }
 
-  // ── Règle 4 : disponibilité au rouge ──────────────────────────────────────
-  if (state.readiness.verdict === 'red') {
-    const next = future.find((s) => daysUntil(s.date) <= 1);
-    if (next && next.plannedLoad > 40) {
-      const factor = 0.45;
-      const change = { duration: factor, ...repetitionScaling(next, factor) };
-      push({
-        sessionId: next.id,
-        date: next.date,
-        action: 'scale',
-        factor,
-        ...repetitionScaling(next, factor),
-        rule: 'readiness_red',
-        reason:
-          // La durée annoncée est celle que l'allègement produira, écrite comme
-          // l'écran l'écrira. Calculée à part, elle promettait 31 min là où la
-          // séance enregistrée en affichait 30, et c'est la phrase qu'on croit.
-          `Séance ramenée à ${sessionDuration(transformSession(next, change, state.model).plannedDurationS)} ` +
-          `en récupération${repsCut(next, factor)} : ta disponibilité du jour est à ${state.readiness.score}/100. ` +
-          state.readiness.recommendation,
-      });
-    }
-  }
+  // ── Règle 4 : disponibilité en vigilance ──────────────────────────────────
+  // Après les règles de charge : un allègement d'un quart protège davantage que
+  // des cibles au bas de leur fourchette.
+  if (readiness?.rule === 'readiness_amber') push(readiness);
 
   // ── Règle 5 : progression de charge trop rapide ───────────────────────────
   if (state.today.rampRate > 8) {
@@ -669,7 +880,8 @@ export async function applyAdjustments(
   // une absence déclarée après coup peut recouvrir des séances plus anciennes
   // que n'importe quelle fenêtre fixe, et elles seraient silencieusement
   // ignorées.
-  const dates = adjustments.map((a) => a.date).sort();
+  // Une séance décalée remplace le footing de son nouveau jour : lui aussi se relit.
+  const dates = adjustments.flatMap((a) => (a.newDate ? [a.date, a.newDate] : [a.date])).sort();
   const all = await db.listPlannedSessions(athleteId, dates[0]!, dates[dates.length - 1]!);
   const byId = new Map(all.map((s) => [s.id, s]));
   // Les courbes de l'athlète ne servent qu'à l'allègement : on ne va les
@@ -864,6 +1076,96 @@ export async function applyAdjustments(
         });
         break;
 
+      case 'soften': {
+        // La forme reste, l'intensité se calme : mêmes blocs, cibles au bas de
+        // leur fourchette, dernière répétition facultative ou bloc écourté.
+        model ??= await currentModel(athleteId);
+        const blocks = softenedQuality(session.blocks).blocks;
+        const presented = presentDecided(
+          { ...session, blocks, decision: decided(adj.reason), rationale: adj.reason },
+          { model },
+        );
+        await db.updateSession(adj.sessionId, {
+          blocks: presented.blocks,
+          plannedDurationS: totalDuration(presented.blocks) || session.plannedDurationS,
+          plannedElevationGainM: elevationGainOf(presented.blocks),
+          ...measuredOf(presented),
+          title: presented.title,
+          intent: presented.intent,
+          rationale: presented.rationale,
+          history: presented.history ?? null,
+          decision: presented.decision,
+          ...traced(session, adj.rule),
+        } as never);
+        break;
+      }
+
+      case 'ease': {
+        // Courue facile, à durée égale : une sortie longue perd son intensité
+        // et garde son terrain ; une autre séance devient un footing.
+        model ??= await currentModel(athleteId);
+        const content = isLongType(session.type)
+          ? { blocks: easedLongRun(session.blocks) }
+          : easyContent(model, session.plannedDurationS);
+        const presented = presentDecided(
+          { ...session, ...content, decision: decided(adj.reason), rationale: adj.reason },
+          { model },
+        );
+        await db.updateSession(adj.sessionId, {
+          ...content,
+          ...('directives' in content
+            ? { directives: null, successCriteria: null, plannedDistanceM: content.plannedDistanceM ?? null }
+            : {}),
+          ...measuredOf(presented),
+          plannedDurationS: totalDuration(presented.blocks) || session.plannedDurationS,
+          plannedElevationGainM: elevationGainOf(presented.blocks),
+          title: presented.title,
+          intent: presented.intent,
+          blocks: presented.blocks,
+          rationale: presented.rationale,
+          history: presented.history ?? null,
+          decision: presented.decision,
+          ...traced(session, adj.rule),
+        } as never);
+        break;
+      }
+
+      case 'defer': {
+        // La qualité part à son nouveau jour, avec son histoire ; à sa place, un
+        // footing facile de même durée ; au nouveau jour, le footing qui
+        // l'occupait est retiré.
+        if (!adj.newDate) break;
+        model ??= await currentModel(athleteId);
+        await db.updateSession(adj.sessionId, {
+          date: adj.newDate,
+          status: 'moved',
+          ...(mondayOf(adj.newDate) !== mondayOf(session.date) ? weekOf(adj.newDate) : {}),
+          ...told(session, adj.reason),
+          decision: decided(adj.reason),
+          ...traced(session, adj.rule),
+        } as never);
+        const displaced = adj.displaces ? byId.get(adj.displaces) : undefined;
+        if (displaced) {
+          const why =
+            `Retiré : « ${formatOf(session.title)} » passe à ce jour, décalée du ${dayMonth(session.date)} par une ` +
+            `disponibilité rouge.`;
+          await db.updateSession(displaced.id, { status: 'cancelled', ...told(displaced, why), decision: decided(why) });
+        }
+        if (plan) {
+          const written = presentDecided(
+            {
+              id: `${session.id}-facile-${session.date}`, athleteId, date: session.date, status: 'planned',
+              ...easyContent(model, session.plannedDurationS),
+              decision: decided(adj.reason), rationale: adj.reason,
+              lightenings: [{ rule: adj.rule, on: localDate(at) }],
+            },
+            { model },
+          );
+          await db.insertSession(plan.plan.id, written, weekOf(session.date));
+        }
+        break;
+      }
+
       case 'swap':
         await db.updateSession(adj.sessionId, { ...told(session, adj.reason), decision: decided(adj.reason) });
         break;
@@ -894,7 +1196,9 @@ export async function applyAdjustments(
                     ? recoveredAs(a)
                     : a.action === 'free'
                       ? 'libérée'
-                      : a.action,
+                      : a.action === 'soften' || a.action === 'ease' || a.action === 'defer'
+                        ? readinessChange(a)
+                        : a.action,
         reason: a.reason,
       })),
     });
@@ -926,7 +1230,9 @@ export function describeAdjustments(adjustments: Adjustment[]): string {
                     ? recoveredAs(a)
                     : a.action === 'free'
                       ? 'libérée'
-                      : 'ajustée';
+                      : a.action === 'soften' || a.action === 'ease' || a.action === 'defer'
+                        ? readinessChange(a)
+                        : 'ajustée';
       return `- **${a.date}** — séance ${what}. ${a.reason}`;
     })
     .join('\n');
@@ -936,4 +1242,13 @@ export function describeAdjustments(adjustments: Adjustment[]): string {
 function recoveredAs(a: Adjustment): string {
   const kind = a.recovery === 'rest' ? 'repos complet' : 'décrassage';
   return a.insert ? `ajoutée : ${kind}` : a.newDate ? `déplacée au ${a.newDate} : ${kind}` : `réécrite : ${kind}`;
+}
+
+/** Ce que la disponibilité a fait d'une séance de qualité, en clair. */
+function readinessChange(a: Adjustment): string {
+  return a.action === 'soften'
+    ? 'gardée, intensité calmée'
+    : a.action === 'defer'
+      ? `courue facile, qualité déplacée au ${a.newDate}`
+      : 'courue facile';
 }

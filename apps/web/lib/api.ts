@@ -572,6 +572,8 @@ export interface SessionRow {
   plannedDate?: string;
   blocks: {
     label: string; zone: string; repeat?: number; durationS?: number; distanceM?: number;
+    /** La dernière répétition est facultative : la disponibilité du jour était en vigilance. */
+    lastOptional?: boolean;
     /** Bloc non couru : souplesse et respiration du dossier, ou l'activation d'un renforcement. */
     kind?: 'mobility' | 'respiratory' | 'activation';
     /** Dénivelé du bloc, par répétition et hors récupération — le relief du profil. */

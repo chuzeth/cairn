@@ -476,7 +476,7 @@ describe('La passe des sept derniers jours rejuge ce qu’elle tient', () => {
 // ── Une règle n'allège qu'une fois la même séance ────────────────────────────
 
 describe('Une règle n’allège qu’une fois la même séance', () => {
-  it('garde la trace de l’allègement : un second point du jour au rouge n’allège pas la descente encore', async () => {
+  it('garde la trace du rouge : un second point du jour au rouge ne décale pas la descente encore', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-24T05:30:00.000Z'));
     const t = downhillSession(PIERRE_MODEL, 6, 3);
@@ -491,12 +491,11 @@ describe('Une règle n’allège qu’une fois la même séance', () => {
     const first = evaluateAdjustments(red, store.sessions.map((s) => ({ ...s })));
     expect(first.map((a) => a.rule)).toEqual(['readiness_red']);
     await applyAdjustments('pierre', first, 'readiness');
-    const [lightened] = store.sessions;
-    expect(lightened!.lightenings).toEqual([{ rule: 'readiness_red', on: '2026-09-24' }]);
-    // Ses remontées à pied ne raccourcissent pas : allégée, elle reste au-dessus
-    // des 40 points de la règle, et c'est ce qui la faisait réalléger.
-    expect(lightened!.plannedDurationS).toBeLessThan(t.durationS);
-    expect(lightened!.plannedLoad).toBeGreaterThan(40);
+    const [deferred] = store.sessions;
+    expect(deferred!.lightenings).toEqual([{ rule: 'readiness_red', on: '2026-09-24' }]);
+    // Décalée au lendemain, elle reste « du jour ou du lendemain » : c'est la
+    // trace, et elle seule, qui l'empêche d'être décalée encore.
+    expect(deferred).toMatchObject({ date: '2026-09-25', status: 'moved' });
 
     expect(evaluateAdjustments(red, store.sessions.map((s) => ({ ...s })))).toEqual([]);
     vi.useRealTimers();

@@ -316,6 +316,7 @@ function Session({
             </span>
             <span className="m-block-body">
               {blockLabel(b.label)}
+              {b.lastOptional && <span className="m-faint"> · la dernière facultative</span>}
               {hrText(b) && <span className="m-faint"> · {hrText(b)}</span>}
               {/* Une descente se pilote à l'effort : sa consigne tient la place de la FC. */}
               {b.effort && <span className="m-faint"> · {nbsp(effortHead(b.effort))}</span>}
@@ -426,7 +427,11 @@ const climbs = (b: SessionRow['blocks'][number]) => (b.elevationGainM ?? 0) > (b
 /** Le tracé, pour qui ne le voit pas : la séance bloc par bloc, dans l'ordre. */
 const spoken = (session: SessionRow) =>
   session.blocks
-    .map((b) => `${b.repeat ? `${num(b.repeat)} fois ` : ''}${duration(b.durationS)} ${blockLabel(b.label)}`)
+    .map(
+      (b) =>
+        `${b.repeat ? `${num(b.repeat)} fois ` : ''}${duration(b.durationS)} ${blockLabel(b.label)}` +
+        `${b.lastOptional ? ', la dernière facultative' : ''}`,
+    )
     .join(', ');
 
 /** La cible cardiaque, dite comme on la lit sur la montre — avec son unité : seule, « 130–150 » ne dit pas ce qu'elle mesure. */

@@ -1292,6 +1292,12 @@ export interface SessionBlock {
    * trois tours pesaient le même forfait.
    */
   circuit?: StrengthCircuit;
+  /**
+   * La dernière répétition du bloc est facultative : la disponibilité du jour
+   * était en vigilance (`adapt.ts`). La séance garde sa forme et sa durée
+   * écrite ; l'athlète décide de la dernière sur ce qu'il ressent.
+   */
+  lastOptional?: boolean;
   notes?: string;
 }
 

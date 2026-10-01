@@ -299,12 +299,13 @@ export function taperGapText(g: TaperGap): string {
  * À quoi sert le point du jour, dit avant l'envoi.
  *
  * Il ne décide rien lui-même : il entre dans la disponibilité, et c'est la
- * règle du rouge (`adapt.ts`) qui allège, quand la séance qui vient est assez
- * lourde pour qu'il y ait quelque chose à alléger — d'où « peuvent ».
+ * règle de disponibilité (`readinessAdjustment`, `adapt.ts`) qui ajuste la
+ * séance de qualité du jour ou du lendemain, quand il y en a une.
  */
 export const CHECK_IN_PURPOSE =
-  'Tes réponses entrent dans ta disponibilité du jour : si elles la font passer au rouge, sous ' +
-  `${READINESS_VERDICT.amber}, les règles de charge peuvent alléger ta prochaine séance.`;
+  `Tes réponses entrent dans ta disponibilité du jour : sous ${READINESS_VERDICT.green}, ta séance de qualité ` +
+  `du jour ou du lendemain garde sa forme au bas de ses cibles, sous ${READINESS_VERDICT.amber} elle se court ` +
+  `facile et se décale hors affûtage, et les footings ne bougent jamais.`;
 
 /** Ce qu'une séance est, avant et après un point du jour. */
 export interface SessionState {
@@ -313,6 +314,9 @@ export interface SessionState {
   date: string;
   durationS: number;
   load: number;
+  title?: string;
+  /** Ce qu'il faut pour dire ce qu'une séance de qualité est devenue sans changer de forme. */
+  blocks?: readonly SessionBlock[];
 }
 
 export interface CheckInEffect {
@@ -324,7 +328,14 @@ export interface CheckInEffect {
    * La prochaine séance que les règles pouvaient toucher — aujourd'hui ou
    * demain —, telle qu'elle était et telle qu'elle est. `null` : aucune.
    */
-  session: { before: SessionState; after: SessionState | null } | null;
+  session: {
+    before: SessionState;
+    after: SessionState | null;
+    /** Ce qui occupe désormais le jour de la séance, quand elle en est partie. */
+    replacement?: SessionState | null;
+    /** Ce qui a empêché de reporter la séance, quand elle se court facile sur place. */
+    heldBy?: 'taper' | 'race' | null;
+  } | null;
 }
 
 const VERDICT_REACHED: Record<ReadinessScore['verdict'], string> = {
@@ -346,21 +357,77 @@ export function checkInEffect(e: CheckInEffect): string {
 
   const { before, after } = e.session;
   const which = `ta séance ${before.date === e.today ? 'du jour' : 'de demain'}`;
-  const changed = sessionChange(before, after);
+  const changed = sessionChange(before, after, e.session.replacement ?? null, e.session.heldBy ?? null);
   return changed ? `${score} : ${which} ${changed}.` : `${score} ; ${which} ne change pas.`;
 }
 
-/** Ce qu'une séance est devenue, dit de ce qu'on en voit ; vide si rien n'a changé. */
-function sessionChange(before: SessionState, after: SessionState | null): string {
+const EASY_SESSION_TYPES = new Set(['endurance', 'recovery']);
+
+/**
+ * Ce qu'une séance est devenue, dit de ce qu'on en voit ; vide si rien n'a changé.
+ *
+ * La phrase se lit sur la base après l'envoi, pas sur ce que les règles
+ * annonçaient : c'est ce qui la rend vraie.
+ */
+function sessionChange(
+  before: SessionState,
+  after: SessionState | null,
+  replacement: SessionState | null,
+  heldBy: 'taper' | 'race' | null,
+): string {
   if (!after || after.status === 'cancelled' || after.status === 'withdrawn') return 'est annulée';
   if (after.type === 'rest' && before.type !== 'rest') return 'devient un repos complet';
-  if (after.date !== before.date) return `passe au ${writtenOn(after.date)}`;
+  const name = before.title ? `« ${lib.formatOf(before.title)} »` : 'la séance';
+  if (after.date !== before.date) {
+    return replacement && EASY_SESSION_TYPES.has(replacement.type)
+      ? `devient un footing facile de ${sessionDuration(replacement.durationS)}, et ${name} passe au ${writtenOn(after.date)}`
+      : `passe au ${writtenOn(after.date)}`;
+  }
+  if (after.type === 'endurance' && before.type !== 'endurance' && before.type !== 'recovery') {
+    const held = heldBy
+      ? ` : ${heldBy === 'taper' ? "l'affûtage" : 'la semaine de course'} n'accueille pas d'autre séance d'intensité`
+      : '';
+    return `devient un footing facile de ${sessionDuration(after.durationS)}, sans report${held}`;
+  }
+  const easing = qualityEasing(before.blocks ?? [], after.blocks ?? []);
+  if (easing === 'eased') return "se court facile, son bloc d'intensité compris, à durée égale";
   if (after.durationS < before.durationS) {
     return `est allégée, ${sessionDuration(after.durationS)} au lieu de ${sessionDuration(before.durationS)}`;
   }
   if (after.type !== before.type) return 'devient un décrassage';
+  if (easing) return `garde sa forme, ${easing}`;
   if (after.load < before.load) return `est allégée, ${after.load} points de charge au lieu de ${before.load}`;
   return '';
+}
+
+/**
+ * Ce qu'une séance de qualité a perdu d'intensité sans changer de forme, lu
+ * sur ses blocs : `eased` quand elle n'en porte plus aucune, sinon ses cibles
+ * abaissées, sa dernière répétition facultative, son bloc écourté ; vide quand
+ * rien de cela n'a changé.
+ */
+function qualityEasing(before: readonly SessionBlock[], after: readonly SessionBlock[]): string {
+  const intense = (bs: readonly SessionBlock[]) => bs.filter(lib.isIntensityBlock);
+  const was = intense(before);
+  const is = intense(after);
+  if (was.length === 0) return '';
+  if (is.length === 0) return 'eased';
+  if (is.length !== was.length) return '';
+  const parts: string[] = [];
+  const lowered = is.some((b, i) => {
+    const w = was[i]!;
+    return (b.hrRange && w.hrRange && b.hrRange[1] < w.hrRange[1]) ||
+      (b.speedRangeMs && w.speedRangeMs && b.speedRangeMs[1] < w.speedRangeMs[1]);
+  });
+  if (lowered) parts.push('cibles au bas de leur fourchette');
+  if (is.some((b, i) => b.lastOptional && !was[i]!.lastOptional)) parts.push('dernière répétition facultative');
+  const cut = is.findIndex((b, i) => (b.durationS ?? 0) < (was[i]!.durationS ?? 0) && (b.repeat ?? 1) === 1);
+  if (cut >= 0) {
+    parts.push(
+      `bloc d'intensité ramené de ${Math.round(was[cut]!.durationS! / 60)} à ${Math.round(is[cut]!.durationS! / 60)} min`,
+    );
+  }
+  return parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')} et ${parts.at(-1)}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

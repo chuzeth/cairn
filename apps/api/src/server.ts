@@ -4,7 +4,7 @@ import * as db from '@cairn/db';
 import { directivesFor } from '@cairn/core';
 import {
   CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, describeAdjustments,
-  describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, labGaps,
+  describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, isQualitySession, labGaps,
   loadAthleteState, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, routeBasis, routeUpcoming, summarizeWeek,
   type SessionState,
 } from '@cairn/coach';
@@ -576,13 +576,17 @@ export async function buildServer() {
       }
 
       // Ce que les réponses vont changer se mesure contre l'état d'avant :
-      // la disponibilité, et la séance que les règles peuvent toucher.
-      const before = (await loadAthleteState(A)).readiness;
+      // la disponibilité, et la séance que les règles peuvent toucher — la
+      // séance de qualité du jour ou du lendemain d'abord, c'est elle que la
+      // disponibilité ajuste ; à défaut, la prochaine séance.
+      const prior = await loadAthleteState(A);
+      const before = prior.readiness;
       const today = iso(new Date());
       const tomorrow = iso(new Date(Date.now() + dayMs));
-      const watched = (await db.listPlannedSessions(A, today, tomorrow))
-        .filter((s) => s.date >= today && s.date <= tomorrow && s.status === 'planned' && s.type !== 'rest')
-        .sort((a, b) => a.date.localeCompare(b.date))[0];
+      const coming = (await db.listPlannedSessions(A, today, tomorrow))
+        .filter((s) => s.date >= today && s.date <= tomorrow && (s.status === 'planned' || s.status === 'moved') && s.type !== 'rest')
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const watched = coming.find((s) => isQualitySession(s, prior.model)) ?? coming.find((s) => s.status === 'planned');
 
       // Un point du jour se complète : deux envois successifs s'ajoutent, le
       // second n'efface pas ce que le premier avait déclaré.
@@ -616,8 +620,11 @@ export async function buildServer() {
       const upcoming = await db.listPlannedSessions(A, iso(new Date()), iso(new Date(Date.now() + 14 * dayMs)));
       const adjustments = evaluateAdjustments(state, upcoming);
       const applied = await applyAdjustments(A, adjustments, 'readiness');
-      const after = watched
-        ? (await db.listPlannedSessions(A, today, iso(new Date(Date.now() + 14 * dayMs)))).find((s) => s.id === watched.id)
+      const now = watched ? await db.listPlannedSessions(A, today, iso(new Date(Date.now() + 14 * dayMs))) : [];
+      const after = watched ? now.find((s) => s.id === watched.id) : undefined;
+      // Une séance décalée laisse son jour à un footing : la phrase dit les deux.
+      const replacement = watched && after && after.date !== watched.date
+        ? now.find((s) => s.id !== watched.id && s.date === watched.date && s.type !== 'rest' && s.status === 'planned')
         : undefined;
       return {
         readiness: state.readiness,
@@ -629,7 +636,14 @@ export async function buildServer() {
           before,
           after: state.readiness,
           today,
-          session: watched ? { before: sessionState(watched), after: after ? sessionState(after) : null } : null,
+          session: watched
+            ? {
+                before: sessionState(watched),
+                after: after ? sessionState(after) : null,
+                replacement: replacement ? sessionState(replacement) : null,
+                heldBy: adjustments.find((a) => a.sessionId === watched.id)?.heldBy ?? null,
+              }
+            : null,
         }),
       };
     } catch (e) {
@@ -749,6 +763,7 @@ export async function buildServer() {
 /** Ce qu'une séance est, pour dire ce qu'un point du jour en a fait. */
 const sessionState = (s: PlannedSession): SessionState => ({
   type: s.type, status: s.status, date: s.date, durationS: s.plannedDurationS, load: s.plannedLoad,
+  title: s.title, blocks: s.blocks,
 });
 
 /**

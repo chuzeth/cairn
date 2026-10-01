@@ -71,6 +71,7 @@ const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockFiel
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
   cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true, terrain: true,
+  lastOptional: true,
 };
 
 type Recovery = NonNullable<SessionBlock['recovery']>;
@@ -351,6 +352,11 @@ function parseBlock(
       throw new Error(`${at}.terrain : « flat » ou « trail » attendu, reçu ${JSON.stringify(raw.terrain)}.`);
     }
     block.terrain = raw.terrain;
+  }
+  // Une dernière répétition facultative suppose qu'il y en ait plusieurs.
+  if (raw.lastOptional !== undefined && boolean(raw.lastOptional, `${at}.lastOptional`)) {
+    if ((block.repeat ?? 1) < 2) throw new Error(`${at}.lastOptional : le bloc n'a qu'une répétition.`);
+    block.lastOptional = true;
   }
   return block;
 }
