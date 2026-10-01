@@ -347,6 +347,29 @@ export function watchVersion(): void {
 }
 
 /**
+ * `run` à chaque retour au premier plan ; rend de quoi se désabonner.
+ *
+ * Rouverte depuis l'écran d'accueil, une app iOS reprend là où elle était,
+ * sans se recharger : le 01/10 à 14 h 50, l'écran du matin montrait encore le
+ * plan lu à l'ouverture précédente. Un écran qui affiche le plan le relit donc
+ * à chaque retour — ou, sans réseau, se dit daté (`Stale`).
+ */
+export function onForeground(run: () => void): () => void {
+  const visible = () => {
+    if (!document.hidden) run();
+  };
+  const shown = (event: PageTransitionEvent) => {
+    if (event.persisted) run();
+  };
+  document.addEventListener('visibilitychange', visible);
+  window.addEventListener('pageshow', shown);
+  return () => {
+    document.removeEventListener('visibilitychange', visible);
+    window.removeEventListener('pageshow', shown);
+  };
+}
+
+/**
  * Une erreur de rendu, envoyée au Mac qui la journalise. Sans réseau elle se
  * perd : ce n'est pas une écriture de l'athlète, rien à mettre en file.
  */

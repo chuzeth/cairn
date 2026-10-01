@@ -16,10 +16,18 @@ import { checkHrCeiling, isEasyZone, type CeilingCheck, type HrHistogram } from 
  *
  * Elle ne tombe pas non plus forcément le bon jour : décaler une séance d'un
  * jour sans prévenir est la norme, pas l'exception. Une séance de la veille ou
- * du lendemain est donc candidate, quand aucune séance du jour ne correspond
- * mieux à l'activité et que l'activité la réalise — au sens de `sessionOutcome`,
- * le même qu'une séance de son jour. Une séance d'un autre jour n'est jamais
- * « remplacée » : elle a eu lieu, ou elle reste à sa place.
+ * du lendemain est donc candidate quand le jour de l'activité ne prescrivait
+ * rien à son sport — un repos, un jour vide — et que l'activité la réalise, au
+ * sens de `sessionOutcome`, le même qu'une séance de son jour. Une séance d'un
+ * autre jour n'est jamais « remplacée » : elle a eu lieu, ou elle reste à sa
+ * place.
+ *
+ * Un jour qui prescrivait une séance garde ses sorties, même tenue par une
+ * autre, même moins proche de ce qui a été couru : entre deux séances faciles,
+ * rien dans une sortie ne dit laquelle l'athlète a voulu faire, et la prendre
+ * au lendemain vide un jour qu'il n'a pas encore vécu. Le 30/09, 52 minutes
+ * courues le jour d'un décrassage ont pris le footing du 01/10, et le 01/10
+ * s'est ouvert sans séance.
  *
  * Rattacher n'est pas attester : la séance retenue peut avoir été *remplacée*
  * plutôt que réalisée. C'est `sessionOutcome` qui tranche, et le plan qui
@@ -76,17 +84,24 @@ export const MATERIAL_DEVIATION_PCT = { duration: 40, load: 50, intensity: 15 } 
  * lendemain, alors qu'une activité peut n'arriver de Strava qu'ensuite. Refuser
  * la reprise laisserait la journée « manquée » alors qu'elle a été courue.
  *
+ * `moved` aussi : les règles ont posé la séance à une autre date — un report
+ * du point du jour —, et elle y attend d'être courue.
+ *
  * `withdrawn` ne l'est pas : la séance a été retirée du plan par une absence
  * déclarée, et plus rien n'est prescrit ce jour-là. Une sortie faite pendant
  * une coupure est une sortie de plus, pas une prescription honorée — la
  * rattacher ferait remonter une conformité à un plan qui ne demandait rien.
  */
 function isEligible(session: PlannedSession, realized: RealizedEffort): boolean {
-  if (session.status === 'cancelled' || session.status === 'moved') return false;
-  if (session.status === 'withdrawn') return false;
+  if (!prescribes(session, realized)) return false;
   // Une place déjà tenue par une *autre* activité ne se reprend pas : la première
   // sortie du jour garde sa séance, la seconde reste une sortie en plus.
-  if (session.completedActivityId != null && session.completedActivityId !== realized.activityId) return false;
+  return session.completedActivityId == null || session.completedActivityId === realized.activityId;
+}
+
+/** La séance demande-t-elle, à son jour, une sortie de ce sport — tenue ou non ? */
+function prescribes(session: PlannedSession, realized: RealizedEffort): boolean {
+  if (session.status === 'cancelled' || session.status === 'withdrawn') return false;
   return RUN_LIKE.has(realized.sportType) !== NON_RUNNING_SESSIONS.has(session.type);
 }
 
@@ -132,8 +147,8 @@ const dayGap = (a: string, b: string): number =>
  * Une séance que l'activité tient déjà reste la sienne : refaire le
  * rattachement — une ré-analyse, la passe des sept derniers jours — ne défait
  * jamais un rattachement existant. Sinon, la séance du jour la plus proche de
- * ce qui a été fait ; une séance de la veille ou du lendemain ne la déloge que
- * si l'activité la réalise, et s'en approche strictement davantage.
+ * ce qui a été fait ; une séance de la veille ou du lendemain seulement si le
+ * jour ne prescrivait rien à ce sport, et que l'activité la réalise.
  */
 export function matchPlannedSession(
   candidates: readonly PlannedSession[],
@@ -145,14 +160,17 @@ export function matchPlannedSession(
   if (held) return held;
 
   const sameDay = eligible.filter((s) => s.date === realized.date);
+  const dayPrescribed = candidates.some((s) => s.date === realized.date && prescribes(s, realized));
   // Une prescription muette sur sa durée — un repos — ne peut rien attester à
   // un jour d'écart : il faut que l'activité ait de quoi la réaliser.
-  const neighbours = eligible.filter(
-    (s) =>
-      dayGap(s.date, realized.date) === 1 &&
-      s.plannedDurationS > 0 &&
-      outcomeOf(s, realized, model) === 'fulfilled',
-  );
+  const neighbours = dayPrescribed
+    ? []
+    : eligible.filter(
+        (s) =>
+          dayGap(s.date, realized.date) === 1 &&
+          s.plannedDurationS > 0 &&
+          outcomeOf(s, realized, model) === 'fulfilled',
+      );
 
   let best: PlannedSession | null = null;
   let bestScore = Infinity;

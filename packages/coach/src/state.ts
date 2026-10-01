@@ -10,10 +10,10 @@ import {
   movingIndices, projectFrom, projectLoadRatios, ratioExceedances, type DailyLoad, type EasyRun, type FieldEvidence,
   type LoadRatioExceedance, type MmpCurve, type ReadinessDay,
 } from '@cairn/physiology';
-import { absenceCovering } from './adapt.js';
+import { absenceCovering, isQualitySession } from './adapt.js';
 import { addDays, mondayOf } from './periodization.js';
 import { withHistory } from './presentation.js';
-import { carriesEccentricStrength, eccentricStrengthOf } from './sessionLibrary.js';
+import { carriesEccentricStrength, eccentricStrengthOf, isMaximalTest } from './sessionLibrary.js';
 
 /**
  * État de l'athlète.
@@ -365,6 +365,7 @@ async function situationOn(
   date: string,
   absences: DeclaredAbsence[],
   recent: Activity[],
+  model: PhysiologyModel,
 ): Promise<ReadinessDay> {
   const held = (await db.listPlannedSessions(athleteId, date, date)).filter(
     (s) => s.status !== 'withdrawn' && s.status !== 'cancelled',
@@ -380,6 +381,12 @@ async function situationOn(
 
   return {
     session,
+    // Lue comme la règle de disponibilité la lit : le conseil dit ce qu'elle en fait.
+    ...(session === 'work' && planned
+      ? {
+          work: isMaximalTest(planned, model) ? 'test' : isQualitySession(planned, model) ? 'quality' : 'easy',
+        } as const
+      : {}),
     absence: absenceCovering(absences, date)?.kind,
     daysWithoutImpact: await daysWithoutImpact(athleteId, date, recent),
   };
@@ -461,7 +468,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     date: today,
     pmc,
     checkIns,
-    day: await situationOn(athleteId, today, absences, recentActivities),
+    day: await situationOn(athleteId, today, absences, recentActivities, model),
   });
 
   const analyses = await db.getAnalyses(recentActivities.map((a) => a.id));

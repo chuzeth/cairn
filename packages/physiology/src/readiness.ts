@@ -46,6 +46,13 @@ export interface ReadinessDay {
    * repos prescrit, ou rien du tout.
    */
   session: 'work' | 'done' | 'rest' | 'none';
+  /**
+   * Ce qu'est la séance à faire, lu par les règles du coach : facile — footing,
+   * décrassage, sortie longue sans bloc d'intensité —, de qualité, ou test
+   * maximal. Le conseil dit ce que la règle de disponibilité en fait, et rien
+   * d'autre. Absent, la séance est lue comme une séance de qualité.
+   */
+  work?: 'easy' | 'quality' | 'test';
   /** Nature de l'absence déclarée qui recouvre le jour, s'il y en a une. */
   absence?: AbsenceKind;
   /**
@@ -425,12 +432,33 @@ function recommend(
             `que de la forcer : une reprise ratée coûte la semaine qui suit.`,
         );
       }
+      // Ce que la règle de disponibilité (`readinessAdjustment`, `@cairn/coach`)
+      // fait de la séance, et rien d'autre : le 01/10, sous un footing, la carte
+      // conseillait de réduire de 20-30 % ce que la règle ne touche jamais.
+      const go = `Feu vert : la séance prévue peut être exécutée telle quelle${because}.`;
+      if (day?.work === 'easy') {
+        return say(
+          go,
+          `Vigilance${because}. Séance facile : elle se court telle qu'elle est écrite. Un jour de ` +
+            `vigilance n'allège que les séances dures.`,
+          `Signal rouge${because}. Séance facile : elle reste au programme, sans rien y ajouter. Si ` +
+            `l'échauffement ne passe pas, rentre : un jour de repos ne coûte rien.`,
+        );
+      }
+      if (day?.work === 'test') {
+        return say(
+          go,
+          `Vigilance${because}. Un test maximal couru fatigué mesure la fatigue, pas ta capacité : footing ` +
+            `facile à durée égale, et le test attend un meilleur jour.`,
+          `Signal rouge${because}. Pas de test aujourd'hui : footing facile à durée égale, et le test ` +
+            `attend un meilleur jour.`,
+        );
+      }
       return say(
-        `Feu vert : la séance prévue peut être exécutée telle quelle${because}.`,
-        `Vigilance${because}. Garde la séance mais réduis le volume de 20-30 %, ou décale la ` +
-          `qualité de 24 h si les sensations ne viennent pas à l'échauffement.`,
-        `Signal rouge${because}. Remplace la séance par de la récupération active ou du repos ` +
-          `complet. Une séance forcée dans cet état coûte plus qu'elle ne rapporte.`,
+        go,
+        `Vigilance${because}. Garde la séance et sa forme : vise le bas de chaque fourchette, et la ` +
+          `dernière répétition est facultative.`,
+        `Signal rouge${because}. Pas d'intensité aujourd'hui : la séance se court facile, à durée égale.`,
       );
     }
 

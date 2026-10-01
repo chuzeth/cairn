@@ -14,6 +14,7 @@ import {
 import { Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
 import { Itinerary } from '@/components/Itinerary';
+import { onForeground } from '@/lib/version';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -64,13 +65,16 @@ export default function PlanPage() {
   const load = useCallback(async () => {
     try {
       setData(await get<PlanResponse>(`/api/plan?from=${weekStartOf(todayIso())}&weeks=8`));
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // Une relecture ratée au retour ne remplace pas le plan déjà lu par une erreur.
+  useEffect(() => onForeground(() => void load()), [load]);
 
-  if (error) return <ErrorBox error={error} onRetry={load} />;
+  if (error && !data) return <ErrorBox error={error} onRetry={load} />;
   if (!data) return <Loading />;
 
   if (!data.plan) {

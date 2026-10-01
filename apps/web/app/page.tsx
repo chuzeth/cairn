@@ -7,6 +7,7 @@ import {
 } from '@/lib/api';
 import { LOAD_WORDS, loadFigures, plainWord, type LoadFigure } from '@/lib/figures';
 import { useOutbox } from '@/lib/offline';
+import { onForeground } from '@/lib/version';
 import { useIsDesk } from '@/lib/viewport';
 import {
   AbsenceNotice, Badge, Card, ErrorBox, Loading, LoadName, Metric, MISSING_LABEL,
@@ -85,6 +86,10 @@ export default function Dashboard() {
     await load();
     if (desk === true) await loadDeskOnly();
   }, [load, loadDeskOnly, desk]);
+
+  // Revenue au premier plan, l'app relit le Mac : ce qu'elle montre est le plan
+  // de cet instant, pas celui de la dernière ouverture.
+  useEffect(() => onForeground(() => void reload()), [reload]);
 
   // Une réponse partie en différé a été calculée par le serveur, pas ici :
   // l'écran ne connaît le score qu'elle produit qu'en relisant l'état.

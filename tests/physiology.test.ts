@@ -1110,9 +1110,15 @@ describe('Rattachement d\'une activité à la séance prescrite', () => {
     expect(matchPlannedSession([prise], sortie({ activityId: 'strava-autre' }), model)?.id).toBe('ses_recup');
   });
 
-  it('refuse une séance annulée ou déplacée', () => {
+  it('refuse une séance annulée', () => {
     expect(matchPlannedSession([session({ status: 'cancelled' })], sortie(), model)).toBeNull();
-    expect(matchPlannedSession([session({ status: 'moved' })], sortie(), model)).toBeNull();
+  });
+
+  it('rattache une séance décalée par les règles, au jour où elle a été posée', () => {
+    // `moved` est une séance que les règles ont posée à une autre date — un
+    // report du point du jour : elle attend là d'être courue. La refuser la
+    // laissait « à faire » le soir même où elle avait été faite.
+    expect(matchPlannedSession([session({ status: 'moved' })], sortie(), model)?.id).toBe('ses_recup');
   });
 
   it('refuse une séance retirée par une absence déclarée', () => {
@@ -1397,6 +1403,25 @@ describe('Conseil du jour', () => {
     expect(advice({ session: 'rest' })).toContain('Repos prescrit');
     expect(advice({ session: 'done' })).toContain('est faite');
     expect(advice({ session: 'work' })).toContain('Garde la séance');
+  });
+
+  it('ne conseille à une séance que ce que la règle de disponibilité en fait', () => {
+    // Le 01/10, 52/100 : sous un footing de 58 min, la carte disait « réduis le
+    // volume de 20-30 %, ou décale la qualité de 24 h », quand la règle ne
+    // touche jamais un footing et ne fait d'une séance dure ni l'un ni l'autre.
+    const footing = advice({ session: 'work', work: 'easy' });
+    expect(footing).toContain('telle qu\'elle est écrite');
+    expect(footing).not.toMatch(/réduis|décale/);
+    expect(advice({ session: 'work', work: 'easy' }, -30)).toContain('reste au programme');
+
+    const quality = advice({ session: 'work', work: 'quality' });
+    expect(quality).toContain('bas de chaque fourchette');
+    expect(quality).not.toMatch(/20-30 %|24 h/);
+    expect(advice({ session: 'work', work: 'quality' }, -30)).toContain('se court facile, à durée égale');
+
+    // Un test maximal ne se court pas fatigué : la règle le décale dès l'orange.
+    expect(advice({ session: 'work', work: 'test' })).toContain('attend un meilleur jour');
+    expect(advice({ session: 'work', work: 'test' }, 20)).toContain('exécutée telle quelle');
   });
 
   it('ne suppose aucune séance quand personne n\'a dit ce que la journée tient', () => {

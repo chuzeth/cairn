@@ -34,9 +34,14 @@ export const TYPE_COLORS: Record<string, string> = {
  * c'est elle qu'on exécute et qu'on retient. Les autres se disent par leur nom,
  * amputé de ce que la ligne suivante répète déjà : la durée et le dénivelé sont
  * dans le sous-titre, les répéter ici coûterait deux lignes de titre à 54 px.
+ * Un footing ou un décrassage se dit toujours par son nom : ses lignes droites
+ * s'y ajoutent, elles n'en sont pas la structure — « 6 × 20″ » titrait le
+ * 01/10 un footing de 45 minutes.
  */
 export function sessionHeadline(session: SessionRow): string {
-  const rep = session.blocks.find((b) => (b.repeat ?? 0) > 1 && (b.durationS ?? 0) > 0);
+  const rep = EASY_TYPES.has(session.type)
+    ? undefined
+    : session.blocks.find((b) => (b.repeat ?? 0) > 1 && (b.durationS ?? 0) > 0);
   if (rep) {
     const n = rep.repeat as number;
     const d = prime(rep.durationS);
@@ -72,6 +77,9 @@ export function runAndAnnex(session: Pick<SessionRow, 'blocks'>, totalS: number)
   const annex = annexOf(session.blocks);
   return { runS: totalS - (annex?.durationS ?? 0), annex };
 }
+
+/** Les séances faciles, comme les règles du coach les lisent (`adapt.ts`). */
+const EASY_TYPES: ReadonlySet<string> = new Set(['recovery', 'endurance']);
 
 const REPEAT_HEADLINE: Record<string, (n: number, d: string) => string> = {
   hill_repeats: (n, d) => `${n} côtes de ${d}`,

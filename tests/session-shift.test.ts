@@ -51,7 +51,45 @@ const RUN_2109: RealizedEffort = {
   blockSpeedMs: 4.14, bestEffortHr: { '1200': 174.4 },
 };
 
+/** Le 30/09 : un décrassage de 40 min, prévu avant que le décrassage ne soit compté à sa vraie charge. */
+const DECRASSAGE_3009: PlannedSession = {
+  ...TEST, id: 'ses_decrassage', date: '2026-09-30', type: 'recovery', priority: 'optional',
+  title: 'Décrassage 40 min + souplesse et respiration 20 min', plannedLoad: 7, plannedDurationS: 3600,
+  blocks: [
+    block({ label: 'Footing très souple', zone: 'Z1', durationS: 2400, hrRange: [0, 141] }),
+    block({ label: 'Souplesse chaîne postérieure', kind: 'mobility', zone: 'Z1', durationS: 600 }),
+    block({ label: 'Travail respiratoire', kind: 'respiratory', zone: 'Z1', durationS: 600 }),
+  ],
+};
+
+/** Le footing du 01/10, que la sortie du 30/09 réalisait aussi bien. */
+const FOOTING_0110: PlannedSession = {
+  ...TEST, id: 'ses_footing', date: '2026-10-01', type: 'endurance', priority: 'key', title: 'Footing — 45 min',
+  plannedLoad: 56, plannedDurationS: 2700,
+  blocks: [block({ label: 'Footing', zone: 'Z2', durationS: 2700, hrRange: [141, 155] })],
+};
+
+/** La sortie du 30/09 : 52′48″, 60 points. */
+const RUN_3009: RealizedEffort = {
+  activityId: 'strava-20394990236', sportType: 'Run', date: '2026-09-30', durationS: 3168, load: 60.3,
+};
+
 describe('Rattachement à la veille ou au lendemain', () => {
+  it('garde à son jour la sortie d’un jour qui prescrivait une séance', () => {
+    // Le défaut : le 30/09, jour d'un décrassage, 52′48″ courues ont pris le
+    // footing du 01/10, plus proche en durée et en charge. Le footing est passé
+    // au 30/09, et le 01/10 s'est ouvert sur « C'est fait, hier » — sans séance.
+    expect(outcomeOf(FOOTING_0110, RUN_3009, PIERRE_MODEL)).toBe('fulfilled');
+    expect(matchPlannedSession([DECRASSAGE_3009, FOOTING_0110], RUN_3009, PIERRE_MODEL)?.id).toBe('ses_decrassage');
+  });
+
+  it('ne donne pas la séance du lendemain à une seconde sortie du jour', () => {
+    // Le jour avait sa séance, tenue par la sortie du matin : celle du soir est
+    // une sortie de plus, pas la séance du lendemain faite en avance.
+    const tenue = { ...DECRASSAGE_3009, status: 'completed' as const, completedActivityId: 'strava-matin' };
+    expect(matchPlannedSession([tenue, FOOTING_0110], RUN_3009, PIERRE_MODEL)).toBeNull();
+  });
+
   it('reconnaît le test du 22/09 dans la sortie du 21/09, dont le jour ne prescrivait qu’un repos', () => {
     expect(matchPlannedSession([REST, TEST], RUN_2109, PIERRE_MODEL)?.id).toBe('ses_test');
     expect(outcomeOf(TEST, RUN_2109, PIERRE_MODEL)).toBe('fulfilled');
