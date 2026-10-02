@@ -943,12 +943,19 @@ function authCounts() {
   try {
     const db = new DatabaseSync(AUTH_DB, { readOnly: true });
     const keys = db.prepare('SELECT COUNT(*) AS n FROM passkeys').get().n;
-    const sessions = db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?').get(Date.now()).n;
+    // Une session sert tant qu'une requête est passée dans les deux dernières
+    // minutes (`apps/gate/src/store.ts`) : l'app refermée n'en a plus, et la
+    // rouvrir redemande Face ID. Une base d'avant n'a pas encore la colonne.
+    const idle = db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'seen_at')
+      ? ' AND seen_at > ' + (Date.now() - 2 * 60_000)
+      : '';
+    const sessions = db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?${idle}`).get(Date.now()).n;
     db.close();
     const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
     return keys === 0
       ? 'aucune clé d\'accès : npm run service -- passkey'
-      : `${plural(keys, 'clé')} d'accès, ${plural(sessions, 'session')} ouverte${sessions > 1 ? 's' : ''}`;
+      : `${plural(keys, 'clé')} d'accès, ${plural(sessions, 'session')} active${sessions > 1 ? 's' : ''} ` +
+        '(Face ID à chaque ouverture)';
   } catch (e) {
     return `base illisible (${e.message})`;
   }

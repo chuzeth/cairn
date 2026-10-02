@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Archivo } from 'next/font/google';
+import { Lock } from '@/components/Lock';
 import { Nav } from '@/components/Nav';
 import { Offline } from '@/components/Offline';
 import { TermSheet } from '@/components/Term';
@@ -45,11 +46,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="fr" className={archivo.variable}>
       <body>
         <Offline />
-        <div className="app">
-          <Nav />
-          <main className="main">{children}</main>
-        </div>
-        <TermSheet />
+        {/* Face ID à chaque ouverture : rien de l'app avant lui (`components/Lock.tsx`). */}
+        <Lock>
+          <div className="app">
+            <Nav />
+            <main className="main">{children}</main>
+          </div>
+          <TermSheet />
+        </Lock>
       </body>
     </html>
   );

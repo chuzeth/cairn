@@ -5,7 +5,7 @@ import {
   type AuthenticationResponseJSON, type RegistrationResponseJSON, type WebAuthnCredential,
 } from '@simplewebauthn/server';
 import { loginPage } from './page.js';
-import type { GateStore } from './store.js';
+import { SESSION_TTL_MS, type GateStore } from './store.js';
 
 /**
  * La porte : le seul chemin d'internet jusqu'à Cairn.
@@ -108,9 +108,11 @@ export function createGate(opts: GateOptions): Server {
     const url = new URL(req.url ?? '/', 'http://porte');
     const route = `${req.method} ${url.pathname}`;
     const session = cookies(req)[SESSION_COOKIE];
+    // Lue avant d'être repoussée : `/connexion/etat` dit depuis quand elle a servi.
+    const info = opts.store.sessionInfo(session, now());
     const signedIn = opts.store.validSession(session, now());
 
-    if (PUBLIC_ROUTES.has(route)) return connexion(route, url, req, res, signedIn);
+    if (PUBLIC_ROUTES.has(route)) return connexion(route, url, req, res, signedIn, info);
     if (signedIn) return relay(req, res);
     return refuse(req, res, url);
   }
@@ -136,7 +138,10 @@ export function createGate(opts: GateOptions): Server {
 
   // ── Routes de connexion ────────────────────────────────────────────────────
 
-  async function connexion(route: string, url: URL, req: IncomingMessage, res: ServerResponse, signedIn: boolean): Promise<void> {
+  async function connexion(
+    route: string, url: URL, req: IncomingMessage, res: ServerResponse, signedIn: boolean,
+    info: { verifiedAt: number; seenAt: number } | null,
+  ): Promise<void> {
     switch (route) {
       case 'GET /connexion': {
         const suite = safeSuite(url.searchParams.get('suite') ?? '/');
@@ -146,8 +151,14 @@ export function createGate(opts: GateOptions): Server {
       }
       case 'GET /connexion/webauthn.js':
         return send(res, 200, 'text/javascript; charset=utf-8', opts.browserScript);
-      case 'GET /connexion/etat':
-        return json(res, 200, { session: signedIn });
+      // L'app la demande à chaque ouverture et toutes les trente secondes : c'est
+      // ce qui garde la session ouverte tant qu'elle sert, et ce qui lui dit si
+      // Face ID vient d'avoir lieu — sur la page de connexion, par exemple.
+      case 'GET /connexion/etat': {
+        if (!signedIn || !info) return json(res, 200, { session: false });
+        const ago = (t: number) => Math.max(0, Math.round((now() - t) / 1000));
+        return json(res, 200, { session: true, verifiedAgoS: ago(info.verifiedAt), seenAgoS: ago(info.seenAt) });
+      }
     }
 
     // Toute écriture sur /connexion est une tentative.
@@ -263,7 +274,7 @@ export function createGate(opts: GateOptions): Server {
 
   function openSession(passkeyId: string): string {
     const { token } = opts.store.openSession(passkeyId, now());
-    return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${90 * 24 * 3600}`;
+    return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL_MS / 1000}`;
   }
 
   // ── Avec session ───────────────────────────────────────────────────────────

@@ -30,6 +30,12 @@ export interface Stamped<T> {
  */
 export function requireSession(res: Response): void {
   if (res.status !== 401 || res.headers.get('x-cairn-connexion') !== 'requise') return;
+  // Dans l'app, c'est son écran qui redemande Face ID (`components/Lock.tsx`) :
+  // la page de connexion recharge tout, et l'écran le redemanderait encore.
+  if (document.documentElement.dataset.verrou === 'actif') {
+    window.dispatchEvent(new Event('cairn:verrou'));
+    return;
+  }
   location.assign(`/connexion?suite=${encodeURIComponent(location.pathname + location.search)}`);
 }
 

@@ -363,9 +363,12 @@ export function onForeground(run: () => void): () => void {
   };
   document.addEventListener('visibilitychange', visible);
   window.addEventListener('pageshow', shown);
+  // Face ID passé : ce que l'écran montre date d'avant le verrou.
+  window.addEventListener('cairn:deverrouille', run);
   return () => {
     document.removeEventListener('visibilitychange', visible);
     window.removeEventListener('pageshow', shown);
+    window.removeEventListener('cairn:deverrouille', run);
   };
 }
 

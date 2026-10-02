@@ -14,8 +14,18 @@ import { DatabaseSync } from 'node:sqlite';
  * hachés — une copie de la base ne donne accès à rien.
  */
 
-/** Face ID une fois, puis plus rien pendant 90 jours sur cet appareil. */
-export const SESSION_TTL_MS = 90 * 24 * 3600_000;
+/**
+ * Face ID à chaque ouverture de l'app (Pierre, le 02/10). Une session se ferme
+ * après deux minutes sans une requête : l'app ouverte en envoie une toutes les
+ * trente secondes, l'app refermée n'en envoie plus, et la rouvrir redemande
+ * Face ID. Elle durait 90 jours : Face ID une fois, au premier jour, puis plus
+ * jamais.
+ */
+export const SESSION_IDLE_MS = 2 * 60_000;
+/** Au-delà, même servie sans arrêt, une session se referme. */
+export const SESSION_TTL_MS = 12 * 3600_000;
+/** En deçà, une requête ne réécrit pas l'heure de la dernière : la base n'écrit pas à chaque fragment. */
+const TOUCH_EVERY_MS = 5_000;
 /** Le code affiché dans le Terminal du Mac. */
 export const CODE_TTL_MS = 10 * 60_000;
 /** Au-delà, le code est brûlé : il faut en redemander un au Mac. */
@@ -66,6 +76,13 @@ export class GateStore {
         attempts INTEGER NOT NULL DEFAULT 0
       );
     `);
+    // La dernière requête de chaque session. Une base d'avant n'en a pas : ses
+    // sessions valent zéro, donc sont closes — la prochaine ouverture redemande
+    // Face ID, ce qui est la règle.
+    const columns = this.db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
+    if (!columns.some((c) => c.name === 'seen_at')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN seen_at INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   close(): void {
@@ -98,23 +115,39 @@ export class GateStore {
 
   // ── Sessions ───────────────────────────────────────────────────────────────
 
-  /** Le jeton, rendu une seule fois : seul son haché est gardé. */
+  /** Le jeton, rendu une seule fois : seul son haché est gardé. Chaque Face ID en ouvre une. */
   openSession(passkeyId: string, now: number): { token: string; expiresAt: number } {
     const token = randomBytes(32).toString('base64url');
     const expiresAt = now + SESSION_TTL_MS;
-    this.db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now);
-    this.db.prepare('INSERT INTO sessions (token_hash, passkey_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
-      .run(sha256(token), passkeyId, now, expiresAt);
+    this.db.prepare('DELETE FROM sessions WHERE expires_at <= ? OR seen_at <= ?').run(now, now - SESSION_IDLE_MS);
+    this.db.prepare('INSERT INTO sessions (token_hash, passkey_id, created_at, expires_at, seen_at) VALUES (?, ?, ?, ?, ?)')
+      .run(sha256(token), passkeyId, now, expiresAt, now);
     return { token, expiresAt };
   }
 
-  /** Valide : connue, non expirée, et sa clé d'accès existe encore. */
-  validSession(token: string | undefined, now: number): boolean {
-    if (!token) return false;
+  /**
+   * Une session ouverte, lue sans la toucher : depuis quand Face ID a eu lieu,
+   * depuis quand elle a servi. `null` : inconnue, expirée, restée deux minutes
+   * sans requête, ou sa clé d'accès n'existe plus.
+   */
+  sessionInfo(token: string | undefined, now: number): { verifiedAt: number; seenAt: number } | null {
+    if (!token) return null;
     const row = this.db.prepare(
-      'SELECT s.expires_at FROM sessions s JOIN passkeys p ON p.id = s.passkey_id WHERE s.token_hash = ?',
-    ).get(sha256(token)) as { expires_at: number } | undefined;
-    return row != null && row.expires_at > now;
+      'SELECT s.created_at, s.expires_at, s.seen_at FROM sessions s JOIN passkeys p ON p.id = s.passkey_id ' +
+        'WHERE s.token_hash = ?',
+    ).get(sha256(token)) as { created_at: number; expires_at: number; seen_at: number } | undefined;
+    if (!row || row.expires_at <= now || row.seen_at <= now - SESSION_IDLE_MS) return null;
+    return { verifiedAt: row.created_at, seenAt: row.seen_at };
+  }
+
+  /** Valide, et repoussée : la requête qui la présente la garde ouverte deux minutes de plus. */
+  validSession(token: string | undefined, now: number): boolean {
+    const info = this.sessionInfo(token, now);
+    if (!info) return false;
+    if (now - info.seenAt >= TOUCH_EVERY_MS) {
+      this.db.prepare('UPDATE sessions SET seen_at = ? WHERE token_hash = ?').run(now, sha256(token!));
+    }
+    return true;
   }
 
   closeSession(token: string): void {
@@ -126,8 +159,10 @@ export class GateStore {
     return Number(this.db.prepare('DELETE FROM sessions').run().changes);
   }
 
+  /** Les sessions qui servent encore : ni expirées, ni restées deux minutes sans requête. */
   sessionCount(now: number): number {
-    return (this.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?').get(now) as { n: number }).n;
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ? AND seen_at > ?')
+      .get(now, now - SESSION_IDLE_MS) as { n: number }).n;
   }
 
   // ── Code d'enregistrement ──────────────────────────────────────────────────
