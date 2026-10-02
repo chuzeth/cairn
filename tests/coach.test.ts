@@ -1269,6 +1269,28 @@ describe('Plan qui lit le dossier entier', () => {
     }
   });
 
+  it('écrit la respiration comme elle se fait : à l’arrêt, temps par temps, chaque souffle compté', () => {
+    // Le 02/10, Pierre : « Pendant tant de temps, inspirer tant de secondes,
+    // expirer tant de secondes. En courant, en marchant, à l'arrêt ? » Le bloc
+    // disait « 5 min à 6 cycles/min, expiration deux fois plus longue », puis
+    // « 30 respirations contre résistance (EMT) si tu en disposes ».
+    let seen = 0;
+    for (const s of weeks.flatMap((w) => w.sessions)) {
+      const breathing = s.blocks.filter((b) => b.kind === 'respiratory');
+      if (breathing.length === 0) continue;
+      seen++;
+      expect(breathing.reduce((t, b) => t + b.durationS!, 0)).toBe(600);
+      expect(breathing[0]!.notes).toContain("À l'arrêt");
+      for (const b of breathing) {
+        const [, inS, outS] = /inspire (\d+) s, expire (\d+) s/.exec(b.label) ?? [];
+        expect(inS, b.label).toBeDefined();
+        expect(b.notes).toContain(`${b.durationS! / (Number(inS) + Number(outS))} respirations`);
+      }
+      for (const b of breathing) expect(b.notes).not.toContain('si tu en disposes');
+    }
+    expect(seen).toBeGreaterThan(4);
+  });
+
   it('ne prescrit plus de cadence hors de la fenêtre du praticien', () => {
     const cadences = weeks.flatMap((w) =>
       w.sessions.flatMap((s) => s.blocks.map((b) => b.cadenceTargetSpm)),

@@ -202,22 +202,66 @@ const BLOCK_LABEL: Record<BlockKind, string> = {
   activation: 'Activation',
 };
 
-const BLOCK_NOTES: Record<BlockKind, string> = {
+const BLOCK_NOTES: Record<Exclude<BlockKind, 'respiratory'>, string> = {
   mobility:
     'Ischio-jambiers, mollets, chaîne postérieure du rachis. Maintiens de 45 s, deux passages, ' +
     'sans à-coups. Le déficit relevé au test (flexion avant à −1 cm) ne se corrige que par la répétition.',
-  respiratory:
-    "Respiration diaphragmatique allongé : 5 min à 6 cycles/min, expiration deux fois plus longue que " +
-    "l'inspiration. Puis 30 respirations contre résistance inspiratoire (EMT) si tu en disposes. " +
-    "On vise le coefficient d'utilisation pulmonaire, pas l'essoufflement.",
   activation:
     'Cercles de hanches et de chevilles, 10 fentes marchées par jambe, 15 ponts fessiers ' +
     "(dos au sol, pieds à plat, monte le bassin jusqu'à la ligne épaules-genoux).",
 };
 
-/** Un bloc annexe, non couru : ni allure, ni fréquence cardiaque à tenir. */
-export function ancillaryBlock(kind: BlockKind, durationS: number): SessionBlock {
-  return { label: BLOCK_LABEL[kind], kind, zone: 'Z1', durationS, notes: BLOCK_NOTES[kind] };
+/** Un travail annexe, non couru : ni allure, ni fréquence cardiaque à tenir. */
+export function ancillaryBlocks(kind: BlockKind, durationS: number): SessionBlock[] {
+  if (kind === 'respiratory') return breathingBlocks(durationS);
+  return [{ label: BLOCK_LABEL[kind], kind, zone: 'Z1', durationS, notes: BLOCK_NOTES[kind] }];
+}
+
+/** L'expiration complète dure cinq minutes ; la respiration lente, le reste. */
+const BREATH_EMPTYING_S = 300;
+
+/**
+ * La respiration du dossier, temps par temps.
+ *
+ * Le 02/10, Pierre : « Pendant tant de temps, inspirer tant de secondes,
+ * expirer tant de secondes. En courant, en marchant, à l'arrêt ? » Le bloc
+ * disait « 5 min à 6 cycles/min, expiration deux fois plus longue que
+ * l'inspiration » — 3,3 s et 6,7 s, que personne ne compte —, puis renvoyait à
+ * un appareil que l'athlète n'a pas. Chaque temps est maintenant un bloc : sa
+ * durée se lit à l'écran, ses secondes dans son nom, et la montre sonne au
+ * passage de l'un à l'autre.
+ *
+ * Ce que le travail vise : le test relève 60 respirations par minute au maximum
+ * et un volume courant à 48 % de la capacité vitale (CUP, référence au-delà de
+ * 55 %) — respirer vite et court. À l'arrêt, on apprend le geste inverse :
+ * respirer bas, lentement, et vider à fond. Six respirations par minute est le
+ * rythme de la respiration lente des protocoles de cohérence cardiaque. Ce
+ * travail ne renforce pas les muscles inspiratoires : seul un entraîneur
+ * inspiratoire à seuil le fait, et c'est lui qui a montré un effet sur la
+ * performance d'endurance (Illi et al. 2012 ; HajGhanbari et al. 2013).
+ */
+function breathingBlocks(durationS: number): SessionBlock[] {
+  const at = (label: string, s: number, notes: string): SessionBlock =>
+    ({ label, kind: 'respiratory', zone: 'Z1', durationS: s, notes });
+  const slowS = durationS >= 2 * BREATH_EMPTYING_S ? durationS - BREATH_EMPTYING_S : durationS;
+  const slow = at(
+    'Respiration lente : inspire 4 s, expire 6 s',
+    slowS,
+    "À l'arrêt, au calme, une fois rentré — jamais en courant. Allongé sur le dos, genoux pliés, une main sur " +
+      "le ventre, l'autre sur la poitrine. Inspire par le nez, le ventre se gonfle ; expire par la bouche, lèvres " +
+      `pincées. ${Math.round(slowS / 10)} respirations, six par minute : seule la main du ventre bouge.`,
+  );
+  if (slowS === durationS) return [slow];
+  return [
+    slow,
+    at(
+      'Expiration complète : inspire 4 s, expire 8 s',
+      BREATH_EMPTYING_S,
+      `Même position. Expire jusqu'à vider entièrement, en rentrant le ventre à la fin. ` +
+        `${Math.round(BREATH_EMPTYING_S / 12)} respirations. Si la tête tourne, reprends une respiration ` +
+        'normale trente secondes.',
+    ),
+  ];
 }
 
 /** Types de séance auxquels un bloc annexe peut s'adosser, du plus au moins indiqué. */
@@ -258,7 +302,7 @@ export function honourWeeklyFrequency(
 
     for (const host of hosts) {
       if (missing <= 0) break;
-      host.blocks = [...host.blocks, ancillaryBlock(directive.block, directive.durationS)];
+      host.blocks = [...host.blocks, ...ancillaryBlocks(directive.block, directive.durationS)];
       // La durée suit ; la charge, non. Ni les étirements ni la respiration au
       // calme ne produisent de stress cardiovasculaire : les compter mangerait
       // la cible hebdomadaire au détriment de la course.

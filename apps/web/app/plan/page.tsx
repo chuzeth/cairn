@@ -276,7 +276,8 @@ export default function PlanPage() {
                           </strong>
                           <span className="small muted">{b.label}</span>
                           {/* Un bloc piloté à l'effort n'a pas de zone à tenir. */}
-                          {!b.effort && <Badge>{b.zone}</Badge>}
+                          {/* Une zone ne dit rien d'un bloc qui ne se court pas : souplesse, respiration. */}
+                          {!b.effort && !b.kind && <Badge>{b.zone}</Badge>}
                           {b.hrRange && (
                             <span className="tiny mono faint">
                               {b.hrRange[0] > 0 ? `${num(b.hrRange[0])}-${num(b.hrRange[1])}` : `< ${num(b.hrRange[1])}`} bpm
