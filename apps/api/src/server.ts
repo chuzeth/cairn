@@ -11,7 +11,7 @@ import {
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
 } from '@cairn/strava';
-import type { ActivityStreams, DeclaredAbsence, DecisionOrigin, PlannedSession } from '@cairn/core';
+import type { ActivityStreams, DeclaredAbsence, DecisionOrigin, PlannedSession, TrainingPlan } from '@cairn/core';
 import {
   formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
 } from '@cairn/physiology';
@@ -60,6 +60,14 @@ const scale = (v: unknown): number | undefined => {
   const n = numeric(v, 1, 5);
   return n == null ? undefined : Math.round(n);
 };
+
+/** Les révisions du plan que l'écran affiche, les plus récentes. */
+const REVISIONS_SHOWN = 6;
+
+/** Ce que les écrans lisent d'un plan : ni ses semaines, ni tout son journal. */
+function planHead({ weeks: _weeks, revisionLog, ...head }: TrainingPlan) {
+  return { ...head, revisionLog: revisionLog.slice(-REVISIONS_SHOWN) };
+}
 
 export async function buildServer() {
   const app = Fastify({
@@ -387,9 +395,11 @@ export async function buildServer() {
   });
 
   app.get('/api/activities', async (req) => {
-    const q = req.query as { from?: string; to?: string; limit?: string };
+    // `days` plutôt qu'une date : la même fenêtre garde la même adresse d'un
+    // jour à l'autre, et le téléphone la retrouve hors ligne (`sw.js`).
+    const q = req.query as { from?: string; days?: string; to?: string; limit?: string };
     const activities = await db.listActivities(A, {
-      from: q.from ?? daysAgo(90),
+      from: q.from ?? daysAgo(Number(q.days ?? 90)),
       to: q.to,
       limit: Number(q.limit ?? 100),
     });
@@ -453,7 +463,10 @@ export async function buildServer() {
       return r && home && model && r.basis === routeBasis(s, home, model) ? r.route : null;
     };
     return {
-      plan: plan?.plan ?? null,
+      // Le plan sans ses semaines — les séances de la fenêtre sont à côté — et
+      // son journal limité à ce que l'écran affiche : la réponse pesait 290 ko,
+      // dont 190 de révisions que personne ne lisait, à chaque ouverture.
+      plan: plan ? planHead(plan.plan) : null,
       raceDay: plan ? await raceDayView(plan.plan) : null,
       weekSummaries: plan?.weeks.map(summarizeWeek) ?? [],
       // Ce qu'une directive produit se lit sur le contenu actuel de la séance.

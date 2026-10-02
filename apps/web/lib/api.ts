@@ -529,6 +529,22 @@ export interface GarminOverview {
   stale: { date: string; name: string }[];
 }
 
+/**
+ * Le plan tel que les écrans le lisent : la semaine écoulée — ce qui a été fait
+ * la veille d'une séance prévue aujourd'hui — et les huit qui viennent. Une
+ * seule adresse pour l'écran du matin et la page Plan : chaque ouverture en
+ * ligne garde donc aussi le plan pour la suivante sans réseau (`sw.js`).
+ */
+export const PLAN_URL = '/api/plan?weeks=9';
+
+/**
+ * Les séances courues sur une fenêtre de `days` jours. Une fenêtre, pas une
+ * date : l'adresse reste la même d'un jour à l'autre, et l'écran la retrouve
+ * hors ligne. La fenêtre par défaut est celle que l'écran du matin garde.
+ */
+export const ACTIVITIES_DAYS = 90;
+export const activitiesUrl = (days = ACTIVITIES_DAYS) => `/api/activities?days=${days}&limit=300`;
+
 export interface PlanResponse {
   /** `null` : la liaison Garmin n'a pas pu être lue, et l'écran n'affirme rien. */
   garmin?: GarminOverview | null;

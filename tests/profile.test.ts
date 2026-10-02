@@ -99,6 +99,34 @@ describe('le relief dessiné', () => {
   });
 });
 
+/** L'allure spécifique du 02/10 : 35 m de montée et autant de descente par répétition, sur les sentiers de la Sarra. */
+const sarra: Blocks = [
+  { label: "Échauffement jusqu'à la Sarra", zone: 'Z2', durationS: 1200, elevationGainM: 55 },
+  {
+    label: 'Allure course en vallonné', zone: 'Z3', durationS: 360, repeat: 3, elevationGainM: 35, elevationLossM: 35,
+    terrain: 'trail', recovery: { durationS: 120, zone: 'Z2', active: true },
+  },
+  { label: 'Retour au calme', zone: 'Z1', durationS: 600, elevationLossM: 55 },
+];
+
+describe('une répétition vallonnée', () => {
+  it('ne compte son relief qu’une fois : elle revient d’elle-même à son départ', () => {
+    // L'écran du 02/10 annonçait 265 m pour une séance de 160 : la récupération
+    // « refermait » chaque répétition, qui l'était déjà.
+    expect(of(sarra).gainM).toBe(55 + 3 * 35);
+    expect(of(sarra).lossM).toBe(3 * 35 + 55);
+  });
+
+  it('se dessine en dents et se dit, au lieu de « à plat »', () => {
+    const p = of(sarra);
+    expect(p.segments.filter((s) => s.tone === 'climb')).toHaveLength(3);
+    expect(p.caption).toBe('+35\u00a0m, trois fois');
+    // La légende dit une répétition : le dénivelé de la séance reste à dire.
+    expect(p.captionPerRep).toBe(true);
+    expect(p.totalS).toBe(1200 + 3 * (360 + 120) + 600);
+  });
+});
+
 describe('la légende', () => {
   it('dit la montée et son nombre', () => {
     expect(of(cotes).caption).toBe('+26\u00a0m, huit fois');

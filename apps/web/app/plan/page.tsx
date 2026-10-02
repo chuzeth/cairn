@@ -2,14 +2,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  blockDuration, duration, frDate, get, num, todayIso,
+  PLAN_URL, blockDuration, duration, frDate, getStamped, num, todayIso,
   type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
   circuitText, CRITERION_LABELS, originLabel, provenanceText, recoveryText, TYPE_COLORS, TYPE_LABELS,
 } from '@/lib/sessions';
 import {
-  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory, WhereLine,
+  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory, Stale, WhereLine,
 } from '@/components/ui';
 import { Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
@@ -59,13 +59,17 @@ function weekStartOf(date: string): string {
 
 export default function PlanPage() {
   const [data, setData] = useState<PlanResponse | null>(null);
+  /** Non nul : le plan sort de la réserve du téléphone, et date de ce moment-là. */
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [past, setPast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setData(await get<PlanResponse>(`/api/plan?from=${weekStartOf(todayIso())}&weeks=8`));
+      const read = await getStamped<PlanResponse>(PLAN_URL);
+      setData(read.data);
+      setRecordedAt(read.recordedAt);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -99,9 +103,12 @@ export default function PlanPage() {
     );
   }
 
-  // Regroupement calendaire, du lundi au dimanche.
+  // Regroupement calendaire, du lundi au dimanche, depuis la semaine en cours :
+  // la lecture partagée avec l'écran du matin remonte sept jours en arrière.
+  const monday = weekStartOf(todayIso());
+  const shown = data.sessions.filter((s) => s.date >= monday);
   const byWeek = new Map<string, SessionRow[]>();
-  for (const s of data.sessions) {
+  for (const s of shown) {
     const w = weekStartOf(s.date);
     byWeek.set(w, [...(byWeek.get(w) ?? []), s]);
   }
@@ -110,6 +117,8 @@ export default function PlanPage() {
 
   return (
     <>
+      {/* Hors réseau, le plan est celui de la dernière lecture : il le dit d'abord. */}
+      {recordedAt && <Stale recordedAt={recordedAt} />}
       <div className="page-head">
         <div>
           <h1 className="page-title">Plan d'entraînement</h1>
@@ -118,7 +127,7 @@ export default function PlanPage() {
                 à la précision de la prédiction près. Et un chiffre du modèle
                 s'écrit avec ce qu'il signifie, à un tap. */}
             {data.raceDay && <><RaceDayLine raceDay={data.raceDay} />{' · '}</>}
-            {num(data.sessions.length)} séances sur {num(weeks.length)} semaines
+            {num(shown.length)} séances sur {num(weeks.length)} semaines
           </p>
         </div>
         <Link href="/coach" className="btn">Ajuster avec le coach</Link>
@@ -130,7 +139,7 @@ export default function PlanPage() {
         </div>
       )}
 
-      {data.absences.map((a) => (
+      {data.absences.filter((a) => a.endDate >= monday).map((a) => (
         <AbsenceNotice key={a.id} absence={a} today={today} />
       ))}
 

@@ -273,7 +273,9 @@ function subline(session: SessionRow): string {
       ? `${spelledDuration(runS)} de course, puis ${spelledDuration(annex.durationS)} de ${annex.name}`
       : `${spelledDuration(total)} au total`;
   const parts = [slopeOf(session), time];
-  if (!p.captionIsClimb && p.gainM > 0) parts.push(`${metres(p.gainM)} de dénivelé`);
+  // Le dénivelé de la séance, sauf quand la légende du tracé le dit déjà : « +35 m,
+  // trois fois » est celui d'une répétition, pas celui de la journée.
+  if ((!p.captionIsClimb || p.captionPerRep) && p.gainM > 0) parts.push(`${metres(p.gainM)} de dénivelé`);
   return nbsp(parts.filter(Boolean).join(', '));
 }
 

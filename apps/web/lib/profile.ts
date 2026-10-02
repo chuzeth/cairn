@@ -102,6 +102,8 @@ export interface SessionProfile {
   /** Ce que la légende dit du relief, et si elle parle d'une montée. */
   caption: string;
   captionIsClimb: boolean;
+  /** La légende dit une répétition, pas le dénivelé de la séance : celui-ci reste à dire ailleurs. */
+  captionPerRep: boolean;
   /** Hauteur atteinte par le tracé, pour recadrer une séance qui ne monte nulle part. */
   height: number;
 }
@@ -138,15 +140,28 @@ export function legsOf(session: Pick<SessionRow, 'blocks'>): Leg[] {
     const r = b.recovery;
     // Ce qui monte redescend. Une répétition qui gagne 26 m et dont la
     // récupération ne déclare rien redescend par elle : sans cette fermeture,
-    // huit côtes dessineraient un escalier de 208 m que personne ne monte.
-    const recGain = r ? r.elevationGainM ?? (r.elevationLossM == null ? b.elevationLossM ?? 0 : 0) : 0;
-    const recLoss = r ? r.elevationLossM ?? (r.elevationGainM == null ? b.elevationGainM ?? 0 : 0) : 0;
+    // huit côtes dessineraient un escalier de 208 m que personne ne monte. Une
+    // répétition vallonnée, qui redescend ce qu'elle monte, revient d'elle-même
+    // à son départ : sa récupération n'a rien à refermer — elle comptait 265 m
+    // pour une séance de 160, le 02/10.
+    const gain = b.elevationGainM ?? 0;
+    const loss = b.elevationLossM ?? 0;
+    const recGain = r ? r.elevationGainM ?? (r.elevationLossM == null ? Math.max(0, loss - gain) : 0) : 0;
+    const recLoss = r ? r.elevationLossM ?? (r.elevationGainM == null ? Math.max(0, gain - loss) : 0) : 0;
+    // Dessinée, elle monte puis redescend : une dent, comme une côte. Mise à
+    // plat, elle se lisait « à plat » sous 35 m de montée.
+    const rolling = !flat && gain > 0 && loss > 0;
+    const up = Math.round(durationS / 2);
 
     for (let k = 0; k < n; k++) {
-      legs.push({
-        block: i, durationS, zone: b.zone, recovery: false, flat,
-        gainM: b.elevationGainM ?? 0, lossM: b.elevationLossM ?? 0,
-      });
+      if (rolling) {
+        legs.push(
+          { block: i, durationS: up, zone: b.zone, recovery: false, flat, gainM: gain, lossM: 0 },
+          { block: i, durationS: durationS - up, zone: b.zone, recovery: false, flat, gainM: 0, lossM: loss },
+        );
+      } else {
+        legs.push({ block: i, durationS, zone: b.zone, recovery: false, flat, gainM: gain, lossM: loss });
+      }
       if (r && r.durationS > 0 && !(r.betweenReps && k === n - 1)) {
         legs.push({
           block: i, durationS: r.durationS, zone: r.zone, recovery: true, flat,
@@ -259,7 +274,7 @@ export function sessionProfile(session: Pick<SessionRow, 'blocks'>): SessionProf
  */
 function caption(
   legs: Leg[], gainM: number, lossM: number, relief: boolean,
-): { caption: string; captionIsClimb: boolean } {
+): { caption: string; captionIsClimb: boolean; captionPerRep: boolean } {
   const work = legs.filter((l) => !l.flat && !l.recovery);
   const up = work.filter((l) => l.gainM > l.lossM);
   const down = work.filter((l) => l.lossM > l.gainM);
@@ -269,24 +284,25 @@ function caption(
     const per = up[0]!.gainM;
     if (repeated(up)) {
       const times = NUMBERS[up.length] ?? String(up.length);
-      return { caption: `+${metres(per)}, ${times} fois`, captionIsClimb: true };
+      return { caption: `+${metres(per)}, ${times} fois`, captionIsClimb: true, captionPerRep: true };
     }
     const total = up.reduce((a, l) => a + l.gainM, 0);
     const back = lossM >= total * 0.9 ? ` puis −${metres(lossM)}` : '';
-    return { caption: `+${metres(total)}${back}`, captionIsClimb: true };
+    return { caption: `+${metres(total)}${back}`, captionIsClimb: true, captionPerRep: false };
   }
   if (down.length > 0) {
     const per = down[0]!.lossM;
     if (repeated(down)) {
       const times = NUMBERS[down.length] ?? String(down.length);
-      return { caption: `−${metres(per)}, ${times} fois`, captionIsClimb: false };
+      return { caption: `−${metres(per)}, ${times} fois`, captionIsClimb: false, captionPerRep: true };
     }
-    return { caption: `−${metres(down.reduce((a, l) => a + l.lossM, 0))}`, captionIsClimb: false };
+    return { caption: `−${metres(down.reduce((a, l) => a + l.lossM, 0))}`, captionIsClimb: false, captionPerRep: false };
   }
   // Un tracé qui ne varie pas non plus en hauteur n'a pas d'échelle à expliquer :
   // il n'y a ni relief ni changement d'intensité, et c'est tout ce qu'il dit.
   return {
     caption: relief ? "à plat : ici la hauteur est l'intensité" : 'à plat, d’un bout à l’autre',
     captionIsClimb: false,
+    captionPerRep: false,
   };
 }

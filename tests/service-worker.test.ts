@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Le service worker, exécuté tel quel contre un faux cache et un faux réseau.
@@ -63,7 +63,21 @@ async function browse(path: string, mode: 'navigate' | 'cors' = 'navigate'): Pro
   return res;
 }
 
-const shell = () => caches.get('cairn-shell-v1')!;
+/**
+ * Ce que le worker répond, sans attendre ses tâches de fond : derrière un réseau
+ * muet, celle qui met la réserve à jour ne se termine jamais.
+ */
+function respond(path: string, mode: 'navigate' | 'cors' = 'navigate'): Promise<Response | undefined> {
+  let responded: Promise<Response> | undefined;
+  handlers.fetch!({
+    request: { url: ORIGIN + path, method: 'GET', mode },
+    respondWith: (p: Promise<Response>) => { responded = p; },
+    waitUntil: () => {},
+  });
+  return responded ?? Promise.resolve(undefined);
+}
+
+const shell = () => caches.get('cairn-shell-v2')!;
 const data = () => caches.get('cairn-data')!;
 const app = (text: string) => new Response(text, { status: 200, headers: { 'content-type': 'text/html' } });
 const login = (status: number) => new Response('<h1>Cairn</h1> connexion', {
@@ -116,5 +130,83 @@ describe('Le service worker et la porte', () => {
     const state = await browse('/api/state', 'cors');
     expect(await state.text()).toBe('{"athlete":"pierre"}');
     expect(state.headers.get('x-cairn-recorded-at')).toBeTruthy();
+  });
+});
+
+describe('Hors ligne, toute l’app sur sa dernière lecture', () => {
+  const json = (body: string) => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  /** Un réseau qui ne répond jamais : le Mac éteint derrière Funnel. */
+  const silent = () => new Promise<Response>(() => {});
+
+  it('ouvre le plan, et une sortie déjà vue, sur ce qu’ils ont lu en ligne', async () => {
+    // Le 02/10, Mac éteint : « je peux seulement charger le point du jour. Je
+    // ne peux pas charger les séances, je ne peux pas charger le plan. »
+    network = (path) => (path.startsWith('/api/') ? json(`{"lu":"${path}"}`) : app(`page ${path}`));
+    await browse('/plan');
+    await browse('/api/plan?weeks=8', 'cors');
+    await browse('/activities/strava-1');
+    await browse('/api/activities/strava-1', 'cors');
+    network = () => { throw new TypeError('Load failed'); };
+    expect(await (await browse('/plan')).text()).toBe('page /plan');
+    expect(await (await browse('/api/plan?weeks=8', 'cors')).text()).toBe('{"lu":"/api/plan"}');
+    expect(await (await browse('/activities/strava-1')).text()).toBe('page /activities/strava-1');
+    expect(await (await browse('/api/activities/strava-1', 'cors')).text()).toBe('{"lu":"/api/activities/strava-1"}');
+  });
+
+  it('n’attend pas un Mac qui ne répond pas : la réserve, datée, au bout de quelques secondes', async () => {
+    network = () => json('{"athlete":"pierre"}');
+    await browse('/api/state', 'cors');
+    vi.useFakeTimers();
+    try {
+      network = silent;
+      let served: Response | undefined;
+      void respond('/api/state', 'cors').then((r) => { served = r; });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(served, 'toujours en attente du réseau').toBeDefined();
+      expect(await served!.text()).toBe('{"athlete":"pierre"}');
+      expect(served!.headers.get('x-cairn-recorded-at')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('laisse tomber vite un changement d’écran sans réseau : le navigateur rouvre alors la page gardée', async () => {
+    // Un lien du menu demande à Next la page en données (`_rsc`) : sans réponse,
+    // il recharge l'adresse, et c'est la page gardée qui s'ouvre.
+    vi.useFakeTimers();
+    try {
+      network = silent;
+      let served: Response | undefined;
+      void respond('/plan?_rsc=1a2b', 'cors').then((r) => { served = r; });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(served?.type).toBe('error');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ne jette jamais un fragment dont une page gardée a besoin', async () => {
+    network = (path) => (path.startsWith('/_next/') ? new Response('js') : app('<script src="/_next/static/chunks/socle.js"></script>'));
+    await browse('/_next/static/chunks/socle.js', 'cors');
+    await browse('/plan');
+    for (let i = 0; i < 130; i++) await browse(`/_next/static/chunks/autre-${i}.js`, 'cors');
+    expect(await shell().match('/_next/static/chunks/socle.js')).toBeDefined();
+    expect(await shell().match('/plan')).toBeDefined();
+  });
+});
+
+describe('Les écrans gardés d’avance', () => {
+  it('gardent aussi les fragments qu’ils chargent : un écran sans eux ne s’affiche pas', async () => {
+    // Le 02/10, serveur coupé : le plan, gardé dès l'installation mais jamais
+    // ouvert en ligne, s'ouvrait sur « Cet écran n'a pas pu s'afficher » —
+    // ChunkLoadError sur le fragment de sa page.
+    network = (path) =>
+      path.startsWith('/_next/') ? new Response(`js ${path}`) : app(`<script src="/_next/static/chunks${path === '/' ? '/matin' : path}.js"></script>`);
+    const pending: Promise<unknown>[] = [];
+    handlers.install!({ waitUntil: (p: Promise<unknown>) => { pending.push(p); } });
+    await Promise.all(pending);
+    network = () => { throw new TypeError('Load failed'); };
+    expect(await (await browse('/plan')).text()).toContain('/_next/static/chunks/plan.js');
+    expect(await (await browse('/_next/static/chunks/plan.js', 'cors')).text()).toBe('js /_next/static/chunks/plan.js');
   });
 });

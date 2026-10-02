@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, get, getStamped, nbsp, num, post, shortDate,
+  PLAN_URL, activitiesUrl, duration, frDate, get, getStamped, nbsp, num, post, shortDate,
   type ActivityRow, type InsightRow, type PlanResponse, type PmcResponse, type StateResponse,
 } from '@/lib/api';
 import { LOAD_WORDS, loadFigures, plainWord, type LoadFigure } from '@/lib/figures';
@@ -53,9 +53,12 @@ export default function Dashboard() {
       const [h, s, pl] = await Promise.all([
         get<Health>('/health'),
         getStamped<StateResponse>('/api/state'),
-        get<PlanResponse>('/api/plan?weeks=2'),
+        get<PlanResponse>(PLAN_URL),
       ]);
       setHealth(h); setState(s.data); setPlan(pl); setRecordedAt(s.recordedAt);
+      // Les séances, que l'écran du matin ne montre pas : lues ici, en ligne,
+      // elles s'ouvrent aussi le jour où le Mac est éteint (`sw.js`).
+      if (!s.recordedAt) void get(activitiesUrl()).catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

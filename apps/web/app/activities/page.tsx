@@ -1,8 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { frDate, get, isoOffset, num, type ActivityRow } from '@/lib/api';
-import { Badge, Card, ErrorBox, Loading, ThreeZoneBar } from '@/components/ui';
+import { ACTIVITIES_DAYS, activitiesUrl, frDate, getStamped, num, type ActivityRow } from '@/lib/api';
+import { Badge, Card, ErrorBox, Loading, Stale, ThreeZoneBar } from '@/components/ui';
 import { ActivityCard } from '@/components/ActivityCard';
 
 const RANGES = [
@@ -13,14 +13,21 @@ const RANGES = [
 export default function ActivitiesPage() {
   const router = useRouter();
   const [rows, setRows] = useState<ActivityRow[] | null>(null);
+  /** Non nul : la liste sort de la réserve du téléphone, et date de ce moment-là. */
+  const [recordedAt, setRecordedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState(ACTIVITIES_DAYS);
+  /** La fenêtre de la liste affichée : sans réseau, une autre peut ne pas être en réserve. */
+  const [shownDays, setShownDays] = useState(ACTIVITIES_DAYS);
   const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
-    setRows(null);
     try {
-      setRows(await get<ActivityRow[]>(`/api/activities?from=${isoOffset(-days)}&limit=300`));
+      const read = await getStamped<ActivityRow[]>(activitiesUrl(days));
+      setRows(read.data);
+      setShownDays(days);
+      setRecordedAt(read.recordedAt);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -46,10 +53,21 @@ export default function ActivitiesPage() {
     );
   }, [filtered]);
 
-  if (error) return <ErrorBox error={error} onRetry={load} />;
+  if (error && !rows) return <ErrorBox error={error} onRetry={load} />;
 
   return (
     <>
+      {recordedAt && <Stale recordedAt={recordedAt} />}
+      {/* Une fenêtre jamais lue en ligne n'est pas en réserve : la liste reste
+          celle qu'on a, et le dit, plutôt que de s'effacer derrière une erreur. */}
+      {error && shownDays !== days && (
+        <div className="banner">
+          <p className="small" style={{ margin: 0 }}>
+            Sans réseau, la période « {RANGES.find((r) => r.days === days)?.label ?? `${days} j`} » n&apos;est pas en
+            réserve : la liste reste celle de « {RANGES.find((r) => r.days === shownDays)?.label ?? `${shownDays} j`} ».
+          </p>
+        </div>
+      )}
       <div className="page-head">
         <div>
           <h1 className="page-title">Séances</h1>
