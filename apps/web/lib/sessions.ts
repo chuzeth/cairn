@@ -7,9 +7,11 @@
  * et « Force » de l'autre — l'athlète croit lire deux séances.
  */
 import { annexOf } from '@cairn/core/annex';
+import { followsPace } from '@cairn/core/blocks';
 import { describeMovement } from '@cairn/core/movements';
 import { climbsBack } from '@cairn/core/terrain';
-import { frDate, prime } from './api';
+import { frDate, num, prime } from './api';
+import { metres } from './profile';
 import type { DirectiveOriginRow, SessionRow } from './api';
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -175,3 +177,40 @@ export const effortHead = (effort: string): string => {
   const head = effort.split(':')[0]!.trim();
   return `${head.charAt(0).toLocaleLowerCase('fr')}${head.slice(1)}`;
 };
+
+/**
+ * Les cibles à tenir : allure, vitesse ascensionnelle, cadence, circuit.
+ *
+ * Elles se lisent sur la montre pendant l'effort, pas au réveil — et la
+ * cardiaque, qui est la cible première en endurance, reste elle sur la ligne du
+ * bloc. Une rando-course répète la même plage d'allure sur ses quatre blocs :
+ * servies d'office, ces quatre lignes coûtent exactement la question du matin.
+ */
+export function blockTargets(b: SessionRow['blocks'][number]): string {
+  const parts: string[] = [];
+  if (b.effort) parts.push(b.effort.replace(/\.$/, ''));
+  // Sur un sentier, la FC guide : l'allure à plat ne s'y suit pas.
+  const pace = followsPace(b);
+  if (pace && b.paceRange) {
+    parts.push(b.paceRange[1] === '—' ? `plus lent que ${b.paceRange[0]}/km` : `${b.paceRange[0]}–${b.paceRange[1]}/km`);
+  }
+  if (b.vamTargetMh) parts.push(`${metres(b.vamTargetMh)} D+/h`);
+  if (b.cadenceTargetSpm) parts.push(`${num(b.cadenceTargetSpm)} ppm`);
+  // La récupération est un segment de la séance : sans allure, « récup 90 s
+  // active » se court au juger.
+  if (pace && b.recovery?.paceRange) {
+    parts.push(
+      `récup ${b.recovery.paceRange[1] === '—'
+        ? `plus lent que ${b.recovery.paceRange[0]}`
+        : `${b.recovery.paceRange[0]}–${b.recovery.paceRange[1]}`}/km`,
+    );
+  }
+  if (b.circuit) parts.push(circuitText(b.circuit));
+  // D'où viennent ces cibles. Elle tient dans le pli des consignes, où on la lit
+  // au moment de décider si on tient le chiffre ou ses sensations.
+  const from = provenanceText(b.provenance);
+  if (parts.length > 0 && from) parts.push(`d'après ${from}`);
+  // La montée entière, telle qu'on la retrouve : le tronçon est sur la ligne du bloc.
+  if (b.where) parts.push(`sur ${b.where.climb}`);
+  return parts.join(' · ');
+}

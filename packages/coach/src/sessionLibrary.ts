@@ -1,6 +1,6 @@
 import type {
-  ParameterProvenance, PhysiologyModel, PlannedSession, SessionBlock, SessionSuccessCriterion, SessionType,
-  StrengthCircuit, StrengthExercise, TerrainStretch, ZoneKey,
+  CourseProfile, ParameterProvenance, PhysiologyModel, PlannedSession, SessionBlock, SessionSuccessCriterion,
+  SessionType, StrengthCircuit, StrengthExercise, TerrainStretch, ZoneKey,
 } from '@cairn/core';
 import {
   PROVENANCE_FR, annexOf, climbsBack, describeMovement, groundText, itinerary, mapUrl, pointLabel, recoveryTimes,
@@ -2242,10 +2242,38 @@ export function layDescent(
   };
 }
 
-/** Allure course : simulation spécifique sur profil proche de l'objectif. */
-export function racePace(model: PhysiologyModel, blockMin = 40, targetSpeedMs?: number, vertM = 250): SessionTemplate {
+/**
+ * Au-delà de ce relief, en mètres de montée par kilomètre, le parcours est un
+ * sentier : la pente change l'allure à chaque pas, la FC guide, et une allure à
+ * plat ne se suit plus (`followsPace`). Une backyard sur voie verte en fait 9,
+ * les Grisemottes 37.
+ */
+export const TRAIL_GAIN_PER_KM = 20;
+
+/**
+ * Allure course : simulation spécifique sur le relief de l'objectif.
+ *
+ * Le bloc monte ce que la course monte à la même allure : sa densité — 1 200 m
+ * sur 32 km aux Grisemottes, 37,5 m par kilomètre — sur la distance que le bloc
+ * couvre. Le planificateur posait 250 m sur 40 min, quel que soit le parcours :
+ * une backyard sur voie verte en aurait reçu quatre fois trop. Sans course,
+ * 250 m.
+ */
+export function racePace(
+  model: PhysiologyModel,
+  blockMin = 40,
+  targetSpeedMs?: number,
+  course?: Pick<CourseProfile, 'distanceM' | 'elevationGainM'>,
+): SessionTemplate {
   const c = ctxOf(model);
   const speed = targetSpeedMs ?? model.vt2.speedMs * 0.9;
+  const km = (blockMin * 60 * speed) / 1000;
+  const vertM = course && course.distanceM > 0
+    ? Math.round((course.elevationGainM / (course.distanceM / 1000)) * km / 5) * 5
+    : 250;
+  const trail = vertM / km >= TRAIL_GAIN_PER_KM;
+  const z = zoneOf(c, 'Z3');
+  const hr = `${Math.round(z.hrMin)}-${Math.round(z.hrMax)} bpm`;
   return finalize(c, {
     key: 'race_pace',
     type: 'race_pace',
@@ -2263,9 +2291,15 @@ export function racePace(model: PhysiologyModel, blockMin = 40, targetSpeedMs?: 
         speedProvenance: targetSpeedMs ? 'blended' : provenanceOf(model, 'vt2.speedMs'),
         elevationGainM: vertM,
         elevationLossM: vertM,
-        notes:
-          `Cible ${msToKmh(speed).toFixed(1)} km/h à plat, corrigée de la pente. ` +
-          `Mange et bois exactement comme le jour J.`,
+        ...(trail ? { terrain: 'trail' as const } : {}),
+        // Sur un sentier, l'allure reste dans le bloc pour juger la sortie sur sa
+        // vitesse corrigée du relief ; la consigne, elle, est la FC.
+        notes: trail
+          ? `Sur un parcours vallonné comme la course : ${vertM} m de montée et autant de descente. ` +
+            `La FC guide, ${hr} : en montée, marche dès qu'elle dépasse ${Math.round(z.hrMax)}. En descente, ` +
+            `garde l'effort, foulée courte et relâchée. Mange et bois exactement comme le jour J.`
+          : `Cible ${msToKmh(speed).toFixed(1)} km/h, corrigée de la pente. ` +
+            `Mange et bois exactement comme le jour J.`,
       }),
       block(c, 'Retour au calme', 'Z1', 12 * 60, {}),
     ],

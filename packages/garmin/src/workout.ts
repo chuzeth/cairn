@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
-  climbsBack, coordinates, describeMovement, itinerary, sessionDuration, type PlannedSession, type SessionBlock,
-  type SessionType,
+  climbsBack, coordinates, describeMovement, followsPace, itinerary, sessionDuration, type PlannedSession,
+  type SessionBlock, type SessionType,
 } from '@cairn/core';
 
 /**
@@ -268,7 +268,7 @@ function mainStep(block: SessionBlock, type: SessionType): WatchStep {
     type: roleOf(block.label),
     end,
     target,
-    note: note(block.label, [...quantities(block, target), ...extra], said || undefined),
+    note: note(block.label, [...quantities(block, target, followsPace(block)), ...extra], said || undefined),
   };
 }
 
@@ -300,7 +300,7 @@ function recoveryStep(block: SessionBlock, type: SessionType): WatchStep {
       target,
       note: note(
         `Remontée en marchant ${top}`,
-        [...quantities(r, target), `environ ${sessionDuration(r.durationS)}`],
+        [...quantities(r, target, followsPace(block)), `environ ${sessionDuration(r.durationS)}`],
         'Tour en haut : la descente suivante part de là.',
       ),
     };
@@ -310,7 +310,7 @@ function recoveryStep(block: SessionBlock, type: SessionType): WatchStep {
     type: r.active ? 'recovery' : 'rest',
     end: { type: 'time', seconds: Math.round(r.durationS) },
     target,
-    note: note(`Récupération ${r.active ? 'active' : 'passive'}`, quantities(r, target)),
+    note: note(`Récupération ${r.active ? 'active' : 'passive'}`, quantities(r, target, followsPace(block))),
   };
 }
 
@@ -363,12 +363,13 @@ function endOf(block: SessionBlock): WatchEnd {
  * Une plage cardiaque dont seul le plafond sonne s'écrit entière dans la note :
  * son plancher reste une consigne, il n'est simplement plus une alarme.
  */
-function quantities(seg: Segment, target: WatchTarget): string[] {
+function quantities(seg: Segment, target: WatchTarget, followPace = true): string[] {
   const out: string[] = [];
   const hr = seg.hrRange;
   const sounded = target.type === 'hr' && hr && target.low === Math.max(0, Math.round(hr[0])) && target.high === Math.round(hr[1]);
   if (hr && !sounded) out.push(`FC ${hrText(hr[0], hr[1])}`);
-  if (seg.speedRangeMs) {
+  // Sur un sentier, la FC guide : l'allure à plat ne s'y suit pas (`followsPace`).
+  if (followPace && seg.speedRangeMs) {
     const [lo, hi] = seg.speedRangeMs;
     if (hi > 0) out.push(`allure à plat ${lo > 0 ? `${pace(paceSeconds(hi))}–${pace(paceSeconds(lo))}` : `plus lente que ${pace(paceSeconds(hi))}`}/km`);
   }

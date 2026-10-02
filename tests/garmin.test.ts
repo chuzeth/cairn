@@ -264,6 +264,22 @@ describe('Codec : séance → Garmin → séance', () => {
     expect(p.abridged).toEqual(['description abrégée à la limite de Garmin, le texte complet est dans Cairn']);
   });
 
+  it('n’écrit pas d’allure à plat sur un sentier, où la FC guide', () => {
+    // Le 02/10 : 3 × 6 min à l'effort de course sur les sentiers de la Sarra,
+    // 35 m de montée et de descente par répétition. La note disait « allure à
+    // plat 4:25–5:37/km » sous une consigne « pas d'allure à suivre ».
+    const w = workoutOf({
+      type: 'race_pace', title: 'Allure spécifique — 54 min · 160 m D+', intent: '',
+      blocks: [{
+        label: 'Allure course en vallonné', zone: 'Z3', durationS: 360, repeat: 3, hrRange: [152, 157],
+        speedRangeMs: [2.968, 3.777], elevationGainM: 35, elevationLossM: 35, terrain: 'trail',
+        recovery: { durationS: 120, zone: 'Z2', active: true, ...Z2 },
+      }],
+    });
+    for (const step of steps(w)) expect(step.note).not.toContain('allure');
+    expect(steps(w)[0]!.note).toContain('FC 152–157');
+  });
+
   it('le renforcement, le repos, la course ne partent pas — et disent pourquoi', () => {
     expect(prescribe(strength(PIERRE_MODEL))).toEqual({ sendable: false, reason: expect.stringContaining('renforcement') });
     expect(prescribe({ type: 'rest', title: 'Repos', intent: '', blocks: [] }).sendable).toBe(false);

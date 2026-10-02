@@ -15,6 +15,7 @@ import { Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
 import { Itinerary } from '@/components/Itinerary';
 import { onForeground } from '@/lib/version';
+import { followsPace } from '@cairn/core/blocks';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -281,7 +282,8 @@ export default function PlanPage() {
                               {b.hrRange[0] > 0 ? `${num(b.hrRange[0])}-${num(b.hrRange[1])}` : `< ${num(b.hrRange[1])}`} bpm
                             </span>
                           )}
-                          {b.paceRange && (
+                          {/* Sur un sentier, la FC guide : pas d'allure à plat à suivre. */}
+                          {b.paceRange && followsPace(b) && (
                             <span className="tiny mono faint">
                               {b.paceRange[1] === '—' ? `> ${b.paceRange[0]}` : `${b.paceRange[0]}-${b.paceRange[1]}`}/km
                             </span>
@@ -297,7 +299,7 @@ export default function PlanPage() {
                           {b.recovery && (
                             <span className="tiny faint">
                               {recoveryText(b.recovery)}
-                              {b.recovery.paceRange &&
+                              {b.recovery.paceRange && followsPace(b) &&
                                 ` · ${b.recovery.paceRange[1] === '—'
                                   ? `> ${b.recovery.paceRange[0]}`
                                   : `${b.recovery.paceRange[0]}-${b.recovery.paceRange[1]}`}/km`}

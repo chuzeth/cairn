@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sessionHeadline } from '../apps/web/lib/sessions';
+import { blockTargets, sessionHeadline } from '../apps/web/lib/sessions';
 import type { SessionRow } from '../apps/web/lib/api';
 
 /**
@@ -35,5 +35,27 @@ describe('Le titre du matin', () => {
       ],
     });
     expect(sessionHeadline(allure)).toBe('3 × 6′ à l\'allure course');
+  });
+});
+
+describe('Les cibles d’un bloc', () => {
+  /** Le 02/10 : 3 × 6 min à l'effort de course sur les sentiers de la Sarra. */
+  const sarra: SessionRow['blocks'][number] = {
+    label: 'Allure course en vallonné', zone: 'Z3', durationS: 360, repeat: 3, hrRange: [152, 157],
+    paceRange: ['4:25', '5:37'], elevationGainM: 35, elevationLossM: 35,
+    terrain: 'trail', provenance: { hr: 'default', speed: 'blended' },
+    recovery: { durationS: 120, zone: 'Z2', active: true, paceRange: ['5:37', '6:51'] },
+  };
+
+  it('ne donne aucune allure à suivre sur un sentier : la FC guide', () => {
+    // La consigne disait « pas d'allure à suivre », et le pli juste au-dessus
+    // affichait « 4:25–5:37/km ».
+    expect(blockTargets(sarra)).not.toContain('/km');
+  });
+
+  it('garde l’allure à plat, où elle se suit', () => {
+    const plat = { ...sarra, terrain: undefined, elevationGainM: undefined, elevationLossM: undefined };
+    expect(blockTargets(plat)).toContain('4:25–5:37/km');
+    expect(blockTargets(plat)).toContain('récup 5:37–6:51/km');
   });
 });

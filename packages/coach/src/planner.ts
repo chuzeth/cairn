@@ -155,13 +155,13 @@ function selectQualitySessions(input: WeekBuildInput): SessionTemplate[] {
       break;
 
     case 'specific':
-      out.push(lib.racePace(model, 40, input.racePaceMs, 250));
+      out.push(lib.racePace(model, 40, input.racePaceMs, input.race.course));
       if (slots >= 2) out.push(medium ? lib.pyramid(model, [4, 8, 12, 8, 4]) : lib.vo2max(model, '1-1', 2, 8));
       break;
 
     case 'peak':
       out.push(medium ? lib.pyramid(model, [3, 6, 8, 6, 3]) : lib.vo2max(model, '30-30', 2, 8));
-      if (slots >= 2) out.push(lib.racePace(model, 30, input.racePaceMs, 200));
+      if (slots >= 2) out.push(lib.racePace(model, 30, input.racePaceMs, input.race.course));
       break;
 
     case 'taper':

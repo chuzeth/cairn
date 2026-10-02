@@ -158,6 +158,38 @@ describe('Construction de la semaine', () => {
     currentCtl: 45, constraints: PIERRE.constraints, raceElevationGainM: 1200,
   });
 
+  it('court l’allure spécifique sur le relief de la course, la FC pour guide sur un sentier', () => {
+    // Le 02/10, Pierre demande quel dénivelé viser sur son allure spécifique :
+    // le planificateur posait 250 m sur 40 min, 200 sur 30, quel que soit le
+    // parcours visé — 42 m/km pour les Grisemottes (37,5), autant pour une
+    // backyard sur voie verte (9,4).
+    const speed = 2.47;
+    const backyard: RaceGoal = {
+      ...RACE, course: { ...RACE.course, distanceM: 67060, elevationGainM: 630, elevationLossM: 640, technicality: 1 },
+    };
+    for (const race of [RACE, backyard]) {
+      const perKm = race.course.elevationGainM / (race.course.distanceM / 1000);
+      const blocks = specs
+        .flatMap((spec) => buildWeek({ spec, model, constraints: PIERRE.constraints, athleteId: 'pierre', race, racePaceMs: speed }).sessions)
+        .filter((s) => s.type === 'race_pace')
+        .map((s) => s.blocks.find((b) => b.zone === 'Z3')!);
+      expect(blocks.length).toBeGreaterThan(0);
+      for (const b of blocks) {
+        const km = (b.durationS! * speed) / 1000;
+        expect(Math.abs(b.elevationGainM! / km - perKm)).toBeLessThan(2);
+        expect(b.elevationLossM).toBe(b.elevationGainM);
+        if (race === RACE) {
+          expect(b.terrain).toBe('trail');
+          expect(b.notes).toContain('La FC guide');
+          expect(b.notes).not.toContain('km/h');
+        } else {
+          expect(b.terrain).toBeUndefined();
+          expect(b.notes).toContain('km/h');
+        }
+      }
+    }
+  });
+
   it('place la sortie longue sur un jour autorisé', () => {
     for (const spec of specs.slice(0, 6)) {
       const week = buildWeek({ spec, model, constraints: PIERRE.constraints, athleteId: 'pierre', race: RACE });

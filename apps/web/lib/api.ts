@@ -582,6 +582,8 @@ export interface SessionRow {
     cadenceTargetSpm?: number; notes?: string;
     /** La consigne d'un bloc que ni la FC ni l'allure ne pilotent — une descente : un effort et une technique. */
     effort?: string;
+    /** Le terrain du bloc, quand ce n'est pas du plat : sur un sentier, la FC guide et l'allure à plat ne se suit pas. */
+    terrain?: 'flat' | 'trail';
     /** Où le bloc se court : un tronçon d'une montée de l'athlète, chaque bout ouvert sur la carte. */
     where?: TerrainStretch;
     /** D'où vient chaque cible du bloc. */
