@@ -6,7 +6,7 @@ import {
   type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
-  circuitText, CRITERION_LABELS, originLabel, provenanceText, recoveryText, TYPE_COLORS, TYPE_LABELS,
+  circuitText, CRITERION_LABELS, originLabel, planName, provenanceText, recoveryText, TYPE_COLORS,
 } from '@/lib/sessions';
 import {
   AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory, Stale, WhereLine,
@@ -189,7 +189,7 @@ export default function PlanPage() {
                               data-faded={s.status === 'missed' || s.status === 'withdrawn' || s.status === 'cancelled'}
                               style={{ borderLeftColor: TYPE_COLORS[s.type] ?? 'var(--border-strong)' }}
                             >
-                              <div className="plan-name">{TYPE_LABELS[s.type] ?? s.type}</div>
+                              <div className="plan-name">{planName(s)}</div>
                               {/* La durée seule : un « 85 » sans ce qu'il compte ne dirait
                                   rien, et la charge de la séance se lit en l'ouvrant. */}
                               {s.type !== 'rest' && (
@@ -280,10 +280,13 @@ export default function PlanPage() {
                         <div className="row wrap" style={{ gap: 8 }}>
                           <strong className="small">
                             {b.repeat ? `${num(b.repeat)} × ` : ''}
-                            {blockDuration(b.durationS)}
+                            {b.reps ? `${num(b.reps)}` : blockDuration(b.durationS)}
                             {b.distanceM ? ` ${num(b.distanceM)} m` : ''}
                           </strong>
                           <span className="small muted">{b.label}</span>
+                          {b.exercise && (
+                            <Link href={`/exercices#${b.exercise}`} className="tiny">comment faire</Link>
+                          )}
                           {/* Un bloc piloté à l'effort n'a pas de zone à tenir. */}
                           {/* Une zone ne dit rien d'un bloc qui ne se court pas : souplesse, respiration. */}
                           {!b.effort && !b.kind && <Badge>{b.zone}</Badge>}

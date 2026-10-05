@@ -11,3 +11,4 @@ export * from './annex.js';
 export * from './blocks.js';
 export * from './terrain.js';
 export * from './gpx.js';
+export * from './exercises.js';

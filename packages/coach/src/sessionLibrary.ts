@@ -8,8 +8,8 @@ import {
 } from '@cairn/core';
 import {
   ACTIVE_RECOVERY_INTENSITY, ECCENTRIC_MOVEMENTS, FLAT_RUNNING_COST, buildZones, easyClimbRate, easySpeedOf,
-  eccentricStrengthLoad, formatPace, gradeAdjustedSpeed, hrProvenanceOf, isEasyZone, maximalEffortIndex, msToKmh,
-  prescribedMechanicalLoad, speedForMetabolicPower, speedProvenanceOf, steadyRunLoad, vam, walkingGrade,
+  eccentricStrengthLoad, formatPace, gradeAdjustedSpeed, hrProvenanceOf, isEasyZone, isRunFree, maximalEffortIndex,
+  msToKmh, prescribedMechanicalLoad, speedForMetabolicPower, speedProvenanceOf, steadyRunLoad, vam, walkingGrade,
 } from '@cairn/physiology';
 import { describeVerdict, fitVertical, locateVertical, verticalOf, type VerticalFit } from './plausibility.js';
 import { checkReserve, describeReserve, describeShortfall } from './reserve.js';
@@ -838,6 +838,10 @@ function situated(blocks: readonly SessionBlock[], type: SessionType): SessionBl
 export function remeasured<S extends TransformableSession>(s: S, model: PhysiologyModel): S {
   if (totalDuration(s.blocks) <= 0) return s;
   const located = situated(s.blocks, s.type);
+  // Une séance qui ne se court pas n'a pas de kilomètres : relue aux allures du
+  // modèle, la marche du 05/10 (coude cassé) devenait 5,8 km de course, et
+  // leur impact s'ajoutait à sa charge mécanique.
+  if (isRunFree(s.type)) return { ...s, plannedLoad: estimateLoad(model, located) };
   const distanceM = totalDistance(model, located);
   const impact = (m: number) => prescribedMechanicalLoad({ elevationLossM: 0, distanceM: m }).total;
   return {

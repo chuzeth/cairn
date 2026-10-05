@@ -596,6 +596,10 @@ export interface SessionRow {
     label: string; zone: string; repeat?: number; durationS?: number; distanceM?: number;
     /** La dernière répétition est facultative : la disponibilité du jour était en vigilance. */
     lastOptional?: boolean;
+    /** Répétitions par série d'un exercice de renforcement : l'écran dit « 4 × 8 », pas « 4 × 45″ ». */
+    reps?: number;
+    /** La fiche de l'exercice (`/exercices#clé`) : comment le faire, et avec le plâtre. */
+    exercise?: string;
     /** Bloc non couru : souplesse et respiration du dossier, ou l'activation d'un renforcement. */
     kind?: 'mobility' | 'respiratory' | 'activation';
     /** Dénivelé du bloc, par répétition et hors récupération — le relief du profil. */

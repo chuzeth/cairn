@@ -1142,3 +1142,50 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .lock-button:disabled { opacity: 0.5; }
 .lock-message { min-height: 1.5em; margin: 16px 0 0; color: var(--accent); font-size: 14px; line-height: 1.45; }
 .lock-link { display: inline-block; margin-top: 24px; color: var(--text-faint); font-size: 13px; }
+
+/* « comment faire » : la fiche de l'exercice, à côté de son nom (`/exercices`). */
+.m-howto {
+  margin-left: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-strong);
+  white-space: nowrap;
+}
+
+/* ── Fiches d'exercices (`/exercices`, `components/ExerciseFigure.tsx`) ───── */
+.xs { display: flex; flex-direction: column; gap: 18px; padding-bottom: 32px; }
+.xs h2 { margin: 0 0 10px; font-size: 17px; font-weight: 640; }
+.xs h4 { margin: 14px 0 4px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
+.xs p, .xs li { font-size: 14.5px; line-height: 1.55; color: var(--text); }
+.xs-rules { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev); }
+.xs-rules ol, .xs-rules ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.xs-group { display: flex; flex-direction: column; gap: 12px; }
+.xs-group-title { margin: 12px 0 0 !important; font-size: 22px !important; }
+.xs-group-lead { margin: 0; color: var(--text-dim) !important; }
+.xs-card { padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-elev); scroll-margin-top: 16px; }
+.xs-card:target { border-color: var(--accent); }
+.xs-name { margin: 6px 0 2px; font-size: 19px; font-weight: 640; }
+.xs-meta { margin: 0 0 10px; font-size: 13px !important; color: var(--text-dim) !important; }
+.xs-why { margin: 0; color: var(--text-dim) !important; }
+.xs-steps, .xs-mistakes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.xs-cast { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--ochre); background: var(--bg-inset); border-radius: 0 8px 8px 0; }
+.xs-sources ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.xs-sources li { font-size: 13px !important; color: var(--text-dim) !important; }
+
+.xf { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto 4px; }
+.xf path, .xf line, .xf circle { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.xf-body { stroke: var(--text); stroke-width: 4.5; }
+.xf-far { stroke: var(--text-faint); stroke-width: 4.5; }
+.xf-cast { stroke: var(--ochre); stroke-width: 7; }
+.xf-head { fill: none; stroke: var(--text); stroke-width: 3.5; }
+.xf-prop, .xf-prop line, .xf-prop path { stroke: var(--border-strong); stroke-width: 2; }
+.xf-prop-strong { stroke: var(--text-faint) !important; stroke-width: 3 !important; fill: none; }
+rect.xf-prop-strong, .xf rect { fill: none; stroke: var(--text-faint); stroke-width: 2.5; }
+.xf circle.xf-prop-strong { fill: none; }
+.xf-band { stroke: var(--metabolic) !important; stroke-width: 2.5 !important; }
+.xf rect.xf-wall { fill: color-mix(in srgb, var(--text) 6%, transparent); stroke: none; }
+/* Le mouvement en bleu : l'ocre est au bras plâtré. */
+.xf-arrow { stroke: var(--metabolic); stroke-width: 2.5; }
+.xf .xf-arrow-head { fill: var(--metabolic); stroke: none; }

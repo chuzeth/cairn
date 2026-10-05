@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { blockTargets, sessionHeadline } from '../apps/web/lib/sessions';
+import { compensationDay } from '@cairn/coach';
+import { blockTargets, planName, sessionHeadline } from '../apps/web/lib/sessions';
 import type { SessionRow } from '../apps/web/lib/api';
+import { PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
  * Le titre de l'écran du matin : ce qu'on retient de la journée en un coup
@@ -35,6 +37,38 @@ describe('Le titre du matin', () => {
       ],
     });
     expect(sessionHeadline(allure)).toBe('3 × 6′ à l\'allure course');
+  });
+});
+
+describe('Le programme sans course (coude cassé, 03/10)', () => {
+  const day = (i: number) => {
+    const t = compensationDay(PIERRE_MODEL, i);
+    return row({ type: t.type, title: t.title, blocks: t.blocks as SessionRow['blocks'] });
+  };
+
+  it('nomme une séance de force par son nom, pas par la première série venue', () => {
+    // Chaque exercice s'y fait en séries : « 6 tours de 30″ » titrait les maintiens d'anti-rotation.
+    expect(sessionHeadline(day(1))).toBe('Force A, jambes');
+    expect(sessionHeadline(day(4))).toBe('Force B, appuis');
+  });
+
+  it('dit le fractionné sans impact par sa structure et son intensité', () => {
+    expect(sessionHeadline(day(3))).toBe('4 × 5′ en tempo');
+    expect(sessionHeadline(day(9))).toBe('5 × 5′ au seuil');
+    expect(sessionHeadline(day(16))).toBe('6 × 3′ en PMA');
+  });
+
+  it('nomme chaque séance dans le plan, plutôt que « Cross-training » cinq fois', () => {
+    expect([0, 1, 2, 3, 4, 5, 6].map((i) => planName(day(i)))).toEqual([
+      'Remise en route', 'Force A, jambes', 'Marche en côte sur tapis', 'Intervalles en tempo',
+      'Force B, appuis', 'Marche en côte dehors', 'Récupération active',
+    ]);
+    // Une séance de course garde le nom de son type.
+    expect(planName(row({ type: 'endurance', title: 'Footing — 58 min', blocks: [] }))).toBe('Endurance');
+  });
+
+  it('ne compte pas l’activation d’une séance de force comme du renforcement ajouté', () => {
+    expect(day(1).title).not.toContain('renforcement');
   });
 });
 

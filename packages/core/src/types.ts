@@ -1298,6 +1298,17 @@ export interface SessionBlock {
    * écrite ; l'athlète décide de la dernière sur ce qu'il ressent.
    */
   lastOptional?: boolean;
+  /**
+   * Répétitions par série d'un exercice de renforcement. Le bloc dure `repeat`
+   * séries de `durationS`, et l'écran dit « 4 × 8 » plutôt que « 4 × 45″ » : ce
+   * qu'on compte en soulevant, ce sont les répétitions, pas les secondes.
+   */
+  reps?: number;
+  /**
+   * La fiche qui montre comment faire l'exercice (`apps/web/lib/exercises.ts`) :
+   * un schéma, les étapes, les erreurs, l'adaptation au plâtre.
+   */
+  exercise?: string;
   notes?: string;
 }
 

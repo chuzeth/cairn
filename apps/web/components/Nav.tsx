@@ -23,6 +23,7 @@ const LINKS: NavLink[] = [
   { href: '/coach', label: 'Coach', short: 'Coach', icon: 'chat' },
   { href: '/plan', label: 'Plan', icon: 'calendar' },
   { href: '/activities', label: 'Séances', icon: 'activity' },
+  { href: '/exercices', label: 'Exercices', icon: 'dumbbell' },
   { href: '/races', label: 'Objectifs', icon: 'flag' },
   { href: '/physiology', label: 'Physiologie', icon: 'pulse' },
 ];
@@ -48,6 +49,7 @@ function Icon({ name }: { name: string }) {
     activity: <path d="M3 12h4l3-8 4 16 3-8h4" {...common} />,
     flag: <><path d="M4 21V4M4 4h11l-1.6 3.5L15 11H4" {...common} /></>,
     pulse: <><circle cx="12" cy="12" r="9" {...common} /><path d="M7.5 12h2l1.5-3.5 2 7 1.5-3.5h2" {...common} /></>,
+    dumbbell: <><path d="M7 12h10M4.5 8.5v7M7 7v10M17 7v10M19.5 8.5v7" {...common} /></>,
     more: <><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" /></>,
   };
   return <svg viewBox="0 0 24 24" className="nav-icon">{paths[name]}</svg>;

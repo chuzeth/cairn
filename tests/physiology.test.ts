@@ -15,7 +15,7 @@ import {
   technicalityCostMultiplier, aggregateDurability, blendCriticalSpeed,
   csPriorFromThresholds, maximalEffortSupport, projectFrom, type DurabilityResult,
   buildPhysiologyModel, labWeight, PROOF_HALF_LIFE_DAYS, type FieldEvidence,
-  matchPlannedSession, sessionOutcome, type RealizedEffort, computeReadiness,
+  matchPlannedSession, outcomeOf, sessionOutcome, type RealizedEffort, computeReadiness,
   eccentricStrengthLoad, prescribedMechanicalLoad, ECCENTRIC_MOVEMENTS,
   type ReadinessDay, ACWR_SPIKE, analyzeDurability, buildPmcSeries, durabilityFactor,
   projectLoadRatios, type DurabilitySample, predictLapRace, describeZone, zoneForGradedSpeed,
@@ -1137,6 +1137,28 @@ describe('Rattachement d\'une activité à la séance prescrite', () => {
   it('ne rattache rien quand le jour ne prescrit rien', () => {
     expect(matchPlannedSession([], sortie(), model)).toBeNull();
   });
+
+  it('fait réaliser une séance hors course par une marche ou un vélo, jamais par une course', () => {
+    // Coude cassé le 03/10 : la course est remplacée par de la marche en côte et
+    // du vélo. Une marche enregistrée par la montre ne rattachait aucune séance
+    // hors course, et les règles l'auraient marquée « manquée » le lendemain.
+    const cardio = session({ type: 'cross_training', plannedDurationS: 3000, plannedLoad: 45 });
+    const marche = sortie({ sportType: 'Walk', durationS: 3000, load: 40 });
+    expect(matchPlannedSession([cardio], marche, model)?.id).toBe('ses_recup');
+    expect(matchPlannedSession([cardio], sortie({ sportType: 'VirtualRide', durationS: 3000, load: 40 }), model)?.id)
+      .toBe('ses_recup');
+    expect(matchPlannedSession([cardio], sortie({ sportType: 'Run', durationS: 3000, load: 40 }), model)).toBeNull();
+  });
+
+  it('juge une séance hors course sur sa durée : sa charge prévue est une estimation de coureur', () => {
+    // Une heure de renforcement prévue à 45 points, faite en 52 minutes que la
+    // montre compte 12 : elle a eu lieu.
+    const force = session({ type: 'strength', plannedDurationS: 3300, plannedLoad: 45 });
+    const faite = sortie({ sportType: 'WeightTraining', durationS: 3120, load: 12 });
+    expect(outcomeOf(force, faite, model)).toBe('fulfilled');
+    // Vingt minutes pour une heure : une autre séance.
+    expect(outcomeOf(force, { ...faite, durationS: 1200 }, model)).toBe('replaced');
+  });
 });
 
 describe('Séance réalisée ou remplacée', () => {
@@ -1418,6 +1440,12 @@ describe('Conseil du jour', () => {
     expect(quality).toContain('bas de chaque fourchette');
     expect(quality).not.toMatch(/20-30 %|24 h/);
     expect(advice({ session: 'work', work: 'quality' }, -30)).toContain('se court facile, à durée égale');
+
+    // Le renforcement se règle à la réserve de répétitions (coude cassé, 03/10) ;
+    // une séance facile ne « se court » pas forcément.
+    expect(advice({ session: 'work', work: 'strength' })).toContain('une répétition de plus en réserve');
+    expect(advice({ session: 'work', work: 'strength' }, -30)).toContain('une seule série par exercice');
+    expect(advice({ session: 'work', work: 'easy' })).not.toContain('se court');
 
     // Un test maximal ne se court pas fatigué : la règle le décale dès l'orange.
     expect(advice({ session: 'work', work: 'test' })).toContain('attend un meilleur jour');

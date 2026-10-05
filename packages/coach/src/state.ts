@@ -382,14 +382,26 @@ async function situationOn(
   return {
     session,
     // Lue comme la règle de disponibilité la lit : le conseil dit ce qu'elle en fait.
-    ...(session === 'work' && planned
-      ? {
-          work: isMaximalTest(planned, model) ? 'test' : isQualitySession(planned, model) ? 'quality' : 'easy',
-        } as const
-      : {}),
+    ...(session === 'work' && planned ? { work: workOf(planned, model) } : {}),
     absence: absenceCovering(absences, date)?.kind,
     daysWithoutImpact: await daysWithoutImpact(athleteId, date, recent),
   };
+}
+
+/**
+ * Ce qu'est la séance du jour pour le conseil : un test, une séance dure, du
+ * renforcement, ou une séance facile. Hors course, une séance dure se lit sur
+ * ses blocs — dix minutes au moins à partir de la Z3, un fractionné sur stepper
+ * ou vélo — : son type ne le dit pas.
+ */
+function workOf(s: PlannedSession, model: PhysiologyModel): NonNullable<ReadinessDay['work']> {
+  if (s.type === 'strength') return 'strength';
+  if (isMaximalTest(s, model)) return 'test';
+  if (isQualitySession(s, model)) return 'quality';
+  const hard = s.blocks
+    .filter((b) => !b.kind && (b.zone === 'Z3' || b.zone === 'Z4' || b.zone === 'Z5'))
+    .reduce((a, b) => a + (b.durationS ?? 0) * (b.repeat ?? 1), 0);
+  return s.type === 'cross_training' && hard >= 600 ? 'quality' : 'easy';
 }
 
 /**

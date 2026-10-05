@@ -9,7 +9,7 @@ import {
 import { QUESTIONS } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
 import {
-  CRITERION_LABELS, blockTargets, effortHead, originLabel, recoveryText, runAndAnnex, sessionHeadline,
+  CRITERION_LABELS, RUN_FREE, blockTargets, effortHead, originLabel, recoveryText, runAndAnnex, sessionHeadline,
   slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
@@ -268,9 +268,12 @@ function subline(session: SessionRow): string {
   const p = sessionProfile(session);
   const total = p.totalS || session.plannedDurationS;
   const { runS, annex } = runAndAnnex(session, total);
+  // « de course » pour ce qui se court ; une marche, un vélo, un renforcement
+  // ne se disent pas ainsi.
+  const runs = !RUN_FREE.has(session.type);
   const time =
     annex && runS > 0
-      ? `${spelledDuration(runS)} de course, puis ${spelledDuration(annex.durationS)} de ${annex.name}`
+      ? `${spelledDuration(runS)}${runs ? ' de course' : ''}, puis ${spelledDuration(annex.durationS)} de ${annex.name}`
       : `${spelledDuration(total)} au total`;
   const parts = [slopeOf(session), time];
   // Le dénivelé de la séance, sauf quand la légende du tracé le dit déjà : « +35 m,
@@ -314,7 +317,8 @@ function Session({
         {session.blocks.map((b, i) => (
           <div className="m-block" key={i}>
             <span className="m-block-time" data-climb={climbs(b)}>
-              {b.repeat ? `${b.repeat} × ${prime(b.durationS)}` : prime(b.durationS) || '—'}
+              {/* Un exercice se compte en répétitions : « 4 × 8 », pas « 4 × 45″ ». */}
+              {b.repeat && b.reps ? `${b.repeat} × ${b.reps}` : b.repeat ? `${b.repeat} × ${prime(b.durationS)}` : prime(b.durationS) || '—'}
             </span>
             <span className="m-block-body">
               {blockLabel(b.label)}
@@ -322,6 +326,10 @@ function Session({
               {hrText(b) && <span className="m-faint"> · {hrText(b)}</span>}
               {/* Une descente se pilote à l'effort : sa consigne tient la place de la FC. */}
               {b.effort && <span className="m-faint"> · {nbsp(effortHead(b.effort))}</span>}
+              {/* Après la cible : le libellé et ce qu'il demande se lisent d'un trait. */}
+              {b.exercise && (
+                <Link href={`/exercices#${b.exercise}`} className="m-howto">comment faire</Link>
+              )}
               {(b.where || shape(b)) && (
                 <span className="m-block-note">
                   {b.where && <WhereLine block={b} />}
@@ -431,7 +439,8 @@ const spoken = (session: SessionRow) =>
   session.blocks
     .map(
       (b) =>
-        `${b.repeat ? `${num(b.repeat)} fois ` : ''}${duration(b.durationS)} ${blockLabel(b.label)}` +
+        `${b.repeat ? `${num(b.repeat)} fois ` : ''}${b.reps ? `${num(b.reps)} répétitions de` : duration(b.durationS)} ` +
+        `${blockLabel(b.label)}` +
         `${b.lastOptional ? ', la dernière facultative' : ''}`,
     )
     .join(', ');

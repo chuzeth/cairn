@@ -43,6 +43,27 @@ const NON_RUNNING_SESSIONS: ReadonlySet<SessionType> = new Set([
   'strength', 'mobility', 'cross_training', 'rest',
 ]);
 
+/** La course seule : marche et randonnée réalisent une séance de course, et aussi une séance hors course. */
+const RUNS: ReadonlySet<SportType> = new Set(['Run', 'TrailRun', 'VirtualRun']);
+
+/** Une séance hors course : renforcement, mobilité, marche, vélo. Elle se juge sur sa durée. */
+export const isRunFree = (type: SessionType): boolean => NON_RUNNING_SESSIONS.has(type);
+
+/**
+ * Le sport de l'activité convient-il à la séance ?
+ *
+ * Une séance hors course qui n'est pas du renforcement — la marche en côte, le
+ * vélo, le stepper d'un coureur qui ne peut pas courir — se réalise par tout ce
+ * qui n'est pas une course. Le 03/10, coude cassé : une marche enregistrée par
+ * la montre ne rattachait aucune de ces séances, et les règles l'auraient
+ * marquée « manquée » le lendemain.
+ */
+function sportFits(type: SessionType, sport: SportType): boolean {
+  if (type === 'cross_training') return !RUNS.has(sport);
+  if (NON_RUNNING_SESSIONS.has(type)) return !RUN_LIKE.has(sport);
+  return RUN_LIKE.has(sport);
+}
+
 /** Ce qu'une activité a réellement produit, réduit à ce dont le rattachement décide. */
 export interface RealizedEffort {
   activityId: string;
@@ -102,7 +123,7 @@ function isEligible(session: PlannedSession, realized: RealizedEffort): boolean 
 /** La séance demande-t-elle, à son jour, une sortie de ce sport — tenue ou non ? */
 function prescribes(session: PlannedSession, realized: RealizedEffort): boolean {
   if (session.status === 'cancelled' || session.status === 'withdrawn') return false;
-  return RUN_LIKE.has(realized.sportType) !== NON_RUNNING_SESSIONS.has(session.type);
+  return sportFits(session.type, realized.sportType);
 }
 
 const logGap = (actual: number, planned: number): number =>
@@ -290,6 +311,14 @@ export function outcomeOf(
   realized: RealizedEffort,
   model: Pick<PhysiologyModel, 'vt2'>,
 ): SessionCompliance['outcome'] {
+  // Hors course, la charge prévue est une estimation en termes de course, et
+  // celle de l'activité — renforcement, marche, vélo — se lit sur la FC : les
+  // comparer déclarait remplacée une séance de renforcement faite. Elle a eu
+  // lieu si elle a duré ce qu'elle devait.
+  if (NON_RUNNING_SESSIONS.has(session.type)) {
+    const { durationPct } = deviationsFrom(session, realized);
+    return Math.abs(durationPct) > MATERIAL_DEVIATION_PCT.duration ? 'replaced' : 'fulfilled';
+  }
   const test = maximalTestProof(session, realized, model);
   return sessionOutcome(
     deviationsFrom(session, realized),

@@ -43,11 +43,11 @@ export const TYPE_COLORS: Record<string, string> = {
 export function sessionHeadline(session: SessionRow): string {
   const rep = EASY_TYPES.has(session.type)
     ? undefined
-    : session.blocks.find((b) => (b.repeat ?? 0) > 1 && (b.durationS ?? 0) > 0);
+    : session.blocks.find((b) => (b.repeat ?? 0) > 1 && (b.durationS ?? 0) > 0 && !isSets(session, b));
   if (rep) {
     const n = rep.repeat as number;
     const d = prime(rep.durationS);
-    const shape = REPEAT_HEADLINE[session.type];
+    const shape = REPEAT_HEADLINE[session.type === 'cross_training' ? ZONE_SHAPE[rep.zone] ?? '' : session.type];
     return shape ? shape(n, d) : `${n} × ${d}`;
   }
   const head = formatOfTitle(session.title)
@@ -56,6 +56,34 @@ export function sessionHeadline(session: SessionRow): string {
     .trim();
   return head.length > 0 && head.length <= 30 ? head : TYPE_LABELS[session.type] ?? session.type;
 }
+
+/** Les séances qui ne se courent pas. */
+export const RUN_FREE: ReadonlySet<string> = new Set(['strength', 'cross_training', 'mobility']);
+
+/**
+ * Le nom d'une séance dans la liste du plan. Une séance de course se dit par
+ * son type — « Seuil », « Sortie longue ». Celles qui ne se courent pas n'ont
+ * pas de type qui les distingue — cinq « Cross-training » la semaine du 05/10 :
+ * elles se disent par leur format, « Marche en côte sur tapis ».
+ */
+export function planName(session: Pick<SessionRow, 'type' | 'title'>): string {
+  const label = TYPE_LABELS[session.type] ?? session.type;
+  if (!RUN_FREE.has(session.type)) return label;
+  const format = formatOfTitle(session.title);
+  return format.length > 0 && format.length <= 30 ? format : label;
+}
+
+/**
+ * Les séries d'un exercice — des répétitions comptées, ou les maintiens d'une
+ * séance de force — ne sont pas une structure : une séance de plusieurs
+ * exercices se dit par son nom. Le 06/10, la Force A s'annonçait « 3 tours de
+ * 45″ » : les trois séries de presse.
+ */
+const isSets = (session: SessionRow, b: SessionRow['blocks'][number]) =>
+  b.reps != null || (session.type === 'strength' && b.exercise != null);
+
+/** Le fractionné qui ne se court pas se dit par son intensité, comme celui qui se court. */
+const ZONE_SHAPE: Record<string, string> = { Z3: 'tempo', Z4: 'threshold', Z5: 'vo2max' };
 
 /**
  * Le format d'un titre, sans ce qu'il mesure : « Footing » dans « Footing

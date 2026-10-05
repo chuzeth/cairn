@@ -795,10 +795,11 @@ async function raceDayView(plan: {
   const target = plan.targetRaceDayTsb;
   const projected = plan.projectedRaceDayTsb ?? null;
   const shortfall = plan.raceDayTsbShortfall;
-  if (projected == null || !shortfall) return { target, projected, notice: null };
+  // Une course retirée des objectifs n'a plus de jour J : le plan ne parle pas
+  // de la fraîcheur qu'il y viserait (Grisemottes, coude cassé le 03/10).
   const race = await db.getRaceGoal(plan.goalRaceId);
-  // Sans course à chiffrer, l'écart se dit tel que le plan l'a écrit.
-  if (!race) return { target, projected, notice: firstParagraph(shortfall) };
+  if (!race) return null;
+  if (projected == null || !shortfall) return { target, projected, notice: null };
   const cost = raceDayGapCost(await currentModel(env.athleteId), race.course, target, projected);
   return { target, projected, notice: raceDayNotice(shortfall, { target, projected, ...cost }) };
 }

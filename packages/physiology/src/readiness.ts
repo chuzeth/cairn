@@ -52,7 +52,7 @@ export interface ReadinessDay {
    * maximal. Le conseil dit ce que la règle de disponibilité en fait, et rien
    * d'autre. Absent, la séance est lue comme une séance de qualité.
    */
-  work?: 'easy' | 'quality' | 'test';
+  work?: 'easy' | 'quality' | 'test' | 'strength';
   /** Nature de l'absence déclarée qui recouvre le jour, s'il y en a une. */
   absence?: AbsenceKind;
   /**
@@ -439,10 +439,21 @@ function recommend(
       if (day?.work === 'easy') {
         return say(
           go,
-          `Vigilance${because}. Séance facile : elle se court telle qu'elle est écrite. Un jour de ` +
+          `Vigilance${because}. Séance facile : elle se fait telle qu'elle est écrite. Un jour de ` +
             `vigilance n'allège que les séances dures.`,
           `Signal rouge${because}. Séance facile : elle reste au programme, sans rien y ajouter. Si ` +
             `l'échauffement ne passe pas, rentre : un jour de repos ne coûte rien.`,
+        );
+      }
+      // Le renforcement se règle à la réserve de répétitions : c'est elle qui
+      // suit l'état du jour, série après série.
+      if (day?.work === 'strength') {
+        return say(
+          go,
+          `Vigilance${because}. Renforcement : garde la séance, avec une répétition de plus en réserve à ` +
+            `chaque série.`,
+          `Signal rouge${because}. Renforcement : une seule série par exercice, ou la marche facile à la ` +
+            `place.`,
         );
       }
       if (day?.work === 'test') {

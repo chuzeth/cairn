@@ -18,7 +18,7 @@ import { wPrimeBalance } from './criticalSpeed.js';
 import { movingHrHistogram, type CeilingCheck } from './easy.js';
 import {
   MATERIAL_DEVIATION_PCT, ceilingCheckOf, deviationsFrom, hrCeilingOf, matchPlannedSession, maximalEffortIndex,
-  maximalTestProof, outcomeOf, runDurationOf, type RealizedEffort,
+  isRunFree, maximalTestProof, outcomeOf, runDurationOf, type RealizedEffort,
 } from './sessionMatch.js';
 import { formatDuration, mean, movingAverage } from './units.js';
 
@@ -402,7 +402,14 @@ function assessCompliance(
   let verdict: SessionCompliance['verdict'];
   let detail: string;
 
-  if (ceiling) {
+  if (isRunFree(planned.type) && !ceiling) {
+    // Hors course, la charge prévue est une estimation de coureur : la séance
+    // se juge sur sa durée, et le dit (`outcomeOf`).
+    verdict = Math.abs(durDev) <= 20 ? 'on_target' : durDev < 0 ? 'under' : 'over';
+    detail =
+      `${formatDuration(realized.durationS)} pour ${formatDuration(runDurationOf(planned))} prévues` +
+      (verdict === 'on_target' ? ' : séance faite.' : verdict === 'under' ? ' : séance écourtée.' : ' : séance allongée.');
+  } else if (ceiling) {
     // Une séance facile se juge sur ce qu'elle prescrit — sa durée et son
     // plafond —, jamais sur sa charge, qui n'est qu'une estimation.
     ({ verdict, detail } = ceilingVerdict(planned, realized, ceiling, durDev, outcome));

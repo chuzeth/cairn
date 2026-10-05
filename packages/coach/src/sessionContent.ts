@@ -2,6 +2,7 @@ import type {
   BlockKind, EccentricMovement, PhysiologyModel, SessionBlock, StrengthCircuit, StrengthExercise,
   ZoneDefinition, ZoneKey,
 } from '@cairn/core';
+import { EXERCISE_KEYS, isExerciseKey } from '@cairn/core';
 import {
   ECCENTRIC_MOVEMENTS, ZONE_KEYS, buildZones, formatPace, hrProvenanceOf, speedProvenanceOf,
 } from '@cairn/physiology';
@@ -71,7 +72,7 @@ const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockFiel
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
   cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true, terrain: true,
-  lastOptional: true,
+  lastOptional: true, reps: true, exercise: true,
 };
 
 type Recovery = NonNullable<SessionBlock['recovery']>;
@@ -357,6 +358,15 @@ function parseBlock(
   if (raw.lastOptional !== undefined && boolean(raw.lastOptional, `${at}.lastOptional`)) {
     if ((block.repeat ?? 1) < 2) throw new Error(`${at}.lastOptional : le bloc n'a qu'une répétition.`);
     block.lastOptional = true;
+  }
+  // Un exercice de renforcement se compte en répétitions, et renvoie à sa fiche.
+  if (raw.reps !== undefined) block.reps = Math.round(number(raw.reps, `${at}.reps`, 1, 100));
+  if (raw.exercise !== undefined) {
+    const key = text(raw.exercise, `${at}.exercise`, 60);
+    if (!isExerciseKey(key)) {
+      throw new Error(`${at}.exercise : fiche inconnue « ${key} ». Fiches : ${EXERCISE_KEYS.join(', ')}.`);
+    }
+    block.exercise = key;
   }
   return block;
 }

@@ -49,7 +49,7 @@ const SHELL = 'cairn-shell-v2';
 const DATA = 'cairn-data';
 
 /** Les écrans du menu : gardés dès l'installation, et renouvelés à chaque version. */
-const SHELL_ROUTES = ['/', '/point', '/coach', '/plan', '/activities'];
+const SHELL_ROUTES = ['/', '/point', '/coach', '/plan', '/activities', '/exercices'];
 
 /** Leurs noms, ceux du menu : la page « pas de réseau » les dit comme l'app. */
 const SHELL_NAMES = {
@@ -58,6 +58,7 @@ const SHELL_NAMES = {
   '/coach': 'Coach',
   '/plan': 'Plan',
   '/activities': 'Séances',
+  '/exercices': 'Exercices',
 };
 
 /**
