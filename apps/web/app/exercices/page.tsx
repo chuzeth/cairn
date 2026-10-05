@@ -1,4 +1,4 @@
-import { EXERCISES } from '@cairn/core/exercises';
+import { EXERCISES, EXERCISE_WORDS } from '@cairn/core/exercises';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
 import { EXERCISE_GROUPS } from '@/lib/exerciseGroups';
 
@@ -31,9 +31,10 @@ export default function ExercisesPage() {
         <h2>Lire une fiche</h2>
         <ul>
           <li>
-            <strong>Le schéma.</strong> En plein, la position qui compte ; en pointillé, celle d&apos;où tu pars. En
-            rouge, les muscles qui travaillent ; en ocre, le bras plâtré ; en vert, l&apos;élastique ; en bleu, le
-            mouvement et son tempo. Les angles écrits sont ceux du dessin.
+            <strong>Le schéma.</strong> En pointillé, la position d&apos;où tu pars (1) ; en plein, celle où tu
+            arrives (2). La jambe et le bras du côté opposé sont en gris. En rouge, les muscles qui travaillent ; en
+            ocre, le bras plâtré ; en vert, l&apos;élastique ; en bleu, le mouvement et son tempo. Les angles écrits
+            sont ceux du dessin.
           </li>
           <li>
             <strong>« 3 répétitions en réserve ».</strong> Tu t&apos;arrêtes quand tu pourrais encore en faire trois,
@@ -46,6 +47,22 @@ export default function ExercisesPage() {
           </li>
         </ul>
       </section>
+
+      {/* Replié : il se consulte quand un mot arrête, sans repousser les fiches de deux écrans. */}
+      <details className="xs-rules xs-lexicon">
+        <summary>
+          <h2>Les mots du programme</h2>
+          <span>{EXERCISE_WORDS.length} mots expliqués simplement, de « série » à « PMA »</span>
+        </summary>
+        <dl className="xs-words">
+          {EXERCISE_WORDS.map((w) => (
+            <div key={w.word}>
+              <dt>{w.word}</dt>
+              <dd>{w.plain}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
 
       <section className="xs-rules">
         <h2>Les règles du plâtre</h2>
@@ -100,6 +117,7 @@ export default function ExercisesPage() {
               <article key={key} id={key} className="xs-card">
                 <ExerciseFigure exercise={key} label={x.name} />
                 <h3 className="xs-name">{x.name}</h3>
+                <p className="xs-what">{x.what}</p>
                 <p className="xs-meta">
                   {x.where.map((w) => WHERE[w]).join(' · ')} — {x.equipment}
                 </p>

@@ -107,6 +107,20 @@ describe('Les consignes, mesurées sur le dessin', () => {
     expect(joints(p.ghost!)['near.heel']![1]).toBeGreaterThan(FURNITURE.stair.rise + 2);
   });
 
+  it('mollets au sol : la montée se fait sur la pointe, le genou fléchi de 30° en séance B', () => {
+    const tendu = figure('mollets-sol');
+    expect(joints(tendu.pose)['near.heel']![1]).toBeGreaterThan(4);
+    const flechi = joints(figure('mollets-sol', 1).pose);
+    expect(180 - angleAt(flechi['near.hip']!, flechi['near.knee']!, flechi['near.ankle']!)).toBeCloseTo(30, -0.6);
+  });
+
+  it('montée sur le tabouret : on part le pied entier dessus, on redescend la jambe du haut fléchie', () => {
+    const monte = figure('montee-tabouret');
+    expect(joints(monte.ghost!)['near.heel']![1]).toBeCloseTo(FURNITURE.stool.seat, 0);
+    const descend = joints(figure('montee-tabouret', 1).pose);
+    expect(angleAt(descend['near.hip']!, descend['near.knee']!, descend['near.ankle']!)).toBeLessThan(100);
+  });
+
   it('relevés de pointe : la pointe monte, le talon reste au sol', () => {
     const j = joints(figure('releves-pointe').pose);
     expect(j['near.toe']![1] - j['near.heel']![1]).toBeGreaterThan(5);

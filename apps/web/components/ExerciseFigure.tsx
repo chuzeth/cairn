@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { ExerciseKey } from '@cairn/core/exercises';
 import { FIGURES } from '@/lib/exerciseFigures';
 import {
-  FURNITURE, add, angleAt, dist, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
+  FURNITURE, add, angleAt, dist, doorHook, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
   type Panel, type Part, type Prop, type Pt, type Ref, type Skeleton,
 } from '@/lib/figure';
 
@@ -21,7 +21,7 @@ export const hasFigure = (key: string): boolean => key in FIGURES;
 
 /** Taille du texte, en unités du corps (100 = sa hauteur). */
 const TEXT = 5.2;
-const CHAR = 0.5;
+const CHAR = 0.56;
 
 const fmt = (n: number) => (Math.round(n * 100) / 100).toString();
 const pathOf = (pts: readonly Pt[], closed = true) =>
@@ -64,6 +64,8 @@ function propPoints(prop: Prop): Pt[] {
     }
     case 'box':
       return [[prop.x, 0], [prop.x - prop.face * prop.depth, prop.h]];
+    case 'stool':
+      return [[prop.x, 0], [prop.x - prop.face * FURNITURE.stool.depth, FURNITURE.stool.seat]];
     case 'stairs': {
       const { rise, run } = FURNITURE.stair;
       return [[prop.x - 6, 0], [prop.x + prop.n * run + 6, prop.n * rise + (prop.rail ? 50 : 0)]];
@@ -144,6 +146,18 @@ function PropView({ prop, box }: { prop: Prop; box: Box }) {
         </g>
       );
     }
+    case 'stool': {
+      const { seat, depth } = FURNITURE.stool;
+      const f = prop.face;
+      const b = prop.x - f * depth;
+      return (
+        <g className="fg-furniture">
+          <path d={pathOf([[prop.x, seat], [b, seat], [b, seat - 3], [prop.x, seat - 3]])} className="fg-pad" />
+          <path d={pathOf([[prop.x - f * 2, seat - 3], [prop.x - f * 0.5, 0], [prop.x - f * 2.6, 0], [prop.x - f * 4, seat - 3]])} className="fg-pad" />
+          <path d={pathOf([[b + f * 2, seat - 3], [b + f * 0.5, 0], [b + f * 2.6, 0], [b + f * 4, seat - 3]])} className="fg-pad" />
+        </g>
+      );
+    }
     case 'box': {
       const b = prop.x - prop.face * prop.depth;
       return <path d={pathOf([[prop.x, 0], [prop.x, prop.h], [b, prop.h], [b, 0]])} className="fg-furniture fg-pad" />;
@@ -174,13 +188,17 @@ function PropView({ prop, box }: { prop: Prop; box: Box }) {
     }
     case 'jamb':
       return <rect x={fmt(prop.x - 1.2)} y={fmt(-box.y1)} width="2.4" height={fmt(box.y1)} className="fg-furniture fg-pad" />;
-    case 'door':
+    case 'door': {
+      const hook = doorHook(prop.x, prop.anchor);
       return (
         <g className="fg-furniture">
           <rect x={fmt(prop.x)} y={fmt(-box.y1)} width="2.2" height={fmt(box.y1)} className="fg-pad" />
-          <path d={`M${fmt(prop.x)} ${fmt(-prop.anchor - 1.3)} q -2.8 1.3 0 2.6`} className="fg-anchor" />
+          <rect x={fmt(prop.x + 2.4)} y={fmt(-prop.anchor - 1.8)} width="2.6" height="3.6" rx="1" className="fg-anchor-block" />
+          <line x1={fmt(prop.x + 2.4)} y1={fmt(-prop.anchor)} x2={fmt(hook[0] + 1.2)} y2={fmt(-prop.anchor)} className="fg-strap" />
+          <path d={`M${fmt(hook[0] + 1.2)} ${fmt(-prop.anchor - 1.2)} a 1.2 1.2 0 1 0 0 2.4`} className="fg-hook" />
         </g>
       );
+    }
     case 'mat':
       return <rect x={fmt(prop.from)} y="-0.6" width={fmt(prop.to - prop.from)} height="0.6" rx="0.3" className="fg-mat" />;
     case 'towel':
@@ -313,8 +331,20 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     // Les extrémités s'écartent des points : la pointe ne les recouvre pas.
     const end = add(to, mul(unit(sub(ctrl, to)), Math.min(2, dist(to, ctrl) * 0.3)));
     const start = add(from, mul(unit(sub(ctrl, from)), Math.min(1.4, dist(from, ctrl) * 0.2)));
-    return { start, ctrl, end, label: m.label, top };
+    return { start, ctrl, end, label: m.label, top, joint: m.joint, n, bend: m.bend ?? 0 };
   });
+  // Les numéros 1 et 2 marquent un déplacement qui se voit ; sur quelques centimètres, ils masqueraient le geste.
+  const first = ghost ? motions.find((m) => m.joint && dist(m.start, m.end) > 12) : undefined;
+  const steps = first
+    ? [first.start, first.end].map((q, i) => {
+        const away = mul(first.n, first.bend >= 0 ? -4.2 : 4.2);
+        return { at: add(q, away), n: String(i + 1) };
+      })
+    : [];
+  for (const st of steps) {
+    grow(box, add(st.at, [-3, -3]));
+    grow(box, add(st.at, [3, 3]));
+  }
   const bands = (panel.bands ?? []).map((b) => ({ a: at(b.from), b: at(b.to), kind: b.kind }));
   const ghostBands = ghost
     ? (panel.ghostBands ?? []).map((b) => ({ a: at(b.from, ghost.skeleton), b: at(b.to, ghost.skeleton), kind: b.kind }))
@@ -324,8 +354,9 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     grow(box, s.a);
     grow(box, s.b);
   }
-  // L'haltère se voit par le bout : un disque dans la main libre.
+  // L'haltère et la poignée se voient par le bout : un disque, un anneau, dans la main valide.
   const weight = (s: Skeleton) => add(resolve('free.wrist', s), mul(unit(sub(resolve('free.tip', s), resolve('free.wrist', s))), 3));
+  const ring = panel.hold === 'handle' ? 2 : 3.2;
   const held = panel.hold ? { pose: weight(k), ghost: ghost ? weight(ghost.skeleton) : null } : null;
   if (held) for (const q of [held.pose, held.ghost]) if (q) { grow(box, add(q, [-3.4, -3.4])); grow(box, add(q, [3.4, 3.4])); }
 
@@ -351,13 +382,13 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
         </defs>
         {panel.props.filter((p) => p.kind !== 'floor').map((p, i) => <PropView key={i} prop={p} box={box} />)}
         {floor && <PropView prop={{ kind: 'floor' }} box={box} />}
-        {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r="3.2" className="fg-weight-ghost" />}
+        {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r={ring} className="fg-weight-ghost" />}
         {ghost && <GhostView list={ghost.parts} />}
         {ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
         <BodyView list={list} muscles={muscles} uid={uid} />
         {held && (
-          <g className="fg-disc">
-            <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r="3.2" />
+          <g className={panel.hold === 'handle' ? 'fg-handle' : 'fg-disc'}>
+            <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r={ring} />
             <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r="1.1" />
           </g>
         )}
@@ -378,6 +409,12 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
             {m.label && <text x={fmt(m.top[0])} y={fmt(-m.top[1] + TEXT * 0.35)} textAnchor="middle">{m.label}</text>}
           </g>
         ))}
+        {steps.map((st) => (
+          <g key={`s${st.n}`} className="fg-step">
+            <circle cx={fmt(st.at[0])} cy={fmt(-st.at[1])} r="2.7" />
+            <text x={fmt(st.at[0])} y={fmt(-st.at[1] + 1.25)} textAnchor="middle">{st.n}</text>
+          </g>
+        ))}
         {notes.map((n, i) => {
           const lead = add(n.target, mul(unit(sub(n.pos, n.target)), 1.3));
           const end: Pt = [n.pos[0] + (n.anchor === 'start' ? -0.8 : n.anchor === 'end' ? 0.8 : 0), n.pos[1] + TEXT * 0.3];
@@ -394,8 +431,8 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
         })}
       </svg>
       <figcaption className="xf-caption">
-        <span className="xf-key xf-key-solid">{panel.label}</span>
-        {panel.ghostLabel && <span className="xf-key xf-key-ghost">{panel.ghostLabel}</span>}
+        {panel.ghostLabel && <span className="xf-key xf-key-ghost">1. {panel.ghostLabel}</span>}
+        <span className="xf-key xf-key-solid">{panel.ghostLabel ? `2. ${panel.label}` : panel.label}</span>
       </figcaption>
     </figure>
   );

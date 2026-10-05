@@ -412,59 +412,85 @@ function homeWarmUp(model: PhysiologyModel): SessionBlock {
   });
 }
 
-/** Force A à la maison : les jambes lourdes, et le bras libre. */
+/**
+ * Ce qui se fait sans le kit d'élastiques, s'il n'est pas encore arrivé : le
+ * 05/10, Pierre l'attend pour le lendemain, jour de la séance A.
+ */
+const WITHOUT_KIT = 'Sans le kit :';
+
+/** Force A à la maison : les jambes lourdes, et le bras valide. */
 export function compensationHomeA(model: PhysiologyModel, week: CompensationWeek): SessionTemplate {
   const d = DOSE[week];
   const effort = `Appuyé : ${reserveText(d.reserve)}`;
   return template(model, `compensation_home_a_${week}`, 'strength', 'Force A à la maison',
     'Entretenir la force des jambes sans salle : une jambe à la fois, ton poids pour charge, le tempo lent pour ' +
-      'intensité — et le bras libre, qui entretient l\'autre.',
+      'intensité — et le bras valide, qui entretient l\'autre.',
     [
       homeWarmUp(model),
       lift('split-squat-maison', `Fente bulgare, ${d.sets} séries par jambe`, d.sets * 2, 10, 45, effort,
-        'Pied arrière sur le canapé, main libre sur l\'encadrement. 3 s pour descendre, 1 s en bas, 1 s pour ' +
-          'monter. Les deux jambes en alternance.',
+        'Pied arrière sur le tabouret calé contre un mur (ou le canapé), main valide sur l\'encadrement. 3 s pour ' +
+          'descendre, 1 s en bas, 1 s pour monter. Plus de 3 en réserve à la fin de la première série : ajoute 2 s ' +
+          'tenues en bas.',
         50),
-      lift('leg-curl-serviette', 'Leg curl glissé', d.sets, 6, 90, 'Freine 4 s',
+      lift('leg-curl-serviette', 'Flexion des jambes sur serviette', d.sets, 6, 90, 'Freine 4 s',
         'Talons sur la serviette, sur le parquet. Bassin haut pendant la glissade, posé pour ramener les talons.',
         40),
-      lift('mollets-excentriques', `Mollets genou tendu, ${d.sets} séries par jambe`, d.sets * 2, 12, 30,
-        'Descente en 3 s', 'Sur une marche, main libre sur la rampe : monte sur deux pieds, redescends sur un.', 50),
+      lift('mollets-sol', `Mollets genou tendu, ${d.sets} séries par jambe`, d.sets * 2, 15, 30, 'Descente en 3 s',
+        'Au sol, sur un pied, la main valide au mur : 1 s pour monter, 1 s en haut, 3 s pour redescendre.', 50),
       lift('pont-une-jambe', `Pont fessier sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, 12, 30, effort,
         'Talon à 30 cm des fesses, 2 s serrées en haut.', 45),
       lift('tirage-elastique', 'Tirage à un bras, élastique', d.sets, 12, 45, 'Moyen : 3 répétitions en réserve',
-        'Élastique de 15 kg à la porte, à hauteur de poitrine : 1 s pour tirer, 1 s tenue, 2 s pour rendre.', 45),
-      lift('bras-elastique', 'Bras libre : curl, triceps, serrage', 2, 15, 60, 'Moyen : 3 répétitions en réserve',
-        'Deux tours : 15 curls, 15 extensions, 10 serrages de 5 s.', 150),
-      lift('anti-rotation', 'Anti-rotation à l\'élastique, 2 séries par côté', 4, 8, 30, 'Bras tendu 3 s',
-        'Élastique à la porte, à hauteur de poitrine, de profil : tourne-toi pour l\'autre côté.', 40),
+        'Accroche à hauteur de poitrine, deux élastiques (5 et 7 kg) sur la poignée : 1 s pour tirer, 1 s tenue, ' +
+          `2 s pour rendre. ${WITHOUT_KIT} passe-le.`,
+        45),
+      lift('bras-elastique', 'Bras valide : plier, tendre, serrer', 2, 15, 60, 'Moyen : 3 répétitions en réserve',
+        'Deux tours : 15 flexions (accroche en bas de porte), 15 extensions (accroche en haut), 10 serrages de ' +
+          `5 s. ${WITHOUT_KIT} une bouteille d'eau de 1,5 L pour plier et tendre.`,
+        150),
+      lift('anti-rotation', 'Gainage anti-rotation, 2 séries par côté', 4, 8, 30, 'Bras tendu 3 s',
+        'Accroche à hauteur de poitrine, un élastique de 6 ou 7 kg, de profil à la porte ; tourne-toi pour ' +
+          `l'autre côté. ${WITHOUT_KIT} 2 séries de 8 gainages sur le dos (fiche « dead bug »).`,
+        40),
       ...daily(),
     ]);
 }
 
-/** Force B à la maison : les appuis, un pied, une hanche, une cheville à la fois. */
+/** Force B à la maison : les appuis, et l'endurance des montées. */
 export function compensationHomeB(model: PhysiologyModel, week: CompensationWeek): SessionTemplate {
   const d = DOSE[week];
   const effort = `Appuyé : ${reserveText(d.reserve)}`;
   return template(model, `compensation_home_b_${week}`, 'strength', 'Force B à la maison',
     'Les appuis du trail sans salle : la descente au ralenti, la hanche qui tient le bassin, la cheville et le ' +
-      'pied — ce que la course ne travaille plus.',
+      'pied — et, pour finir, des montées continues, l\'endurance des côtes.',
     [
       homeWarmUp(model),
-      lift('descente-marche', `Descente de marche, ${d.sets} séries par jambe`, d.sets * 2, 8, 45, 'Descente en 4 s',
-        'Deuxième marche, main libre sur la rampe : le talon libre effleure la marche du dessous.', 50),
-      lift('souleve-une-jambe', `Soulevé sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, 10, 30, effort,
-        'Main libre sur l\'encadrement, à hauteur de hanche. Dos plat, 3 s pour descendre.', 45),
+      lift('montee-tabouret', `Montée sur le tabouret, ${d.sets} séries par jambe`, d.sets * 2, 6, 60,
+        'Descente en 4 s',
+        'Tabouret calé contre un mur, main valide au mur. Monte en 1 s, redescends en 4 s en freinant avec la ' +
+          'jambe du haut.',
+        50),
+      lift('souleve-une-jambe', `Bascule sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, 10, 30, effort,
+        'Main valide sur l\'encadrement, à hauteur de hanche. Dos plat, 3 s pour descendre.', 45),
       hold('chaise', 'Chaise contre le mur', 3, d.holdS + 15, 60, 'Cuisses parallèles au sol, dos plaqué. Respire.'),
       lift('pas-chasses', 'Pas chassés à la mini-bande', 3, 12, 45, 'Jusqu\'à la brûlure',
-        '12 pas dans chaque sens, face au mur, la main libre qui glisse dessus.', 40),
-      lift('montee-genou', `Montée de genou, ${d.sets} séries par jambe`, d.sets * 2, 10, 20, 'Bas du dos collé',
-        'Mini-bande aux pieds : 1 s pour monter le genou, 2 s pour repartir.', 30),
-      lift('mollets-excentriques', 'Mollets genou fléchi, 2 séries par jambe', 4, 15, 30, 'Descente en 3 s',
-        'Le genou fléchi de 30° toute la série : c\'est le soléaire, le muscle profond qui porte la course.', 55),
+        '12 pas dans chaque sens, face au mur, la main valide qui glisse dessus.', 40),
+      lift('montee-genou', `Montée de genou sur le dos, ${d.sets} séries par jambe`, d.sets * 2, 10, 20,
+        'Bas du dos collé', 'Mini-bande aux pieds : 1 s pour monter le genou, 2 s pour repartir.', 30),
+      lift('mollets-sol', 'Mollets genou fléchi, 2 séries par jambe', 4, 15, 30, 'Descente en 3 s',
+        'Au sol, sur un pied, le genou fléchi de 30° toute la série : c\'est le soléaire.', 55),
       lift('releves-pointe', 'Relevés de pointe', 2, 20, 30, 'Jusqu\'à la brûlure', 'Dos au mur, talons à 30 cm devant.', 40),
-      hold('gainage-lateral', 'Gainage latéral sur le coude libre', 2, d.holdS, 30,
-        'Du côté du bras libre seulement ; genoux au sol si besoin.'),
+      hold('gainage-lateral', 'Gainage sur le côté', 2, d.holdS, 30,
+        'Sur le coude du bras valide seulement ; genoux au sol si besoin.'),
+      {
+        ...heart(model, 'Montées continues sur le tabouret', 'Z2', 180, {
+          exercise: 'montee-tabouret',
+          notes:
+            'Un pas toutes les 3 s, change de jambe toutes les 30 s, main au mur. C\'est l\'endurance des montées : ' +
+            'reste dans la plage, et arrête si la jambe tremble.',
+        }),
+        repeat: 2,
+        recovery: { durationS: 120, zone: 'Z1', active: true, betweenReps: true },
+      },
       ...daily(),
     ]);
 }

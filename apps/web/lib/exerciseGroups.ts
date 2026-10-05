@@ -9,16 +9,16 @@ import type { ExerciseKey } from '@cairn/core/exercises';
 export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[] }[] = [
   {
     title: 'Force A, à la maison',
-    lead: 'Les jambes et le bras libre : un élastique à la porte, une marche, le canapé, une serviette.',
+    lead: 'Les jambes et le bras valide : le tabouret, une serviette, le kit d’élastiques à la porte, l’anneau.',
     keys: [
-      'echauffement-maison', 'split-squat-maison', 'leg-curl-serviette', 'mollets-excentriques', 'pont-une-jambe',
-      'tirage-elastique', 'bras-elastique', 'anti-rotation',
+      'echauffement-maison', 'split-squat-maison', 'leg-curl-serviette', 'mollets-sol', 'pont-une-jambe',
+      'tirage-elastique', 'bras-elastique', 'anti-rotation', 'dead-bug',
     ],
   },
   {
     title: 'Force B, à la maison',
-    lead: 'Les appuis : une marche et sa rampe, une mini-bande, un mur, un encadrement de porte.',
-    keys: ['descente-marche', 'souleve-une-jambe', 'chaise', 'pas-chasses', 'montee-genou', 'releves-pointe', 'gainage-lateral'],
+    lead: 'Les appuis et l’endurance des montées : le tabouret, une mini-bande, un mur, un encadrement de porte.',
+    keys: ['montee-tabouret', 'souleve-une-jambe', 'chaise', 'pas-chasses', 'montee-genou', 'releves-pointe', 'gainage-lateral'],
   },
   {
     title: 'Marcher',
@@ -37,8 +37,8 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   },
   {
     title: 'Force B, à la salle',
-    lead: 'Les appuis de la maison, avec un banc et un haltère.',
-    keys: ['step-up', 'abduction', 'dead-bug'],
+    lead: 'Les appuis de la maison, avec un banc, une marche et un haltère.',
+    keys: ['step-up', 'mollets-excentriques', 'descente-marche', 'abduction'],
   },
   {
     title: 'Cardio sans impact',

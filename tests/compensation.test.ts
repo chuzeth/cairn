@@ -116,6 +116,21 @@ describe('La semaine du 05/10 à la maison', () => {
     expect(fente.effort).toContain('3 répétitions en réserve');
   });
 
+  it('dit quoi faire sans le kit d’élastiques, s’il n’est pas arrivé', () => {
+    // Le 05/10, Pierre attend le kit pour le lendemain, jour de la séance A.
+    const kit = home.flatMap((s) => s.blocks).filter((b) =>
+      ['tirage-elastique', 'bras-elastique', 'anti-rotation'].includes(b.exercise!));
+    expect(kit.length).toBeGreaterThan(0);
+    for (const b of kit) expect(b.notes, b.label).toContain('Sans le kit');
+  });
+
+  it('se fait avec le tabouret de 40 cm, pas avec une marche qu’il n’a pas', () => {
+    const exercises = home.flatMap((s) => s.blocks.map((b) => b.exercise));
+    expect(exercises).toContain('montee-tabouret');
+    expect(exercises).not.toContain('descente-marche');
+    expect(exercises).not.toContain('mollets-excentriques');
+  });
+
   it('se recompte sans devenir des kilomètres', () => {
     for (const s of home) {
       const m = remeasured({

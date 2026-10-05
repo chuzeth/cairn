@@ -639,6 +639,8 @@ export type Prop =
   | { kind: 'backdrop'; from: number; to: number; top: number }
   | { kind: 'chair'; x: number; face: 1 | -1; back?: boolean }
   | { kind: 'sofa'; x: number; face: 1 | -1 }
+  /** Le tabouret de Pierre : 40 cm, en dur. */
+  | { kind: 'stool'; x: number; face: 1 | -1 }
   | { kind: 'box'; x: number; h: number; depth: number; face: 1 | -1 }
   | { kind: 'stairs'; x: number; n: number; rail?: boolean }
   | { kind: 'jamb'; x: number }
@@ -656,6 +658,8 @@ export type Prop =
 export const FURNITURE = {
   chair: { seat: 25.5, depth: 22, back: 50 },
   sofa: { seat: 23, depth: 30, back: 46, arm: 33 },
+  /** Le tabouret de Pierre : 40 cm de haut, une assise de 30 cm. */
+  stool: { seat: 22.2, depth: 17 },
   /** Une marche d'escalier : 17 cm de haut, 28 de giron. */
   stair: { rise: 9.4, run: 15.5 },
   mat: 0.6,
@@ -673,6 +677,10 @@ export function surfaceHeight(prop: Prop, x: number): number | null {
     case 'sofa': {
       const [a, b] = prop.face === 1 ? [prop.x - FURNITURE.sofa.depth, prop.x] : [prop.x, prop.x + FURNITURE.sofa.depth];
       return x >= a - 0.5 && x <= b + 0.5 ? FURNITURE.sofa.seat : null;
+    }
+    case 'stool': {
+      const [a, b] = prop.face === 1 ? [prop.x - FURNITURE.stool.depth, prop.x] : [prop.x, prop.x + FURNITURE.stool.depth];
+      return x >= a - 0.5 && x <= b + 0.5 ? FURNITURE.stool.seat : null;
     }
     case 'box': {
       const [a, b] = prop.face === 1 ? [prop.x - prop.depth, prop.x] : [prop.x, prop.x + prop.depth];
@@ -734,13 +742,20 @@ export interface Panel {
   motions?: Motion[];
   contacts?: Contact[];
   ghostContacts?: Contact[];
-  /** Un haltère dans la main libre, dans les deux positions. */
-  hold?: 'dumbbell';
+  /** Ce que tient la main valide, dans les deux positions : un haltère, ou la poignée du kit. */
+  hold?: 'dumbbell' | 'handle';
 }
 
 export interface FigureSpec {
   panels: Panel[];
 }
+
+/**
+ * Le crochet de l'accroche de porte : le cylindre est coincé derrière la porte
+ * (en `x`), la sangle passe dessous et son crochet pend de notre côté. C'est là
+ * que s'accroche l'élastique.
+ */
+export const doorHook = (doorX: number, anchor: number): Pt => [doorX - 3.4, anchor];
 
 /** Un point nommé, lu sur un squelette. */
 export function resolve(ref: Ref, k: Skeleton): Pt {
