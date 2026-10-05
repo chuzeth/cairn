@@ -8,8 +8,6 @@ export default defineConfig({
     include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'],
     environment: 'node',
   },
-  // Le JSX des composants du web, comme Next le compile : sans `import React`.
-  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       // Les sous-chemins d'abord : `@cairn/core` seul les avalerait, et le

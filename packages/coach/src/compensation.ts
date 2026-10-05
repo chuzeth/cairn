@@ -195,7 +195,7 @@ export function compensationRestart(model: PhysiologyModel): SessionTemplate {
     'Deux jours après la chute : remettre le corps en mouvement, sans rien demander au bras.',
     [
       heart(model, 'Marche facile, à plat', 'Z1', 40 * 60, {
-        exercise: 'marche-cote',
+        exercise: 'marche',
         notes:
           'Bras en écharpe contre toi. Tu dois pouvoir parler sans effort. Si le coude lance ou gonfle, rentre et ' +
           'surélève-le.',
@@ -353,7 +353,7 @@ export function compensationRecovery(model: PhysiologyModel): SessionTemplate {
     'Laisser la semaine s\'assimiler, et entretenir la souplesse que le test dit courte.',
     [
       heart(model, 'Marche facile, à plat', 'Z1', 45 * 60, {
-        exercise: 'marche-cote', notes: 'Quais, parc de la Tête d\'Or : tu dois pouvoir parler tout du long.',
+        exercise: 'marche', notes: 'Quais, parc de la Tête d\'Or : tu dois pouvoir parler tout du long.',
       }),
       souplesse(900),
       ...daily(),
@@ -392,6 +392,129 @@ export function compensationDay(model: PhysiologyModel, dayIndex: number): Sessi
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// La semaine à la maison
+// ─────────────────────────────────────────────────────────────────────────────
+
+/*
+ * Le 05/10, Pierre : « cette semaine, je vais faire principalement de la
+ * marche tranquille et des exercices chez moi tout seul, simplement avec un
+ * élastique […] et un tapis au sol ». La semaine 1 se refait sans salle : deux
+ * séances de force au poids du corps et à l'élastique, à 72 h d'écart, et de la
+ * marche tranquille les autres jours. Sur une jambe, le poids du corps est une
+ * vraie charge ; le tempo lent et la réserve de 3 répétitions font le reste.
+ */
+
+/** L'échauffement des deux séances maison. */
+function homeWarmUp(model: PhysiologyModel): SessionBlock {
+  return heart(model, 'Échauffement', 'Z1', 360, {
+    exercise: 'echauffement-maison',
+    notes: '1 min de marche sur place, 10 assis-debout, 10 ponts, 10 montées sur pointes, 5 fentes arrière par jambe.',
+  });
+}
+
+/** Force A à la maison : les jambes lourdes, et le bras libre. */
+export function compensationHomeA(model: PhysiologyModel, week: CompensationWeek): SessionTemplate {
+  const d = DOSE[week];
+  const effort = `Appuyé : ${reserveText(d.reserve)}`;
+  return template(model, `compensation_home_a_${week}`, 'strength', 'Force A à la maison',
+    'Entretenir la force des jambes sans salle : une jambe à la fois, ton poids pour charge, le tempo lent pour ' +
+      'intensité — et le bras libre, qui entretient l\'autre.',
+    [
+      homeWarmUp(model),
+      lift('split-squat-maison', `Fente bulgare, ${d.sets} séries par jambe`, d.sets * 2, 10, 45, effort,
+        'Pied arrière sur le canapé, main libre sur l\'encadrement. 3 s pour descendre, 1 s en bas, 1 s pour ' +
+          'monter. Les deux jambes en alternance.',
+        50),
+      lift('leg-curl-serviette', 'Leg curl glissé', d.sets, 6, 90, 'Freine 4 s',
+        'Talons sur la serviette, sur le parquet. Bassin haut pendant la glissade, posé pour ramener les talons.',
+        40),
+      lift('mollets-excentriques', `Mollets genou tendu, ${d.sets} séries par jambe`, d.sets * 2, 12, 30,
+        'Descente en 3 s', 'Sur une marche, main libre sur la rampe : monte sur deux pieds, redescends sur un.', 50),
+      lift('pont-une-jambe', `Pont fessier sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, 12, 30, effort,
+        'Talon à 30 cm des fesses, 2 s serrées en haut.', 45),
+      lift('tirage-elastique', 'Tirage à un bras, élastique', d.sets, 12, 45, 'Moyen : 3 répétitions en réserve',
+        'Élastique de 15 kg à la porte, à hauteur de poitrine : 1 s pour tirer, 1 s tenue, 2 s pour rendre.', 45),
+      lift('bras-elastique', 'Bras libre : curl, triceps, serrage', 2, 15, 60, 'Moyen : 3 répétitions en réserve',
+        'Deux tours : 15 curls, 15 extensions, 10 serrages de 5 s.', 150),
+      lift('anti-rotation', 'Anti-rotation à l\'élastique, 2 séries par côté', 4, 8, 30, 'Bras tendu 3 s',
+        'Élastique à la porte, à hauteur de poitrine, de profil : tourne-toi pour l\'autre côté.', 40),
+      ...daily(),
+    ]);
+}
+
+/** Force B à la maison : les appuis, un pied, une hanche, une cheville à la fois. */
+export function compensationHomeB(model: PhysiologyModel, week: CompensationWeek): SessionTemplate {
+  const d = DOSE[week];
+  const effort = `Appuyé : ${reserveText(d.reserve)}`;
+  return template(model, `compensation_home_b_${week}`, 'strength', 'Force B à la maison',
+    'Les appuis du trail sans salle : la descente au ralenti, la hanche qui tient le bassin, la cheville et le ' +
+      'pied — ce que la course ne travaille plus.',
+    [
+      homeWarmUp(model),
+      lift('descente-marche', `Descente de marche, ${d.sets} séries par jambe`, d.sets * 2, 8, 45, 'Descente en 4 s',
+        'Deuxième marche, main libre sur la rampe : le talon libre effleure la marche du dessous.', 50),
+      lift('souleve-une-jambe', `Soulevé sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, 10, 30, effort,
+        'Main libre sur l\'encadrement, à hauteur de hanche. Dos plat, 3 s pour descendre.', 45),
+      hold('chaise', 'Chaise contre le mur', 3, d.holdS + 15, 60, 'Cuisses parallèles au sol, dos plaqué. Respire.'),
+      lift('pas-chasses', 'Pas chassés à la mini-bande', 3, 12, 45, 'Jusqu\'à la brûlure',
+        '12 pas dans chaque sens, face au mur, la main libre qui glisse dessus.', 40),
+      lift('montee-genou', `Montée de genou, ${d.sets} séries par jambe`, d.sets * 2, 10, 20, 'Bas du dos collé',
+        'Mini-bande aux pieds : 1 s pour monter le genou, 2 s pour repartir.', 30),
+      lift('mollets-excentriques', 'Mollets genou fléchi, 2 séries par jambe', 4, 15, 30, 'Descente en 3 s',
+        'Le genou fléchi de 30° toute la série : c\'est le soléaire, le muscle profond qui porte la course.', 55),
+      lift('releves-pointe', 'Relevés de pointe', 2, 20, 30, 'Jusqu\'à la brûlure', 'Dos au mur, talons à 30 cm devant.', 40),
+      hold('gainage-lateral', 'Gainage latéral sur le coude libre', 2, d.holdS, 30,
+        'Du côté du bras libre seulement ; genoux au sol si besoin.'),
+      ...daily(),
+    ]);
+}
+
+/** La marche tranquille des jours sans force. */
+export function compensationEasyWalk(model: PhysiologyModel, minutes: number, withMobility = false): SessionTemplate {
+  return template(model, `compensation_walk_${minutes}${withMobility ? '_m' : ''}`, 'cross_training', 'Marche tranquille',
+    'Garder le cœur et les jambes en route sans rien demander au coude ; la semaine ne cherche pas l\'effort.',
+    [
+      heart(model, 'Marche tranquille, à plat', 'Z1', minutes * 60, {
+        exercise: 'marche',
+        notes: 'Quais, parc de la Tête d\'Or : sol sec et régulier, tu dois pouvoir parler tout du long.',
+      }),
+      ...(withMobility ? [souplesse()] : []),
+      ...daily(),
+    ]);
+}
+
+/** La sortie longue de la semaine à la maison : marchée, sans chercher la côte. */
+export function compensationEasyLong(model: PhysiologyModel, minutes = 90, vertM = 150): SessionTemplate {
+  return template(model, 'compensation_walk_long', 'cross_training', 'Longue marche tranquille',
+    'La sortie longue de la semaine, à allure de conversation : du temps debout, un peu de dénivelé, rien qui ' +
+      'essouffle.',
+    [
+      heart(model, 'Marche tranquille, quelques montées', 'Z1', minutes * 60, {
+        exercise: 'marche-cote',
+        elevationGainM: vertM,
+        elevationLossM: vertM,
+        notes:
+          'Fourvière par la montée Saint-Barthélemy et le jardin du Rosaire : revêtu et sec. Reste sous la limite ' +
+          'même en montée : ralentis plutôt que de forcer.',
+      }),
+      ...daily(),
+    ]);
+}
+
+/** Le jour `dow` (0 = lundi) de la semaine 1 à la maison. */
+export function compensationHomeDay(model: PhysiologyModel, dow: number): SessionTemplate {
+  return [
+    () => compensationRestart(model),
+    () => compensationHomeA(model, 1),
+    () => compensationEasyWalk(model, 50),
+    () => compensationEasyWalk(model, 50, true),
+    () => compensationHomeB(model, 1),
+    () => compensationEasyLong(model),
+    () => compensationRecovery(model),
+  ][dow % 7]!();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Le programme posé dans le plan
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -409,8 +532,19 @@ const REPLACEABLE: ReadonlySet<PlannedSession['status']> = new Set(['planned', '
  */
 export async function layCompensation(
   athleteId: string,
-  opts: { from: string; days: number; reason: string; at?: string },
-): Promise<{ updated: number; inserted: number; cancelled: number }> {
+  opts: {
+    from: string;
+    days: number;
+    reason: string;
+    at?: string;
+    /** Le jour du programme qui tombe en `from` (0 = le premier lundi) : pour reprendre en cours de semaine. */
+    offset?: number;
+    /** La semaine 1 à la maison (`compensationHomeDay`) plutôt qu'à la salle. */
+    home?: boolean;
+    /** Ce que la révision du plan en dit, quand ce n'est pas tout le programme. */
+    summary?: string;
+  },
+): Promise<{ updated: number; inserted: number; cancelled: number; kept: number }> {
   const active = await db.getActivePlan(athleteId);
   if (!active) throw new Error('Aucun plan actif : le programme n\'a nulle part où se poser.');
   const model = await currentModel(athleteId);
@@ -421,12 +555,22 @@ export async function layCompensation(
   let updated = 0;
   let inserted = 0;
   let cancelled = 0;
+  let kept = 0;
 
   for (let i = 0; i < opts.days; i++) {
     const date = addDays(opts.from, i);
-    const week = Math.min(4, Math.floor(i / 7) + 1);
-    const t = compensationDay(model, i);
-    const why = `${opts.reason} Programme de compensation, semaine ${week} sur 4.`;
+    const index = (opts.offset ?? 0) + i;
+    const week = Math.min(4, Math.floor(index / 7) + 1);
+    if (opts.home && week !== 1) throw new Error('À la maison, seule la semaine 1 est écrite.');
+    const t = opts.home ? compensationHomeDay(model, index) : compensationDay(model, index);
+    const why = opts.home
+      ? `${opts.reason} Programme de compensation, semaine 1 sur 4, à la maison.`
+      : `${opts.reason} Programme de compensation, semaine ${week} sur 4.`;
+    // Une séance faite ce jour-là reste ce qu'elle a été : rien ne la remplace, rien ne s'y ajoute.
+    if (existing.some((s) => s.date === date && s.status === 'completed')) {
+      kept++;
+      continue;
+    }
     const decision: SessionDecision = { at, by: 'coach', summary: why };
     const content = {
       type: t.type,
@@ -505,9 +649,10 @@ export async function layCompensation(
     trigger: 'chat_request',
     origin: 'coach',
     summary:
+      opts.summary ??
       `${opts.reason} Programme de compensation du ${opts.from.slice(8, 10)}/${opts.from.slice(5, 7)} au ` +
-      `${to.slice(8, 10)}/${to.slice(5, 7)} : renforcement, marche en côte, fractionné sans impact, une séance par jour.`,
+        `${to.slice(8, 10)}/${to.slice(5, 7)} : renforcement, marche en côte, fractionné sans impact, une séance par jour.`,
     changes,
   });
-  return { updated, inserted, cancelled };
+  return { updated, inserted, cancelled, kept };
 }

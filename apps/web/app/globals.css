@@ -31,6 +31,10 @@
   /* L'ocre des courbes de niveau. Sur l'écran du matin : les montées, rien d'autre. */
   --ochre: #d6a15c;
 
+  /* Les schémas d'exercices : le corps, et son côté opposé. */
+  --fig-near: #ddd8cd;
+  --fig-far: #7b827e;
+
   /* Sémantique */
   --metabolic: #6f9ba6;
   --metabolic-dim: #2c4850;
@@ -1170,22 +1174,61 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xs-meta { margin: 0 0 10px; font-size: 13px !important; color: var(--text-dim) !important; }
 .xs-why { margin: 0; color: var(--text-dim) !important; }
 .xs-steps, .xs-mistakes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.xs-variants { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 14px; }
+@media (min-width: 560px) { .xs-variants { grid-template-columns: 1fr 1fr; } }
+.xs-variants p { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--bg-inset); font-size: 14px !important; }
 .xs-cast { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--ochre); background: var(--bg-inset); border-radius: 0 8px 8px 0; }
 .xs-sources ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .xs-sources li { font-size: 13px !important; color: var(--text-dim) !important; }
 
-.xf { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto 4px; }
-.xf path, .xf line, .xf circle { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.xf-body { stroke: var(--text); stroke-width: 4.5; }
-.xf-far { stroke: var(--text-faint); stroke-width: 4.5; }
-.xf-cast { stroke: var(--ochre); stroke-width: 7; }
-.xf-head { fill: none; stroke: var(--text); stroke-width: 3.5; }
-.xf-prop, .xf-prop line, .xf-prop path { stroke: var(--border-strong); stroke-width: 2; }
-.xf-prop-strong { stroke: var(--text-faint) !important; stroke-width: 3 !important; fill: none; }
-rect.xf-prop-strong, .xf rect { fill: none; stroke: var(--text-faint); stroke-width: 2.5; }
-.xf circle.xf-prop-strong { fill: none; }
-.xf-band { stroke: var(--metabolic) !important; stroke-width: 2.5 !important; }
-.xf rect.xf-wall { fill: color-mix(in srgb, var(--text) 6%, transparent); stroke: none; }
-/* Le mouvement en bleu : l'ocre est au bras plâtré. */
-.xf-arrow { stroke: var(--metabolic); stroke-width: 2.5; }
-.xf .xf-arrow-head { fill: var(--metabolic); stroke: none; }
+/*
+ * Les schémas d'exercices (lib/figure, components/ExerciseFigure). Le corps en
+ * blanc pierre, le côté opposé en gris, le plâtre en ocre, les muscles qui
+ * travaillent en terre cuite, l'élastique en vert, le mouvement en bleu ; la
+ * position de départ en silhouette sombre bordée d'un pointillé.
+ */
+.xf-panels { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 0 0 8px; }
+@media (min-width: 720px) { .xf-panels[data-count="2"] { grid-template-columns: 1fr 1fr; } }
+.xf-panel { margin: 0; padding: 10px 8px 8px; border-radius: 10px; background: var(--bg-inset); }
+.xf { display: block; width: 100%; height: auto; max-height: 380px; margin: 0 auto; }
+.xf-caption { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin-top: 6px; font-size: 12.5px; line-height: 1.35; color: var(--text-dim); text-align: center; }
+.xf-key { display: inline-flex; align-items: center; gap: 6px; }
+.xf-key::before { content: ''; flex: none; width: 14px; height: 0; border-top: 2px solid var(--fig-near); }
+.xf-key-ghost::before { border-top: 2px dashed var(--text-dim); }
+.xf .fg-part { stroke: var(--bg-inset); stroke-width: 0.7; stroke-linejoin: round; }
+.xf .fg-near { fill: var(--fig-near); }
+.xf .fg-far { fill: var(--fig-far); }
+.xf .fg-cast { fill: var(--ochre); }
+.xf .fg-cast-far { fill: #a27a46; }
+.xf .fg-sling { fill: #6e5534; }
+.xf .fg-muscle { fill: var(--warn); opacity: 0.9; stroke: none; }
+.xf .fg-ghost-edge { fill: none; stroke: var(--text-dim); stroke-width: 1.3; stroke-dasharray: 1.6 1.4; }
+.xf .fg-ghost-fill { fill: #1d2629; stroke: none; }
+.xf .fg-ground line { stroke: var(--border-strong); stroke-width: 0.6; }
+.xf .fg-ground .fg-ground-line { stroke: var(--text-faint); stroke-width: 0.9; }
+.xf .fg-backdrop { fill: color-mix(in srgb, var(--text) 5%, transparent); }
+.xf .fg-furniture, .xf .fg-furniture line, .xf .fg-furniture path, .xf .fg-furniture circle, .xf .fg-furniture rect {
+  stroke: var(--text-faint); stroke-width: 0.9; fill: none; stroke-linejoin: round; stroke-linecap: round;
+}
+.xf .fg-furniture.fg-pad, .xf .fg-furniture .fg-pad { fill: var(--bg-elev-2); }
+.xf .fg-furniture .fg-rail { stroke-width: 1.5; }
+.xf .fg-furniture .fg-anchor { stroke: var(--good); stroke-width: 1.3; }
+.xf .fg-mat { fill: #2a3533; }
+.xf .fg-towel { fill: #4a5a63; }
+.xf .fg-weight line { stroke: var(--text-dim); stroke-width: 1.2; stroke-linecap: round; }
+.xf .fg-weight .fg-plate { stroke-width: 2.4; }
+.xf .fg-band { stroke: var(--good); stroke-linecap: round; }
+.xf .fg-band-long { stroke-width: 1.1; }
+.xf .fg-band-mini { stroke-width: 2.2; }
+.xf .fg-band-ghost { opacity: 0.45; stroke-dasharray: 1.6 1.4; }
+.xf .fg-band-strap { stroke: var(--text-dim); stroke-width: 1.3; }
+.xf .fg-disc circle { fill: var(--bg-elev-2); stroke: var(--text-dim); stroke-width: 1; }
+.xf .fg-weight-ghost { fill: none; stroke: var(--text-faint); stroke-width: 0.8; stroke-dasharray: 1.4 1.2; }
+.xf .fg-guide { stroke: var(--text-dim); stroke-width: 0.55; stroke-dasharray: 1.4 1.4; }
+.xf .fg-angle path { fill: none; stroke: var(--text); stroke-width: 0.7; }
+.xf .fg-angle text { fill: var(--text); font-size: 5.2px; font-weight: 650; }
+.xf .fg-motion path { fill: none; stroke: var(--metabolic); stroke-width: 1.1; stroke-linecap: round; }
+.xf .fg-motion text { fill: var(--metabolic); font-size: 5.2px; font-weight: 650; }
+.xf .fg-arrow-head { fill: var(--metabolic); stroke: none; }
+.xf .fg-note line { stroke: var(--text-faint); stroke-width: 0.5; }
+.xf .fg-note text { fill: var(--text-dim); font-size: 5.2px; }

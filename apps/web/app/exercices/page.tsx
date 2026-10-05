@@ -1,37 +1,16 @@
-import { EXERCISES, type ExerciseKey } from '@cairn/core/exercises';
+import { EXERCISES } from '@cairn/core/exercises';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
+import { EXERCISE_GROUPS } from '@/lib/exerciseGroups';
 
 /**
  * Les fiches d'exercices du programme de compensation (coude cassé, 03/10).
  *
  * Chaque exercice d'une séance y renvoie (« comment faire ») : le schéma, le
- * pourquoi, les étapes, ce qu'on doit sentir, les erreurs, et ce que le bras
- * plâtré change. Une page statique : elle s'ouvre aussi sans réseau, gardée par
- * le service worker comme les écrans du menu.
+ * pourquoi, l'installation, le mouvement et son tempo, la respiration, ce qu'on
+ * doit sentir, les erreurs, la version plus facile et la suivante, et ce que le
+ * bras plâtré change. Une page statique : elle s'ouvre aussi sans réseau,
+ * gardée par le service worker comme les écrans du menu.
  */
-
-const GROUPS: { title: string; lead: string; keys: ExerciseKey[] }[] = [
-  {
-    title: 'Force, à la salle',
-    lead: 'Lundi : les jambes lourdes, et le bras libre. Machines et haltère dans la main libre.',
-    keys: ['activation', 'presse', 'split-squat-bulgare', 'extension-hanche', 'leg-curl', 'mollets-machine', 'bras-libre', 'anti-rotation'],
-  },
-  {
-    title: 'Force, à la salle ou à la maison',
-    lead: 'Jeudi : les appuis, un pied, une hanche, une cheville à la fois.',
-    keys: ['step-up', 'pont-une-jambe', 'chaise', 'mollets-excentriques', 'releves-pointe', 'abduction', 'dead-bug', 'gainage-lateral'],
-  },
-  {
-    title: 'Cardio sans impact',
-    lead: 'Le moteur aérobie et les muscles des montées, sans courir et sans les bras.',
-    keys: ['marche-tapis', 'intervalles', 'marche-cote'],
-  },
-  {
-    title: 'Chaque jour',
-    lead: 'Le bras plâtré, la respiration, la souplesse : quelques minutes, tous les jours.',
-    keys: ['soins-bras', 'respiration', 'souplesse'],
-  },
-];
 
 const WHERE: Record<string, string> = { salle: 'salle', maison: 'maison', dehors: 'dehors' };
 
@@ -47,6 +26,26 @@ export default function ExercisesPage() {
           </p>
         </div>
       </header>
+
+      <section className="xs-rules">
+        <h2>Lire une fiche</h2>
+        <ul>
+          <li>
+            <strong>Le schéma.</strong> En plein, la position qui compte ; en pointillé, celle d&apos;où tu pars. En
+            rouge, les muscles qui travaillent ; en ocre, le bras plâtré ; en vert, l&apos;élastique ; en bleu, le
+            mouvement et son tempo. Les angles écrits sont ceux du dessin.
+          </li>
+          <li>
+            <strong>« 3 répétitions en réserve ».</strong> Tu t&apos;arrêtes quand tu pourrais encore en faire trois,
+            propres. Si la dernière série en laisse davantage deux séances de suite, passe à la version « plus
+            dur ».
+          </li>
+          <li>
+            <strong>Le tempo se compte.</strong> « 3 s pour descendre » : c&apos;est la descente lente qui fait le
+            travail, pas le nombre.
+          </li>
+        </ul>
+      </section>
 
       <section className="xs-rules">
         <h2>Les règles du plâtre</h2>
@@ -76,8 +75,8 @@ export default function ExercisesPage() {
       <section className="xs-rules">
         <h2>S&apos;adapter au jour le jour</h2>
         <ul>
-          <li>Point du jour « vidé » ou « lourd », ou nuit de moins de six heures : remplace le fractionné ou la force par la marche facile du dimanche.</li>
-          <li>Fortes courbatures le lendemain d&apos;une séance de force : la marche en côte du jour se fait à plat.</li>
+          <li>Point du jour « vidé » ou « lourd », ou nuit de moins de six heures : remplace la force par la marche tranquille.</li>
+          <li>Fortes courbatures le lendemain d&apos;une séance de force : la marche du jour se fait à plat.</li>
           <li>Une séance manquée ne se rattrape pas : la suivante se fait telle qu&apos;elle est écrite.</li>
           <li>
             Mange à ta faim, des protéines à chaque repas : l&apos;os qui se répare et les muscles qu&apos;on
@@ -91,7 +90,7 @@ export default function ExercisesPage() {
         </ul>
       </section>
 
-      {GROUPS.map((g) => (
+      {EXERCISE_GROUPS.map((g) => (
         <section key={g.title} className="xs-group">
           <h2 className="xs-group-title">{g.title}</h2>
           <p className="xs-group-lead">{g.lead}</p>
@@ -105,16 +104,36 @@ export default function ExercisesPage() {
                   {x.where.map((w) => WHERE[w]).join(' · ')} — {x.equipment}
                 </p>
                 <p className="xs-why">{x.why}</p>
-                <h4>Comment</h4>
+                {x.setup && (
+                  <>
+                    <h4>Installation</h4>
+                    <ul className="xs-steps">
+                      {x.setup.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </>
+                )}
+                <h4>Le mouvement</h4>
                 <ol className="xs-steps">
                   {x.steps.map((s, i) => <li key={i}>{s}</li>)}
                 </ol>
+                {x.breath && (
+                  <>
+                    <h4>Respiration</h4>
+                    <p>{x.breath}</p>
+                  </>
+                )}
                 <h4>Ce que tu dois sentir</h4>
                 <p>{x.feel}</p>
                 <h4>Les erreurs</h4>
                 <ul className="xs-mistakes">
                   {x.mistakes.map((m, i) => <li key={i}>{m}</li>)}
                 </ul>
+                {(x.easier || x.harder) && (
+                  <div className="xs-variants">
+                    {x.easier && <p><strong>Plus facile.</strong> {x.easier}</p>}
+                    {x.harder && <p><strong>Plus dur.</strong> {x.harder}</p>}
+                  </div>
+                )}
                 <p className="xs-cast"><strong>Avec le plâtre.</strong> {x.cast}</p>
               </article>
             );
@@ -132,6 +151,7 @@ export default function ExercisesPage() {
           <li>Méta-analyse sur le POWERbreathe, 2021 : 30 inspirations deux fois par jour, quatre à six semaines.</li>
           <li>Services de fracture du NHS : mobiliser doigts et épaule pendant le plâtre, trois à quatre fois par jour.</li>
           <li>Alfredson, 1998 : le travail excentrique du mollet pour le tendon d&apos;Achille.</li>
+          <li>Winter, <em>Biomechanics and Motor Control of Human Movement</em>, 2009 : les proportions du corps des schémas.</li>
         </ul>
       </section>
     </div>

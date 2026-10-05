@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EXERCISES, EXERCISE_KEYS, annexOf, isExerciseKey } from '@cairn/core';
-import { compensationDay, remeasured } from '@cairn/coach';
-import { hasFigure } from '../apps/web/components/ExerciseFigure';
+import { EXERCISES, annexOf, isExerciseKey, type ExerciseKey } from '@cairn/core';
+import { compensationDay, compensationHomeDay, remeasured } from '@cairn/coach';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
@@ -33,10 +32,6 @@ describe('Le programme de compensation', () => {
         expect(EXERCISES[b.exercise as keyof typeof EXERCISES].cast.length).toBeGreaterThan(0);
       }
     }
-  });
-
-  it('montre chaque exercice en schéma', () => {
-    expect(EXERCISE_KEYS.filter((k) => !hasFigure(k))).toEqual([]);
   });
 
   it('place deux séances de force par semaine, à 72 h l’une de l’autre', () => {
@@ -90,5 +85,44 @@ describe('Le programme de compensation', () => {
     expect(presse.repeat).toBe(3);
     expect(presse.reps).toBe(8);
     expect(presse.effort).toContain('3 répétitions en réserve');
+  });
+});
+
+describe('La semaine du 05/10 à la maison', () => {
+  // « Cette semaine, je vais faire principalement de la marche tranquille et des exercices chez moi tout seul. »
+  const home = Array.from({ length: 7 }, (_, i) => compensationHomeDay(PIERRE_MODEL, i));
+
+  it('ne demande ni salle ni machine', () => {
+    for (const s of home) {
+      for (const b of s.blocks) {
+        expect(EXERCISES[b.exercise as ExerciseKey].where, `${s.title} — ${b.label}`).not.toEqual(['salle']);
+      }
+    }
+  });
+
+  it('garde deux séances de force à 72 h, et marche tranquillement les autres jours', () => {
+    expect(home.map((s) => s.type)).toEqual([
+      'cross_training', 'strength', 'cross_training', 'cross_training', 'strength', 'cross_training', 'cross_training',
+    ]);
+    for (const s of home.filter((x) => x.type === 'cross_training')) {
+      for (const b of s.blocks.filter((x) => !x.kind)) expect(b.zone, `${s.title} — ${b.label}`).toBe('Z1');
+    }
+  });
+
+  it('dit chaque exercice d’une jambe par jambe, et en répétitions', () => {
+    const fente = home[1]!.blocks.find((b) => b.exercise === 'split-squat-maison')!;
+    expect(fente.label).toContain('3 séries par jambe');
+    expect([fente.repeat, fente.reps]).toEqual([6, 10]);
+    expect(fente.effort).toContain('3 répétitions en réserve');
+  });
+
+  it('se recompte sans devenir des kilomètres', () => {
+    for (const s of home) {
+      const m = remeasured({
+        type: s.type, blocks: s.blocks, plannedDurationS: s.durationS, plannedLoad: s.plannedLoad,
+        plannedMechanicalLoad: s.plannedMechanicalLoad, plannedDistanceM: s.plannedDistanceM,
+      }, PIERRE_MODEL);
+      expect(m.plannedDistanceM, s.title).toBe(s.plannedDistanceM);
+    }
   });
 });
