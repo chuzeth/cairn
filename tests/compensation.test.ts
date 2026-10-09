@@ -152,9 +152,13 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     genoux: ['split-squat-maison', 'descente-marche', 'reverse-nordic'],
     ischios: ['leg-curl-serviette', 'souleve-une-jambe'],
   };
-  /** Les séries dures de la semaine : tout ce qui se compte en répétitions ou se tient, hors marche et soins. */
+  /** Les séries de force de la semaine : tout ce qui se compte en répétitions ou se tient, hors marche, soins et tests. */
   const sets = (days: typeof block) =>
-    days.flatMap((s) => s.blocks).filter((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort)).reduce((a, b) => a + (b.repeat ?? 1), 0);
+    days
+      .flatMap((s) => s.blocks)
+      .filter((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort) && !EXERCISES[b.exercise as ExerciseKey]?.measure)
+      .reduce((a, b) => a + (b.repeat ?? 1), 0);
+  const TESTS = ['test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse'];
 
   it('donne un entraînement chaque jour, sans rien à courir', () => {
     expect(block).toHaveLength(24);
@@ -191,10 +195,31 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     });
   });
 
-  it('ouvre et ferme sur les mêmes tests', () => {
-    expect(block[0]!.blocks.some((b) => b.exercise === 'tests-maison')).toBe(true);
-    expect(block[23]!.blocks.some((b) => b.exercise === 'tests-maison')).toBe(true);
-    expect(block.filter((s) => s.blocks.some((b) => b.exercise === 'tests-maison'))).toHaveLength(2);
+  it('ouvre et ferme sur les mêmes sept tests, un par étape, dans le même ordre', () => {
+    const testsOf = (i: number) => block[i]!.blocks.filter((b) => TESTS.includes(b.exercise!)).map((b) => b.exercise);
+    expect(testsOf(0)).toEqual(TESTS);
+    expect(testsOf(23)).toEqual(TESTS);
+    expect(block.filter((s) => s.blocks.some((b) => TESTS.includes(b.exercise!)))).toHaveLength(2);
+  });
+
+  it('se suit en parties : chaque bloc dit la sienne, et une partie ne s’ouvre qu’une fois', () => {
+    for (const s of block) {
+      const parts = s.blocks.map((b) => b.part);
+      expect(parts.every(Boolean), s.title).toBe(true);
+      const opened = parts.filter((p, i) => i === 0 || parts[i - 1] !== p);
+      expect(new Set(opened).size, `${s.title} : ${opened.join(' / ')}`).toBe(opened.length);
+      expect(parts[0], s.title).toMatch(/^(Échauffement|Marche)$/);
+      expect(parts.at(-1), s.title).toBe('Bras plâtré et respiration');
+    }
+  });
+
+  it('dit chaque exercice d’une jambe par jambe, avec ses séries paires', () => {
+    for (const b of block.flatMap((s) => s.blocks).filter((x) => x.sides)) {
+      expect((b.repeat ?? 1) % 2, b.label).toBe(0);
+    }
+    const fente = block[3]!.blocks.find((b) => b.exercise === 'split-squat-maison')!;
+    expect([fente.repeat, fente.reps, fente.sides, fente.reserve]).toEqual([6, 10, 'jambe', 2]);
+    expect(fente.tempo).toContain('3 s pour descendre');
   });
 
   it('suit la semaine type : trois séances de force à 48 h, un fractionné, une longue marche le samedi', () => {

@@ -72,7 +72,7 @@ const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockFiel
   label: true, kind: true, zone: true, durationS: true, distanceM: true, repeat: true,
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
   cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true, terrain: true,
-  lastOptional: true, reps: true, exercise: true,
+  lastOptional: true, reps: true, exercise: true, part: true, sides: true, tempo: true, reserve: true, pulse: true,
 };
 
 type Recovery = NonNullable<SessionBlock['recovery']>;
@@ -367,6 +367,29 @@ function parseBlock(
       throw new Error(`${at}.exercise : fiche inconnue « ${key} ». Fiches : ${EXERCISE_KEYS.join(', ')}.`);
     }
     block.exercise = key;
+  }
+  // La séance qu'on suit en la faisant : sa partie, ses côtés, son tempo, sa
+  // réserve, l'effort que le minuteur rythme.
+  if (raw.part !== undefined) block.part = text(raw.part, `${at}.part`, 40);
+  if (raw.sides !== undefined) {
+    if (raw.sides !== 'jambe' && raw.sides !== 'côté') {
+      throw new Error(`${at}.sides : « jambe » ou « côté » attendu, reçu ${JSON.stringify(raw.sides)}.`);
+    }
+    if ((block.repeat ?? 1) % 2 !== 0) {
+      throw new Error(`${at}.sides : un nombre pair de séries est attendu, autant de chaque côté.`);
+    }
+    block.sides = raw.sides;
+  }
+  if (raw.tempo !== undefined) block.tempo = text(raw.tempo, `${at}.tempo`, 120);
+  if (raw.reserve !== undefined) block.reserve = Math.round(number(raw.reserve, `${at}.reserve`, 0, 10));
+  if (raw.pulse !== undefined) {
+    const p = raw.pulse as Record<string, unknown> | null;
+    if (typeof p !== 'object' || p === null || Array.isArray(p)) throw new Error(`${at}.pulse : objet attendu.`);
+    if (block.reps === undefined) throw new Error(`${at}.pulse : un effort guidé se répète — \`reps\` est requis.`);
+    block.pulse = {
+      workS: Math.round(number(p.workS, `${at}.pulse.workS`, 1, 120)),
+      restS: Math.round(number(p.restS, `${at}.pulse.restS`, 0, 120)),
+    };
   }
   return block;
 }

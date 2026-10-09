@@ -1203,6 +1203,24 @@ export interface SessionRoute {
 }
 
 /** Un bloc élémentaire d'une séance (échauffement, répétition, récupération…). */
+/**
+ * Le résultat d'un test de force, jambe par jambe ou d'une seule valeur.
+ *
+ * Le 09/10, le bloc de force s'ouvre et se ferme sur sept tests : leurs
+ * résultats sont des mesures — le dernier jour les compare au premier, et un
+ * écart entre les deux jambes ajoute une série du côté faible.
+ */
+export interface StrengthTestResult {
+  /** Le jour du test, AAAA-MM-JJ. */
+  date: string;
+  /** La fiche du test (`test-mollets`…). */
+  test: string;
+  left?: number;
+  right?: number;
+  value?: number;
+  updatedAt: string;
+}
+
 export interface SessionBlock {
   label: string;
   /**
@@ -1310,6 +1328,27 @@ export interface SessionBlock {
    */
   exercise?: string;
   notes?: string;
+  /**
+   * La partie de la séance où le bloc se range — « Échauffement », « Jambes »,
+   * « Bras plâtré et respiration ». Le 09/10, Pierre veut ouvrir la séance du
+   * jour et la suivre « avec des grandes parties : l'échauffement, les tests… » :
+   * l'écran de la séance les suit dans l'ordre des blocs.
+   */
+  part?: string;
+  /**
+   * Le bloc se fait d'un côté puis de l'autre : `repeat` compte les deux, et la
+   * séance dit `repeat / 2` séries par jambe (ou par côté).
+   */
+  sides?: 'jambe' | 'côté';
+  /** Le rythme du mouvement, en clair : « 3 s pour descendre, 1 s pour monter ». */
+  tempo?: string;
+  /** Les répétitions gardées en réserve à la fin de chaque série. */
+  reserve?: number;
+  /**
+   * Un effort guidé, `reps` fois par série : `workS` à fond, `restS` relâché.
+   * Le minuteur de la séance le rythme, pour qu'on n'ait pas à compter.
+   */
+  pulse?: { workS: number; restS: number };
 }
 
 /**

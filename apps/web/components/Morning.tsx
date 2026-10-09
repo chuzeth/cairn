@@ -14,6 +14,7 @@ import {
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import { loadFigures } from '@/lib/figures';
+import { isWorkout, partSummary, workoutOf } from '@/lib/workout';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale,
   unweighed, Waiting, WhereLine,
@@ -112,7 +113,9 @@ export function Morning({
 
       <Headline session={session} absence={absence} done={doneToday} early={early} />
 
-      {work && <Session session={work} home={plan.home ?? null} onReload={onReload} />}
+      {work && (isWorkout(work)
+        ? <WorkoutEntry session={work} />
+        : <Session session={work} home={plan.home ?? null} onReload={onReload} />)}
 
       {early && (
         <>
@@ -149,7 +152,9 @@ export function Morning({
           </div>
           <h2 className="m-title m-title-next">{sessionHeadline(openNext)}</h2>
           <p className="m-sub">{subline(openNext)}</p>
-          <Trace session={openNext} />
+          {isWorkout(openNext)
+            ? <Link href={`/seance?d=${openNext.date}`} className="m-link">Voir la séance →</Link>
+            : <Trace session={openNext} />}
           <GarminLine status={openNext.garmin} />
         </section>
       )}
@@ -280,6 +285,37 @@ function subline(session: SessionRow): string {
   // trois fois » est celui d'une répétition, pas celui de la journée.
   if ((!p.captionIsClimb || p.captionPerRep) && p.gainM > 0) parts.push(`${metres(p.gainM)} de dénivelé`);
   return nbsp(parts.filter(Boolean).join(', '));
+}
+
+/**
+ * Une séance de renforcement : elle s'ouvre, elle ne se lit pas ici.
+ *
+ * Le 09/10, Pierre : « je clique sur la séance, et j'ai, exercice après
+ * exercice, le petit schéma, combien de séries, combien de répétitions ». Le
+ * tracé d'une séance de force ne dit rien — c'est un plat. L'écran du matin en
+ * donne les parties, et le bouton qui l'ouvre (`/seance`).
+ */
+function WorkoutEntry({ session }: { session: SessionRow }) {
+  const parts = workoutOf(session);
+  return (
+    <section className="m-session">
+      <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary">
+        Ouvrir la séance →
+      </Link>
+      <div className="m-toc">
+        {parts.map((p, i) => (
+          <div className="m-toc-part" key={`${p.name}-${i}`}>
+            <strong>{p.name}</strong>
+            <span>{partSummary(p)}</span>
+            {/* « Échauffement », sous « Échauffement », ne dit rien de plus. */}
+            {!(p.steps.length === 1 && p.steps[0]!.name === p.name) && (
+              <p>{nbsp(p.steps.map((step) => step.name).join(' · '))}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 /**

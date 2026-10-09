@@ -37,7 +37,7 @@ const railY = (x0: number, x: number) => 50 + STAIR.rise + ((x - x0) / STAIR.run
 /** Le bras libre posé au sol le long du corps, paume vers le bas : de l'épaule, il descend jusqu'au sol. */
 const armOnFloor = (_sx: number): { upper: number; fore: number } => ({ upper: 78, fore: 88 });
 
-export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
+const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
   // ───────────────────────── La semaine à la maison ─────────────────────────
 
   'echauffement-maison': {
@@ -606,10 +606,12 @@ export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
 
   // ───────────────────────── Le bloc de force, du 09/10 au 01/11 ─────────────
 
-  'tests-maison': {
+  // ───────────────────────── Les tests du bloc ─────────────────────────────
+
+  'test-mollets': {
     panels: [
       {
-        label: 'Mollets : tout en haut, une montée toutes les 2 s, les doigts au mur sans tirer, jusqu’à l’échec',
+        label: 'Tout en haut, une montée toutes les 2 s, jusqu’à l’échec',
         ghostLabel: 'Talon posé',
         props: [{ kind: 'floor' }, { kind: 'wall', x: 22, face: -1 }],
         ghost: {
@@ -627,8 +629,13 @@ export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
         contacts: [{ ref: 'near.toe', y: 0 }],
         ghostContacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }],
       },
+    ],
+  },
+
+  'test-pont': {
+    panels: [
       {
-        label: 'Arrière des cuisses : le bassin monte, jusqu’à l’échec',
+        label: 'Le bassin monte, redescend effleurer le sol, jusqu’à l’échec',
         ghostLabel: 'Les fesses effleurent le sol',
         props: [{ kind: 'floor' }, { kind: 'mat', from: -50, to: 10 }, { kind: 'stool', x: 47, face: 1 }],
         ghost: {
@@ -650,6 +657,49 @@ export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
         muscles: [{ muscle: 'hamstrings' }, { muscle: 'glutes' }],
         contacts: [{ ref: 'near.heel', y: STEP.high }, { part: 'head', y: 0, tol: 1.5 }],
         ghostContacts: [{ ref: 'near.heel', y: STEP.high }, { part: 'trunk', y: 0, tol: 1 }],
+      },
+    ],
+  },
+
+  'test-cheville': {
+    panels: [
+      {
+        label: 'Le genou touche le mur, le talon reste au sol',
+        props: [{ kind: 'floor' }, { kind: 'wall', x: 30, face: -1 }],
+        pose: {
+          view: 'side', hip: [11.15, 42.97], lean: 10,
+          near: { ankle: [13, A] }, far: { ankle: [-14, A] },
+          free: { hand: [26, 70] },
+        },
+        guides: [{ from: [24.4, 2.4], to: [30, 2.4] }],
+        notes: [
+          { text: 'le genou\ntouche le mur', at: 'near.knee', dx: -10, dy: 14 },
+          { text: 'talon au sol', at: 'near.heel', dx: -8, dy: 6 },
+          { text: 'du gros orteil\nau mur : 10 cm ?', at: [27.2, 2.4], dx: -2, dy: -10 },
+        ],
+        muscles: [{ muscle: 'soleus' }],
+        contacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }, { ref: 'far.heel', y: 0 }],
+      },
+    ],
+  },
+
+  'test-souplesse': {
+    panels: [
+      {
+        label: 'Jambes tendues, le bout des doigts vers le sol',
+        props: [{ kind: 'floor' }],
+        pose: {
+          view: 'side', hip: [-6, 52.63], lean: 112.2, nod: 25,
+          near: { ankle: [0, A] }, far: { ankle: [-1, A] },
+          free: { hand: [20.6, 8.6] },
+        },
+        guides: [{ from: 'free.tip', to: [20.9, 0] }],
+        notes: [
+          { text: 'jambes tendues', at: 'near.knee', dx: -9, dy: 4 },
+          { text: 'du bout des doigts au sol :\n−1 cm au test d’effort', at: 'free.tip', dx: 6, dy: 10 },
+        ],
+        muscles: [{ muscle: 'hamstrings' }, { muscle: 'calves' }],
+        contacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }],
       },
     ],
   },
@@ -1249,6 +1299,25 @@ export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  imagerie: {
+    panels: [
+      {
+        label: 'Allongé, les yeux fermés : seul le cerveau force',
+        props: [{ kind: 'floor' }, { kind: 'mat', from: -50, to: 34 }],
+        pose: {
+          view: 'side', ...flat(-28),
+          near: { ankle: [27, A] }, far: { ankle: [25, A] },
+          free: armOnFloor(-28), cast: { elbow: [-15, 10], hand: [-7, 14.5], over: true },
+        },
+        notes: [
+          { text: 'le bras plâtré posé, mou', at: 'cast.wrist', dx: 6, dy: 14 },
+          { text: 'imagine : plie le coude\nde toutes tes forces, 5 s', at: 'head', dx: -2, dy: 22 },
+        ],
+        contacts: [{ ref: 'near.heel', y: 0 }, { part: 'trunk', y: 0, tol: 1 }],
+      },
+    ],
+  },
+
   respiration: {
     panels: [
       {
@@ -1284,4 +1353,19 @@ export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
       },
     ],
   },
+};
+
+/**
+ * Les schémas, exercice par exercice. Un test qui mesure un exercice reprend son
+ * schéma : la chaise, le gainage, l'équilibre se tiennent de la même façon,
+ * jusqu'au bout.
+ */
+export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
+  ...FIGURE_LIST,
+  // La chaise et sa variante sur une jambe : un schéma chacune, pour que celui du jour ne montre que lui.
+  chaise: { panels: [FIGURE_LIST.chaise!.panels[0]!] },
+  'chaise-une-jambe': { panels: [FIGURE_LIST.chaise!.panels[1]!] },
+  'test-chaise': { panels: [FIGURE_LIST.chaise!.panels[0]!] },
+  'test-gainage': FIGURE_LIST['gainage-lateral'],
+  'test-equilibre': FIGURE_LIST.equilibre,
 };

@@ -629,6 +629,16 @@ export interface SessionRow {
     };
     /** Contenu excentrique du bloc : c'est lui qui porte la charge mécanique. */
     circuit?: { rounds: number; exercises: { movement: EccentricMovement; reps: number }[] };
+    /** La partie de la séance — « Échauffement », « Jambes » : l'écran de la séance les suit dans l'ordre. */
+    part?: string;
+    /** D'un côté puis de l'autre : `repeat` compte les deux, la séance dit `repeat / 2` par jambe. */
+    sides?: 'jambe' | 'côté';
+    /** Le rythme du mouvement, en clair. */
+    tempo?: string;
+    /** Les répétitions gardées en réserve à la fin de chaque série. */
+    reserve?: number;
+    /** Un effort guidé, `reps` fois par série : `workS` à fond, `restS` relâché. */
+    pulse?: { workS: number; restS: number };
   }[];
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: { metric: 'hr_drift'; maxValue?: number; origin: DirectiveOriginRow }[];

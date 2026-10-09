@@ -22,8 +22,10 @@ export const EXERCISE_KEYS = [
   // Le matériel reçu le 06/10 : le kit d'élastiques, les mini-bandes, l'anneau, le tapis, un tabouret de 40 cm.
   'montee-tabouret', 'mollets-sol',
   // Le bloc de force du 09/10 au 01/11 : tous les jours, au poids du corps, à l'élastique, sur le step.
-  'tests-maison', 'reverse-nordic', 'pousse-elastique', 'hip-thrust', 'copenhague', 'adducteurs-coussin',
-  'mollets-iso', 'pied-court', 'equilibre',
+  'reverse-nordic', 'pousse-elastique', 'hip-thrust', 'copenhague', 'adducteurs-coussin',
+  'mollets-iso', 'pied-court', 'equilibre', 'imagerie', 'chaise-une-jambe',
+  // Les tests du premier et du dernier jour, un par étape de la séance.
+  'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
 
 export type ExerciseKey = (typeof EXERCISE_KEYS)[number];
@@ -61,6 +63,31 @@ export interface ExerciseSheet {
   harder?: string;
   /** Ce que le bras plâtré change. */
   cast: string;
+  /**
+   * Ce qu'il faut avoir en tête en le faisant : deux à quatre consignes courtes.
+   *
+   * Le 09/10, Pierre : la fiche « comment faire », « il y a trop
+   * d'informations ». La séance montre ces consignes sous le schéma, à suivre
+   * pendant l'effort ; le reste de la fiche se déplie pour qui le demande.
+   */
+  cues: string[];
+  /** Un test : ce qu'il mesure, et comment le noter. */
+  measure?: TestMeasure;
+}
+
+/** Ce qu'un test mesure. */
+export interface TestMeasure {
+  unit: 'répétitions' | 'secondes' | 'cm';
+  /** Une valeur par jambe, ou une seule. */
+  perSide: boolean;
+  /** Le plafond du test : 60 s pour l'équilibre. */
+  max?: number;
+  /** Ce qui aide à le faire : le chrono qui compte, ou le bip qui donne le rythme. */
+  guide?: 'chrono' | 'métronome';
+  /** Le rythme du métronome, s entre deux bips. */
+  beatS?: number;
+  /** D'où l'on part, quand une étude le dit. */
+  reference?: string;
 }
 
 export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
@@ -68,6 +95,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'activation',
     name: 'Réveil des muscles (activation)',
     what: 'Trois mouvements faciles avant de forcer : des ponts, des fentes arrière et des montées sur la pointe des pieds.',
+    cues: [
+      '10 ponts fessiers, 1 s serrée en haut.',
+      '8 fentes arrière par jambe, la main libre au mur.',
+      '10 montées sur la pointe des pieds, lentes.',
+    ],
     where: ['salle', 'maison'],
     equipment: 'Rien',
     why: 'Réveiller les fessiers et les chevilles avant de charger : les premières séries se font avec des muscles prêts.',
@@ -84,6 +116,12 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'presse',
     name: 'Presse à cuisses',
     what: 'Assis dans la machine, le dos calé, tu repousses avec les pieds une plateforme chargée, puis tu la laisses revenir lentement.',
+    cues: [
+      'Dos et bassin calés, pieds à plat au milieu du plateau.',
+      'Descends en 3 s jusqu\'aux genoux à angle droit.',
+      'Pousse dans les talons, sans verrouiller les genoux.',
+      'Seule la main libre touche la machine.',
+    ],
     where: ['salle'],
     equipment: 'Presse à cuisses, inclinée ou horizontale',
     why:
@@ -107,6 +145,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'split-squat-bulgare',
     name: 'Fente bulgare, pied arrière sur un banc',
     what: 'Une fente sur une seule jambe : le pied arrière posé sur un banc, tu descends le genou arrière vers le sol en pliant la jambe avant, puis tu remontes.',
+    cues: [
+      'Le dessus du pied arrière sur le banc, un support pour la main libre.',
+      'Descends en 3 s, le genou arrière vers le sol.',
+      'Remonte en poussant dans le talon avant.',
+    ],
     where: ['salle', 'maison'],
     equipment: 'Un banc ou une chaise stable ; un haltère pour la main libre, à partir de la 2e semaine',
     why: 'Une jambe à la fois, comme en course : quadriceps, fessiers, et la stabilité du genou et de la hanche.',
@@ -130,6 +173,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'extension-hanche',
     name: 'Redressement du buste au banc à 45°',
     what: 'Les hanches calées sur le coussin d\'un banc incliné, tu penches le buste vers le sol, puis tu te redresses jusqu\'à aligner tout le corps.',
+    cues: [
+      'Le coussin juste sous l\'os du bassin, les bras croisés.',
+      'Bascule le buste vers le sol, le dos droit.',
+      'Remonte en serrant les fessiers, jusqu\'au corps aligné, pas au-delà.',
+    ],
     where: ['salle'],
     equipment: 'Banc à lombaires incliné à 45°',
     why:
@@ -149,6 +197,10 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'leg-curl',
     name: 'Flexion des jambes à la machine (leg curl)',
     what: 'Assis dans la machine, tu ramènes les talons sous le siège contre un rouleau, puis tu le laisses revenir lentement.',
+    cues: [
+      'Le genou aligné avec l\'axe de la machine.',
+      'Ramène les talons en 1 s, freine le retour en 3 s.',
+    ],
     where: ['salle'],
     equipment: 'Machine leg curl assise',
     why:
@@ -167,6 +219,10 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'mollets-machine',
     name: 'Mollets à la machine',
     what: 'Assis, les genoux sous un coussin chargé, tu montes sur la pointe des pieds, puis tu redescends lentement.',
+    cues: [
+      'L\'avant du pied sur la marche, les talons dans le vide.',
+      'Monte en 1 s, redescends en 3 s, 1 s étiré en bas.',
+    ],
     where: ['salle'],
     equipment: 'Machine à mollets, assise de préférence',
     why:
@@ -186,6 +242,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'bras-libre',
     name: 'Bras valide à l\'haltère : pousser, tirer, plier',
     what: 'Trois mouvements pour le bras valide, un haltère en main : pousser au-dessus de la tête, tirer vers soi, plier le coude.',
+    cues: [
+      'Développé : de l\'épaule au-dessus de la tête, 2 s pour redescendre.',
+      'Tirage : la poignée vers le flanc, l\'omoplate serrée.',
+      'Curl : le coude au corps, 1 s pour monter, 2 s pour redescendre.',
+    ],
     where: ['salle', 'maison'],
     equipment: 'Haltère, poulie ou élastique',
     why:
@@ -206,6 +267,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'anti-rotation',
     name: 'Gainage anti-rotation à l\'élastique',
     what: 'De profil à la porte, tu tends le bras devant toi en tenant l\'élastique : il tire ton buste vers la porte, et tu l\'empêches de tourner.',
+    cues: [
+      'De profil à la porte, la poignée contre la poitrine, l\'élastique déjà tendu.',
+      'Tends le bras devant toi en 2 s, tiens 3 s, reviens en 2 s.',
+      'Le buste ne tourne pas. Pour l\'autre côté, tourne-toi.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Le kit d\'élastiques (un élastique de 6 ou 7 kg, une poignée, l\'accroche de porte) ; une poulie à la salle',
     why:
@@ -233,6 +299,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'step-up',
     name: 'Montée sur un banc',
     what: 'Un pied sur un banc, tu montes dessus en poussant sur cette jambe, puis tu redescends en freinant.',
+    cues: [
+      'Tout le pied sur le banc.',
+      'Monte en poussant dans le talon du haut : la jambe du bas ne pousse pas.',
+      'Redescends en 3 s.',
+    ],
     where: ['salle', 'maison'],
     equipment: 'Un banc, une box ou une marche solide à hauteur de genou',
     why:
@@ -251,6 +322,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'pont-une-jambe',
     name: 'Pont fessier sur une jambe',
     what: 'Allongé sur le dos, un pied au sol et l\'autre jambe tendue en l\'air, tu soulèves le bassin en poussant dans le talon.',
+    cues: [
+      'Sur le dos, le talon d\'appui à 30 cm des fesses, l\'autre jambe tendue.',
+      'Monte le bassin jusqu\'à aligner l\'épaule, la hanche et le genou.',
+      '2 s serrées en haut, 2 s pour redescendre.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Un tapis',
     why: 'Le fessier, moteur des montées et stabilisateur du bassin à chaque appui.',
@@ -279,6 +355,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'chaise',
     name: 'Chaise contre le mur',
     what: 'Le dos contre un mur, tu descends comme pour t\'asseoir sur une chaise invisible, et tu tiens.',
+    cues: [
+      'Dos au mur, les pieds à 40 cm devant.',
+      'Descends jusqu\'aux cuisses parallèles au sol, les genoux au-dessus des chevilles.',
+      'Respire tout du long ; les mains ne poussent pas sur les cuisses.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Un mur',
     why:
@@ -302,6 +383,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'mollets-excentriques',
     name: 'Mollets en descente lente, sur le step',
     what: 'Sur le bord du step, tu montes sur la pointe des deux pieds, puis tu redescends sur un seul, lentement, le talon sous le step.',
+    cues: [
+      'Sur le bord du step calé contre un mur, les talons dans le vide, la main valide au mur.',
+      'Monte sur les deux pointes, puis passe sur une jambe.',
+      'Redescends en 3 s sur cette jambe, jusqu\'au talon sous le step.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Le step à 20 cm contre un mur, ou une marche d\'escalier avec sa rampe',
     why:
@@ -333,6 +419,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'releves-pointe',
     name: 'Relevés de pointe',
     what: 'Dos au mur, talons au sol, tu lèves l\'avant des pieds le plus haut possible, puis tu les reposes.',
+    cues: [
+      'Dos et fesses au mur, les talons à 30 cm devant.',
+      'Lève les pointes le plus haut possible en 1 s, les talons au sol.',
+      'Redescends en 2 s.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Un mur',
     why: 'Le muscle devant le tibia freine chaque pose du pied en descente, et protège des douleurs au tibia.',
@@ -352,6 +443,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'abduction',
     name: 'Jambe écartée sur le côté (abduction)',
     what: 'Debout face au mur, une mini-bande autour des chevilles, tu écartes une jambe sur le côté, puis tu la ramènes.',
+    cues: [
+      'Face au mur, la main libre dessus, la mini-bande aux chevilles.',
+      'Écarte la jambe de 30 cm, la pointe vers l\'avant, le buste droit.',
+      'Reviens lentement.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Une mini-bande autour des chevilles',
     why:
@@ -371,6 +467,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'dead-bug',
     name: 'Gainage sur le dos, jambes alternées (dead bug)',
     what: 'Allongé sur le dos, hanches et genoux pliés en l\'air, tu descends un talon vers le sol en gardant le bas du dos plaqué.',
+    cues: [
+      'Sur le dos, les hanches et les genoux à angle droit.',
+      'Plaque le bas du dos au sol : il ne décolle jamais.',
+      'Descends un talon vers le sol en 3 s, remonte, puis l\'autre.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Un tapis',
     why: 'Le gainage profond, dos plaqué au sol, sans rien demander aux bras.',
@@ -388,6 +489,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'gainage-lateral',
     name: 'Gainage sur le côté, sur le coude valide',
     what: 'Allongé sur le côté, appuyé sur le coude du bras valide, tu soulèves le bassin pour que tout le corps fasse une ligne droite, et tu tiens.',
+    cues: [
+      'Sur le côté, le coude valide sous l\'épaule.',
+      'Monte le bassin : la tête, le bassin et les pieds alignés.',
+      'Genoux au sol si le bassin tombe.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Un tapis',
     why: 'Les obliques et le moyen fessier : ce qui garde le bassin stable sur un sentier.',
@@ -413,6 +519,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'marche-tapis',
     name: 'Marche en côte sur tapis',
     what: 'Marcher sur un tapis roulant incliné, comme dans une montée, sans se tenir.',
+    cues: [
+      'La clé de sécurité attachée à ton vêtement.',
+      'Pente 10 à 15 %, sans te tenir aux barres.',
+      'Ajuste la vitesse pour rester dans la plage de FC.',
+    ],
     where: ['salle'],
     equipment: 'Un tapis de course inclinable',
     why:
@@ -437,6 +548,10 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'intervalles',
     name: 'Intervalles sur stepper ou vélo',
     what: 'Alterner des minutes rapides et des minutes faciles sur un vélo couché ou un escalier mécanique, sans les bras.',
+    cues: [
+      'Stepper sans t\'y suspendre, ou vélo couché sans les mains.',
+      'Les répétitions dans la zone prescrite, la récupération en continuant doucement.',
+    ],
     where: ['salle'],
     equipment: 'Stepper (escalier mécanique), vélo couché ou vélo droit',
     why:
@@ -459,6 +574,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'marche-cote',
     name: 'Marche en côte dehors',
     what: 'Marcher en montée, sur un sol revêtu et sec, sans courir.',
+    cues: [
+      'Des montées revêtues et des escaliers secs : Fourvière, Saint-Barthélemy, la Grande-Côte.',
+      'Monte en marche, jamais en courant, la main valide près de la rampe.',
+      'Redescends lentement, la main sur la rampe.',
+    ],
     where: ['dehors'],
     equipment: 'De l\'eau, ton téléphone, ta montre au poignet libre',
     why:
@@ -483,21 +603,24 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'soins-bras',
     name: 'Soins du bras plâtré',
     what: 'Bouger les doigts et l\'épaule du bras plâtré plusieurs fois par jour, pour qu\'ils ne s\'enraidissent pas et que la main ne gonfle pas.',
+    cues: [
+      'Doigts : poing fermé, main grande ouverte, 10 fois.',
+      'Pouce : touche le bout de chaque doigt, 5 fois.',
+      'Épaule : lève le bras plâtré devant toi, sans douleur, 10 fois.',
+    ],
     where: ['maison', 'salle', 'dehors'],
     equipment: 'Rien',
     why:
       'Garder les doigts et l\'épaule mobiles évite la raideur et aide le gonflement à se résorber : ce sont les ' +
-      'consignes des services de fracture, trois à quatre fois par jour. Et imaginer des contractions de toutes ses ' +
-      'forces, sans bouger, a réduit de moitié la perte de force d\'un poignet plâtré quatre semaines (Clark 2014).',
+      'consignes des services de fracture, trois à quatre fois par jour.',
     steps: [
       'Doigts : ferme le poing, ouvre grand la main, écarte les doigts — 10 fois.',
       'Pouce : touche le bout de chaque doigt — 5 fois.',
       'Épaule : lève doucement le bras plâtré devant toi, aussi haut que possible sans douleur, puis redescends — 10 fois.',
       'Assis, le bras plâtré posé sur un coussin plus haut que le coude dès que tu peux.',
-      'L\'imagerie, du lundi au vendredi : allongé, les yeux fermés, imagine que tu plies le coude plâtré de toutes tes forces pendant 5 secondes, sans contracter le bras ; 5 secondes de repos. 13 fois, quatre séries, 1 minute entre elles : 11 minutes. Une série sur deux, imagine que tu le tends.',
     ],
-    feel: 'Une gêne qui passe dans les deux heures est normale ; une douleur qui monte ne l\'est pas. Pendant l\'imagerie, le bras reste mou : seul le cerveau force.',
-    mistakes: ['Laisser la main pendre toute la journée : elle gonfle.', 'Contracter pour de vrai pendant l\'imagerie : si tu sens le muscle se tendre dans le plâtre, relâche.'],
+    feel: 'Une gêne qui passe dans les deux heures est normale ; une douleur qui monte ne l\'est pas.',
+    mistakes: ['Laisser la main pendre toute la journée : elle gonfle.'],
     cast:
       'Doigts qui gonflent, bleuissent, s\'engourdissent, ou douleur qui augmente dans le plâtre : appelle ton ' +
       'chirurgien ou les urgences sans attendre.',
@@ -506,6 +629,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'respiration',
     name: 'Respiration',
     what: 'Respirer lentement avec le ventre, en comptant les secondes de chaque inspiration et de chaque expiration.',
+    cues: [
+      'Allongé, une main sur le ventre.',
+      '5 min : inspire 4 s, expire 6 s. Puis 5 min : inspire 4 s, expire 8 s.',
+      'Avec l\'appareil : 30 inspirations fortes, matin et soir.',
+    ],
     where: ['maison', 'salle', 'dehors'],
     equipment: 'Un entraîneur inspiratoire (POWERbreathe Plus Sport) si tu l\'as ; sinon rien',
     why:
@@ -527,6 +655,12 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'souplesse',
     name: 'Souplesse de la chaîne postérieure',
     what: 'Trois étirements doux : l\'arrière des cuisses, les mollets, l\'avant de la hanche.',
+    cues: [
+      'Arrière des cuisses : sur le dos, la sangle sous le pied, la jambe tendue, 45 s.',
+      'Mollets : la main au mur, la jambe tendue derrière, le talon au sol, 45 s.',
+      'Avant de la hanche : un genou au sol, avance le bassin, 45 s.',
+      'Deux fois de chaque côté, sans à-coups.',
+    ],
     where: ['maison', 'salle'],
     equipment: 'Une sangle (ou une ceinture), un mur, un coussin',
     why:
@@ -546,6 +680,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'echauffement-maison',
     name: 'Échauffement à la maison',
     what: 'Six minutes de mouvements faciles pour chauffer les jambes avant de forcer.',
+    cues: [
+      '1 min de marche sur place, genoux hauts.',
+      '10 assis-debout sans les mains, puis 10 ponts fessiers.',
+      '10 montées sur la pointe des pieds, puis 5 fentes arrière par jambe.',
+    ],
     where: ['maison'],
     equipment: 'Une chaise sans roulettes, un mur, le tapis',
     why:
@@ -575,6 +714,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'split-squat-maison',
     name: 'Fente bulgare, pied arrière sur le step',
     what: 'Une fente sur une seule jambe : le dessus du pied arrière posé sur le step, tu descends le genou arrière vers le sol en pliant la jambe avant, puis tu remontes.',
+    cues: [
+      'Le dessus du pied arrière sur le step, calé contre un mur.',
+      'La main valide sur l\'encadrement de porte.',
+      'Descends droit, le genou arrière vers le sol, le genou avant au-dessus du pied.',
+    ],
     where: ['maison'],
     equipment: 'Le step à 40 cm (ou le tabouret) calé contre un mur, un encadrement de porte',
     why:
@@ -610,6 +754,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'leg-curl-serviette',
     name: 'Flexion des jambes, talons sur une serviette (leg curl)',
     what: 'Allongé sur le dos, le bassin levé, tu fais glisser les talons loin de toi : l\'arrière des cuisses freine le mouvement.',
+    cues: [
+      'Sur le dos, les talons sur une serviette posée sur le parquet.',
+      'Le bassin haut, fais glisser les talons loin de toi en 4 s.',
+      'Pose les fesses, ramène les talons, remonte le bassin.',
+    ],
     where: ['maison'],
     equipment: 'Une serviette, un sol lisse (parquet, carrelage), le tapis sous le dos',
     why:
@@ -642,6 +791,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'tirage-elastique',
     name: 'Tirage à un bras, élastique à la porte',
     what: 'Face à la porte, tu tires la poignée vers tes côtes, comme un coup de rame, puis tu rends lentement.',
+    cues: [
+      'Face à la porte, l\'accroche à hauteur de poitrine, deux élastiques sur la poignée.',
+      'Tire le coude le long des côtes en 1 s, l\'omoplate serrée ; tiens 1 s.',
+      'Rends en 2 s, le buste ne tourne pas.',
+    ],
     where: ['maison'],
     equipment: 'Le kit d\'élastiques : deux élastiques, une poignée, l\'accroche de porte',
     why:
@@ -669,6 +823,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'bras-elastique',
     name: 'Bras valide à l\'élastique : plier, tendre, serrer',
     what: 'Trois mouvements pour le bras valide : plier le coude contre l\'élastique, tendre le bras vers le bas, serrer l\'anneau.',
+    cues: [
+      'Plier : l\'accroche en bas de la porte, le coude collé au flanc.',
+      'Tendre : l\'accroche en haut, pousse la main vers la cuisse.',
+      'Serrer : l\'anneau à fond 5 s, relâche 5 s. Puis le maximum sous la table.',
+    ],
     where: ['maison'],
     equipment: 'Le kit d\'élastiques (un élastique, une poignée, l\'accroche de porte), l\'anneau de serrage',
     why:
@@ -699,6 +858,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'descente-marche',
     name: 'Descente lente du step',
     what: 'Debout sur le step, tu plies lentement la jambe d\'appui jusqu\'à ce que le talon de l\'autre pied effleure le sol devant.',
+    cues: [
+      'Debout sur le step, la main valide au mur ou à l\'encadrement.',
+      'Plie la jambe d\'appui en 4 s : le talon libre effleure le sol devant.',
+      'Le genou reste au-dessus du deuxième orteil.',
+    ],
     where: ['maison', 'dehors'],
     equipment: 'Le step à 20 cm (ou une marche d\'escalier), un encadrement de porte ou un mur pour la main valide',
     why:
@@ -730,6 +894,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'souleve-une-jambe',
     name: 'Bascule sur une jambe (soulevé de terre)',
     what: 'Debout sur un pied, tu penches le buste en avant pendant que l\'autre jambe part en arrière, le dos droit, puis tu te redresses.',
+    cues: [
+      'Sur une jambe, la main valide sur l\'encadrement, le genou souple.',
+      'Bascule le buste en 3 s, la jambe libre part en arrière : une seule ligne.',
+      'Remonte en 1 s en serrant la fesse.',
+    ],
     where: ['maison'],
     equipment: 'Un encadrement de porte',
     why:
@@ -759,6 +928,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'pas-chasses',
     name: 'Pas chassés à la mini-bande',
     what: 'Une mini-bande autour des chevilles, tu te déplaces de côté à petits pas, sans jamais laisser la bande se détendre.',
+    cues: [
+      'La mini-bande aux chevilles, face au mur, la main valide dessus.',
+      'Des pas de 30 cm sur le côté, la bande toujours tendue.',
+      '12 pas dans un sens, 12 dans l\'autre.',
+    ],
     where: ['maison'],
     equipment: 'Une mini-bande, un mur dégagé sur 3 mètres',
     why:
@@ -788,6 +962,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'montee-genou',
     name: 'Montée de genou sur le dos, contre la mini-bande',
     what: 'Allongé sur le dos, les deux pieds reliés par une mini-bande, tu ramènes un genou vers la poitrine contre la bande.',
+    cues: [
+      'Sur le dos, la mini-bande autour des deux pieds.',
+      'Le bas du dos plaqué, les jambes tendues à 20 cm du sol.',
+      'Ramène un genou vers la poitrine en 1 s, repars en 2 s, alterne.',
+    ],
     where: ['maison'],
     equipment: 'Une mini-bande, le tapis',
     why:
@@ -816,6 +995,10 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'marche',
     name: 'Marche tranquille',
     what: 'Marcher à allure de conversation.',
+    cues: [
+      'Allure de conversation : des phrases entières.',
+      'Un sol sec et régulier, rien à la main.',
+    ],
     where: ['dehors'],
     equipment: 'De bonnes chaussures, la montre au poignet libre',
     why:
@@ -839,6 +1022,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'montee-tabouret',
     name: 'Montées sur le step : lentes, continues, rapides',
     what: 'Un pied sur le step, tu montes dessus en poussant sur cette jambe, puis tu redescends : lentement pour la force, vite pour la puissance, en continu pour l\'endurance.',
+    cues: [
+      'Le step calé contre un mur, la main valide au mur.',
+      'Tout le pied sur le step : monte en poussant dans ce talon.',
+      'Redescends en 4 s en freinant avec la jambe du haut.',
+    ],
     where: ['maison'],
     equipment: 'Le step à 40 cm (ou le tabouret) calé contre un mur ; un sac à dos chargé pour plus dur ; le mur pour la main valide',
     why:
@@ -873,6 +1061,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'mollets-sol',
     name: 'Montées sur la pointe d\'un pied',
     what: 'Debout sur un pied, tu montes sur la pointe, puis tu redescends lentement jusqu\'à reposer le talon.',
+    cues: [
+      'Sur un pied, face au mur, la main valide dessus.',
+      'Monte tout en haut en 1 s, tiens 1 s.',
+      'Redescends en 3 s jusqu\'au talon posé.',
+    ],
     where: ['maison', 'salle', 'dehors'],
     equipment: 'Rien ; un mur pour la main valide',
     why:
@@ -900,42 +1093,231 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     harder: 'Sur le bord de la première marche d\'un escalier, le talon qui descend sous la marche ; ou 5 secondes de descente.',
     cast: 'La main valide au mur : sur un pied, c\'est elle qui rattrape.',
   },
-  'tests-maison': {
-    key: 'tests-maison',
-    name: 'Les tests du bloc',
-    what: 'Sept mesures simples, le premier et le dernier jour du bloc, pour savoir d\'où tu pars et ce que tu as gagné.',
+  'chaise-une-jambe': {
+    key: 'chaise-une-jambe',
+    name: 'Chaise sur une jambe',
+    what: 'La chaise contre le mur, mais un pied levé de quelques centimètres : une seule cuisse tient tout le poids.',
+    cues: [
+      'Dos au mur, les cuisses parallèles au sol, comme pour la chaise.',
+      'Lève un pied de 5 cm : la jambe d\'appui tient seule.',
+      'Tiens le temps dit, puis l\'autre jambe.',
+    ],
     where: ['maison'],
-    equipment: 'Le step à 40 cm, un mur, un chrono, un mètre ruban',
+    equipment: 'Un mur',
     why:
-      'Ce qui se mesure progresse. Chaque test vise une de tes lacunes ou un pilier du trail long : le mollet et ' +
-      'le tendon d\'Achille, l\'arrière de la cuisse, la force qui tient des quadriceps, le gainage, l\'équilibre, la ' +
-      'cheville, la souplesse. Les repères viennent d\'études publiées ; compare-toi d\'abord à toi-même.',
-    setup: [
-      'Échauffe-toi 6 minutes ; fais les tests dans l\'ordre, 2 minutes de pause entre chacun.',
-      'Note chaque résultat, jambe par jambe, dans la note du point du jour.',
-      'Plus de 10 % d\'écart entre tes deux jambes sur un test : une série de plus du côté faible, jusqu\'au test de fin.',
-    ],
+      'La chaise sur deux jambes, en deux fois plus dur : la cuisse qui tient seule, comme celle qui freine à chaque ' +
+      'appui d\'une descente.',
+    setup: ['Dos contre le mur, les pieds à 40 cm devant, à la largeur des hanches.'],
     steps: [
-      'Mollets : sur un pied, au sol, la main posée au mur sans tirer, monte tout en haut et redescends, une fois toutes les 2 secondes, jusqu\'à ne plus pouvoir monter en entier. Repère : environ 32 à ton âge (Hébert-Losier 2017).',
-      'Arrière de la cuisse : sur le dos, les bras croisés sur la poitrine, un talon sur le step à 40 cm, l\'autre jambe tendue vers le plafond ; monte le bassin, redescends effleurer le sol, jusqu\'à ne plus pouvoir. Repère sur un banc de 60 cm : moins de 20, faible ; plus de 30, bon (Freckleton 2014) ; sur 40 cm, compare-toi à toi-même.',
-      'Chaise contre le mur : cuisses parallèles au sol, chronomètre jusqu\'à ne plus tenir.',
-      'Gainage sur le côté, sur le coude valide : chronomètre jusqu\'à ce que le bassin tombe.',
-      'Équilibre : sur un pied, dans un angle de mur, yeux fermés ; chronomètre jusqu\'à ce que le pied bouge ou que l\'autre touche le sol, 60 secondes au plus.',
-      'Cheville (genou au mur) : face au mur, un pied devant ; pousse le genou contre le mur, talon au sol, et recule le pied jusqu\'à la plus grande distance où le genou touche encore. Mesure du gros orteil au mur. Repère : 10 cm et plus.',
-      'Souplesse : debout jambes tendues, penche-toi vers le sol ; mesure la distance du bout des doigts au sol, négative si tu ne touches pas. Ton test d\'effort : −1 cm.',
+      'Glisse jusqu\'aux cuisses parallèles au sol.',
+      'Lève un pied de 5 cm, sans pencher le bassin.',
+      'Tiens le temps prescrit, repose le pied, puis l\'autre jambe.',
     ],
-    breath: 'Respire pendant les maintiens ; ne bloque jamais.',
-    feel: 'Les tests jusqu\'à l\'échec brûlent : c\'est leur rôle. Rien ne doit faire mal au coude.',
-    mistakes: [
-      'Tricher sur l\'amplitude pour gagner des répétitions : un test ne vaut que par sa constance.',
-      'Les refaire fatigué : même moment de la journée, le premier et le dernier jour.',
+    breath: 'Calme et régulière : ne bloque jamais.',
+    feel: 'La cuisse d\'appui brûle ; le dos reste à plat contre le mur.',
+    mistakes: ['Laisser le genou d\'appui rentrer vers l\'intérieur.', 'Pousser sur la cuisse avec la main.'],
+    easier: 'Moins bas : genou à 120°.',
+    harder: '10 secondes de plus.',
+    cast: 'Rien à tenir : le bras plâtré contre toi.',
+  },
+  imagerie: {
+    key: 'imagerie',
+    name: 'Imagerie du bras plâtré',
+    what: 'Allongé, les yeux fermés, tu imagines que tu plies le coude plâtré de toutes tes forces, sans contracter le bras.',
+    cues: [
+      'Allongé, les yeux fermés, le bras plâtré posé et mou.',
+      'Imagine que tu plies le coude de toutes tes forces 5 s, sans contracter ; 5 s de repos.',
+      'Une série sur deux, imagine que tu le tends.',
     ],
-    cast: 'Aucun test ne s\'appuie sur le bras plâtré ; l\'équilibre se teste dans un angle de mur, la main valide prête.',
+    where: ['maison'],
+    equipment: 'Rien',
+    why:
+      'Le cerveau perd l\'habitude de commander un muscle immobilisé avant que le muscle ne fonde. Imaginer des ' +
+      'contractions maximales, sans bouger, a réduit de moitié la perte de force d\'un poignet plâtré quatre ' +
+      'semaines (Clark 2014).',
+    steps: [
+      'Allongé sur le dos, le bras plâtré posé sur le ventre, les yeux fermés.',
+      'Imagine que tu plies le coude de toutes tes forces pendant 5 secondes : sens l\'effort dans ta tête, pas dans le bras.',
+      'Relâche 5 secondes. 13 fois, puis 1 minute de pause.',
+      'Quatre séries. Une sur deux, imagine que tu tends le coude.',
+    ],
+    breath: 'Calme ; ne bloque pas pendant l\'effort imaginé.',
+    feel: 'Une concentration intense, et un bras qui reste mou.',
+    mistakes: ['Contracter pour de vrai : si tu sens le muscle se tendre dans le plâtre, relâche.', 'Le faire en pensant à autre chose : c\'est l\'intensité de l\'effort imaginé qui compte.'],
+    cast: 'Rien ne bouge dans le plâtre : seul le cerveau force.',
+  },
+  'test-mollets': {
+    key: 'test-mollets',
+    name: 'Test des mollets, sur un pied',
+    what: 'Sur un pied, tu montes sur la pointe et tu redescends, au rythme d\'une montée toutes les 2 secondes, jusqu\'à ne plus pouvoir monter en entier.',
+    cues: [
+      'Sur un pied, les doigts posés au mur sans tirer.',
+      'Une montée toutes les 2 s, au bip, tout en haut à chaque fois.',
+      'Arrête quand tu ne montes plus en entier ou perds le rythme.',
+    ],
+    where: ['maison'],
+    equipment: 'Un mur ; le métronome de la séance',
+    why:
+      'L\'endurance du mollet et du tendon d\'Achille, qui encaissent chaque foulée : c\'est le test de référence ' +
+      '(Hébert-Losier 2017).',
+    steps: [
+      'Sur un pied, au sol, les doigts posés au mur à hauteur d\'épaule, sans tirer ; l\'autre pied levé.',
+      'Monte tout en haut et redescends, une montée toutes les 2 secondes, au bip.',
+      'Arrête quand tu ne montes plus en entier ou que tu perds le rythme : note le nombre.',
+      'L\'autre jambe après 2 minutes.',
+    ],
+    feel: 'Le mollet brûle, puis lâche.',
+    mistakes: ['Pousser sur le mur avec les doigts.', 'Monter à moitié pour faire durer : une montée incomplète ne compte pas.'],
+    cast: 'Les doigts de la main valide au mur : ils rattrapent, ils ne tirent pas.',
+    measure: { unit: 'répétitions', perSide: true, guide: 'métronome', beatS: 2, reference: 'Repère : environ 32 à ton âge (Hébert-Losier 2017).' },
+  },
+  'test-pont': {
+    key: 'test-pont',
+    name: 'Test du pont sur une jambe, talon sur le step',
+    what: 'Sur le dos, un talon sur le step, l\'autre jambe vers le plafond : tu montes et redescends le bassin jusqu\'à ne plus pouvoir.',
+    cues: [
+      'Sur le dos, les bras croisés, un talon sur le step de 40 cm.',
+      'L\'autre jambe tendue à la verticale.',
+      'Monte le bassin, redescends effleurer le sol, sans pause, jusqu\'à ne plus pouvoir.',
+    ],
+    where: ['maison'],
+    equipment: 'Le step à 40 cm (ou le tabouret), le tapis',
+    why:
+      'L\'endurance de l\'arrière des cuisses : faible, elle annonce les déchirures chez les sportifs qui courent ' +
+      '(Freckleton 2014).',
+    steps: [
+      'Sur le dos, les bras croisés sur la poitrine, un talon sur le step, le genou un peu fléchi.',
+      'L\'autre jambe tendue vers le plafond.',
+      'Pousse dans le talon : le bassin monte ; redescends effleurer le sol, et repars.',
+      'Jusqu\'à ne plus pouvoir monter : note le nombre. L\'autre jambe après 2 minutes.',
+    ],
+    feel: 'L\'arrière de la cuisse et la fesse brûlent.',
+    mistakes: ['Pousser avec les bras.', 'Se reposer le bassin au sol entre deux répétitions.'],
+    cast: 'Les bras croisés sur la poitrine, le plâtré dessous : il ne pousse pas.',
+    measure: { unit: 'répétitions', perSide: true, reference: 'Sur un banc de 60 cm : moins de 20, faible ; plus de 30, bon (Freckleton 2014). Sur 40 cm, compare-toi à toi-même.' },
+  },
+  'test-chaise': {
+    key: 'test-chaise',
+    name: 'Test de la chaise contre le mur',
+    what: 'Le dos au mur, les cuisses parallèles au sol, tu tiens le plus longtemps possible.',
+    cues: [
+      'Dos au mur, les cuisses parallèles au sol, les genoux au-dessus des chevilles.',
+      'Lance le chrono ; tiens jusqu\'à ne plus pouvoir.',
+      'Les mains ne touchent pas les cuisses.',
+    ],
+    where: ['maison'],
+    equipment: 'Un mur, le chrono de la séance',
+    why: 'L\'endurance des quadriceps qui tiennent : celle qui lâche en fin de descente.',
+    steps: [
+      'Dos au mur, glisse jusqu\'aux cuisses parallèles au sol.',
+      'Lance le chrono.',
+      'Arrête-le quand tu ne tiens plus la position : note le temps.',
+    ],
+    feel: 'Les cuisses brûlent, de plus en plus.',
+    mistakes: ['Remonter un peu pour durer : la mesure ne vaut qu\'à la même hauteur.', 'Bloquer sa respiration.'],
+    cast: 'Rien à tenir : le bras plâtré contre toi.',
+    measure: { unit: 'secondes', perSide: false, guide: 'chrono' },
+  },
+  'test-gainage': {
+    key: 'test-gainage',
+    name: 'Test du gainage sur le côté',
+    what: 'Sur le coude valide, le corps droit, tu tiens le plus longtemps possible.',
+    cues: [
+      'Sur le côté, le coude valide sous l\'épaule, le corps droit des pieds à la tête.',
+      'Lance le chrono ; arrête quand le bassin tombe.',
+    ],
+    where: ['maison'],
+    equipment: 'Le tapis, le chrono de la séance',
+    why: 'L\'endurance du tronc qui tient le bassin quand la fatigue arrive.',
+    steps: [
+      'Allongé sur le côté du bras valide, le coude sous l\'épaule.',
+      'Monte le bassin : la tête, le bassin et les pieds alignés. Lance le chrono.',
+      'Arrête quand le bassin tombe : note le temps.',
+    ],
+    feel: 'Le côté du ventre et l\'épaule du dessous.',
+    mistakes: ['Laisser le bassin partir en arrière pour durer.'],
+    cast: 'Uniquement sur le coude valide. Le bras plâtré posé sur la hanche.',
+    measure: { unit: 'secondes', perSide: false, guide: 'chrono' },
+  },
+  'test-equilibre': {
+    key: 'test-equilibre',
+    name: 'Test d\'équilibre, yeux fermés',
+    what: 'Sur un pied, les yeux fermés, tu tiens le plus longtemps possible, une minute au plus.',
+    cues: [
+      'Dans un angle de mur, la main valide à 20 cm du mur.',
+      'Sur un pied, ferme les yeux et lance le chrono.',
+      'Arrête quand le pied bouge ou que l\'autre touche le sol : 60 s au plus.',
+    ],
+    where: ['maison'],
+    equipment: 'Un angle de mur, le chrono de la séance',
+    why: 'La cheville et la hanche qui corrigent sans les yeux : ce qu\'elles font dans un sentier, fatiguées.',
+    steps: [
+      'Dans un angle de mur, sur un pied, l\'autre pied levé de quelques centimètres.',
+      'Ferme les yeux et lance le chrono.',
+      'Arrête quand le pied d\'appui bouge, que l\'autre pied touche le sol ou que la main touche le mur : note le temps.',
+      'Trois essais par jambe : note le meilleur.',
+    ],
+    feel: 'La cheville corrige sans arrêt.',
+    mistakes: ['Le faire loin d\'un mur.'],
+    cast: 'Toujours dans un angle de mur, du côté de la main valide.',
+    measure: { unit: 'secondes', perSide: true, max: 60, guide: 'chrono' },
+  },
+  'test-cheville': {
+    key: 'test-cheville',
+    name: 'Test de la cheville, genou au mur',
+    what: 'Face au mur, tu pousses le genou contre le mur, le talon au sol, et tu mesures jusqu\'où le pied peut reculer.',
+    cues: [
+      'Face au mur, un pied devant, le talon au sol.',
+      'Pousse le genou contre le mur ; recule le pied tant que le genou touche encore.',
+      'Mesure du gros orteil au mur.',
+    ],
+    where: ['maison'],
+    equipment: 'Un mur, un mètre ruban',
+    why:
+      'La souplesse de la cheville : courte, elle reporte la charge sur le genou et le tendon d\'Achille dans ' +
+      'les montées et les descentes.',
+    steps: [
+      'Face au mur, un pied devant, le gros orteil à 10 cm du mur ; l\'autre pied derrière.',
+      'Avance le genou jusqu\'à toucher le mur, le talon collé au sol.',
+      'Recule le pied d\'un centimètre à la fois, tant que le genou touche encore sans que le talon décolle.',
+      'Mesure du gros orteil au mur : note la distance, puis l\'autre jambe.',
+    ],
+    feel: 'Un étirement au mollet et au tendon, jamais une douleur devant la cheville.',
+    mistakes: ['Laisser le talon décoller.', 'Laisser le genou partir vers l\'intérieur.'],
+    cast: 'La main valide au mur.',
+    measure: { unit: 'cm', perSide: true, reference: 'Repère : 10 cm et plus.' },
+  },
+  'test-souplesse': {
+    key: 'test-souplesse',
+    name: 'Test de souplesse, debout',
+    what: 'Debout, jambes tendues, tu te penches vers le sol et tu mesures la distance entre le bout des doigts et le sol.',
+    cues: [
+      'Debout, pieds joints, jambes tendues.',
+      'Penche-toi lentement, les bras vers le sol, sans à-coup.',
+      'Mesure du bout des doigts au sol : en négatif si tu ne touches pas.',
+    ],
+    where: ['maison'],
+    equipment: 'Un mètre ruban',
+    why: 'Ta chaîne postérieure, courte au test d\'effort (−1 cm) : la souplesse se mesure pour progresser.',
+    steps: [
+      'Debout, pieds joints, jambes tendues.',
+      'Penche-toi lentement, le bras valide vers le sol ; tiens 2 secondes au plus bas.',
+      'Mesure du bout des doigts au sol : −5 si les doigts restent à 5 cm au-dessus, +3 s\'ils descendent 3 cm plus bas.',
+    ],
+    feel: 'L\'arrière des cuisses et des mollets s\'étire.',
+    mistakes: ['Plier les genoux.', 'Donner un à-coup pour gagner un centimètre.'],
+    cast: 'Seul le bras valide descend ; le plâtré reste contre toi.',
+    measure: { unit: 'cm', perSide: false, reference: 'Ton test d\'effort : −1 cm.' },
   },
   'reverse-nordic': {
     key: 'reverse-nordic',
     name: 'Bascule arrière à genoux',
     what: 'À genoux, le corps droit des genoux à la tête, tu te penches lentement en arrière, puis tu reviens : le devant des cuisses freine.',
+    cues: [
+      'À genoux sur le tapis plié, le dessus des pieds au sol.',
+      'Le corps droit des genoux à la tête, les fesses serrées.',
+      'Penche-toi en arrière en 3 s, reviens en 2 s. Jamais de main vers le sol.',
+    ],
     where: ['maison'],
     equipment: 'Le tapis plié en deux sous les genoux',
     why:
@@ -967,6 +1349,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'pousse-elastique',
     name: 'Poussée à un bras, élastique dans le dos',
     what: 'Dos à la porte, tu pousses la poignée droit devant toi, comme un coup de poing lent, puis tu la ramènes.',
+    cues: [
+      'Dos à la porte, l\'accroche à hauteur de poitrine, deux élastiques.',
+      'Pousse droit devant en 1 s, tiens 1 s, reviens en 2 s.',
+      'Le buste ne tourne pas.',
+    ],
     where: ['maison'],
     equipment: 'Le kit d\'élastiques : deux élastiques, une poignée, l\'accroche de porte',
     why:
@@ -992,6 +1379,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'hip-thrust',
     name: 'Pont sur le canapé, sur une jambe (hip thrust)',
     what: 'Le haut du dos appuyé au bord du canapé, un pied au sol, tu montes le bassin jusqu\'à aligner les épaules, les hanches et le genou.',
+    cues: [
+      'Les omoplates sur le bord du canapé, un pied à plat au sol.',
+      'Monte le bassin en 1 s : le buste à plat, le genou à angle droit.',
+      'Tiens 2 s en serrant la fesse, redescends en 2 s sans poser.',
+    ],
     where: ['maison'],
     equipment: 'Le canapé (ou un lit bas)',
     why:
@@ -1021,6 +1413,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'copenhague',
     name: 'Gainage des adducteurs (Copenhague)',
     what: 'Sur le côté, sur le coude valide, le genou du dessus posé sur le step : tu soulèves le bassin en serrant l\'intérieur de la cuisse.',
+    cues: [
+      'Sur le coude valide, le genou du dessus posé sur le step à 40 cm.',
+      'Monte le bassin en 1 s : la tête, le bassin et le genou alignés.',
+      'Redescends en 2 s.',
+    ],
     where: ['maison'],
     equipment: 'Le step à 40 cm, le tapis',
     why:
@@ -1048,6 +1445,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'adducteurs-coussin',
     name: 'Serrage de coussin entre les genoux',
     what: 'Sur le dos, genoux pliés, un coussin entre les genoux : tu le serres le plus fort possible, puis tu relâches.',
+    cues: [
+      'Sur le dos, genoux pliés, un coussin ferme entre les genoux.',
+      'Serre à fond 10 s, relâche 10 s.',
+      'Respire pendant le serrage.',
+    ],
     where: ['maison'],
     equipment: 'Un coussin ferme, le tapis',
     why: 'Les adducteurs des deux jambes à la fois, sans appui sur les bras : le complément de la Copenhague.',
@@ -1064,6 +1466,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'mollets-iso',
     name: 'Mollet sous le cadre de porte (isométrie lourde)',
     what: 'Sur la pointe d\'un pied, la main valide à plat sous le haut d\'un cadre de porte : tu pousses le cadre vers le haut et le sol avec l\'avant du pied, aussi fort que tu peux, sans bouger.',
+    cues: [
+      'Sur un pied, à mi-hauteur sur la pointe, juste en retrait du cadre de porte.',
+      'La main valide à plat sous le haut du cadre.',
+      'Pousse le cadre et le sol à fond 3 s, relâche 3 s, sans bouger.',
+    ],
     where: ['maison'],
     equipment: 'Un cadre de porte',
     why:
@@ -1093,6 +1500,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'pied-court',
     name: 'Pied court et orteils',
     what: 'Assis, le pied à plat : tu creuses la voûte du pied sans plier les orteils, puis tu lèves le gros orteil seul, puis les quatre autres.',
+    cues: [
+      'Assis, pieds nus à plat.',
+      'Creuse la voûte : l\'avant du pied recule vers le talon, les orteils restent à plat. Tiens 5 s.',
+      'Puis lève le gros orteil seul, puis les quatre autres.',
+    ],
     where: ['maison'],
     equipment: 'Une chaise',
     why:
@@ -1115,6 +1527,11 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     key: 'equilibre',
     name: 'Équilibre sur un pied, yeux fermés',
     what: 'Debout sur un pied dans un angle de mur, tu fermes les yeux et tu tiens.',
+    cues: [
+      'Dans un angle de mur, la main valide à 20 cm du mur.',
+      'Sur un pied, le genou souple, ferme les yeux.',
+      'Si tu perds l\'équilibre, la main touche le mur, puis reprends.',
+    ],
     where: ['maison'],
     equipment: 'Un angle de mur ; le tapis plié pour plus difficile',
     why:
@@ -1189,7 +1606,7 @@ export const EXERCISE_WORDS: { word: string; plain: string }[] = [
 export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why: string }[] = [
   {
     day: 'Lundi',
-    title: 'Force 1 · genoux et freinage',
+    title: 'Force 1 : genoux et freinage',
     focus: 'Fente bulgare, descente lente du step, bascule arrière à genoux, flexion sur serviette, chaise, mollet sous le cadre ; pousser et tirer avec le bras valide.',
     why: 'Les quadriceps qui freinent dans les descentes : ton aisance en descente, mesurée sur tes sorties, est à 0,68 de celle d\'un bon traileur — ta marge la plus nette.',
   },
@@ -1201,7 +1618,7 @@ export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why:
   },
   {
     day: 'Mercredi',
-    title: 'Force 2 · hanches et chaîne arrière',
+    title: 'Force 2 : hanches et fessiers',
     focus: 'Bascule sur une jambe, pont sur le canapé, pas chassés, Copenhague, coussin, montée de genou, mollet sous le cadre ; le bras valide au maximum.',
     why: 'Les fessiers et l\'arrière des cuisses te poussent en montée ; les adducteurs et le moyen fessier tiennent le bassin quand la fatigue arrive.',
   },
@@ -1213,7 +1630,7 @@ export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why:
   },
   {
     day: 'Vendredi',
-    title: 'Force 3 · une jambe et montées',
+    title: 'Force 3 : une jambe, montées',
     focus: 'Montée explosive sur le step à 40 cm, chaise sur une jambe, bascule arrière, flexion sur serviette, Copenhague, mollet sous le cadre ; pousser et tirer ; montées continues.',
     why: 'La puissance, la force qui tient sur un pied, et l\'endurance des côtes : ce qui manque après trois heures de trail.',
   },

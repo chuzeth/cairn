@@ -1,7 +1,7 @@
 import type {
   Activity, ActivityAnalysis, ActivityStreams, AthleteHome, AthleteProfile, ChatMessage,
   CoachInsight, DailyCheckIn, DeclaredAbsence, LabTest, PhysiologyModel, PlannedSession,
-  RaceGoal, SessionRoute, TrainingPlan, TrainingWeek,
+  RaceGoal, SessionRoute, StrengthTestResult, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import type { GarminSyncState, LedgerEntry } from '@cairn/garmin';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm';
@@ -1249,4 +1249,67 @@ export async function putSessionRoute(sessionId: string, route: SessionRoute): P
 export async function purgeSessionRoutes(): Promise<void> {
   await ensureRouteTables();
   await getDb().run(sql`delete from session_routes where session_id not in (select id from planned_sessions)`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests de force
+// ─────────────────────────────────────────────────────────────────────────────
+
+let testsReady: Promise<unknown> | null = null;
+
+/** Crée la table des tests si elle manque — le service ne passe pas `db:push`. */
+export function ensureTestTables(): Promise<unknown> {
+  testsReady ??= (async () => {
+    for (const statement of createStatements(t.strengthTests)) await getDb().run(sql.raw(statement));
+  })().catch((e) => {
+    testsReady = null;
+    throw e;
+  });
+  return testsReady;
+}
+
+/** Les résultats des tests de l'athlète, du plus ancien au plus récent. */
+export async function listStrengthTests(athleteId: string): Promise<StrengthTestResult[]> {
+  await ensureTestTables();
+  const rows = await getDb()
+    .select()
+    .from(t.strengthTests)
+    .where(eq(t.strengthTests.athleteId, athleteId))
+    .orderBy(asc(t.strengthTests.date), asc(t.strengthTests.test));
+  return rows.map((r) => ({
+    date: r.date,
+    test: r.test,
+    ...(r.value as Pick<StrengthTestResult, 'left' | 'right' | 'value'>),
+    updatedAt: r.updatedAt,
+  }));
+}
+
+/**
+ * Enregistre un résultat. Ce qui est dit remplace ce qui l'était, ce qui ne
+ * l'est pas reste : la jambe droite notée après la gauche ne l'efface pas.
+ * `null` efface une valeur.
+ */
+export async function saveStrengthTest(
+  athleteId: string,
+  date: string,
+  test: string,
+  patch: { left?: number | null; right?: number | null; value?: number | null },
+): Promise<StrengthTestResult> {
+  await ensureTestTables();
+  const id = `${athleteId}:${date}:${test}`;
+  const db = getDb();
+  const [row] = await db.select().from(t.strengthTests).where(eq(t.strengthTests.id, id));
+  const before = (row?.value ?? {}) as Record<string, number>;
+  const value: Record<string, number> = { ...before };
+  for (const key of ['left', 'right', 'value'] as const) {
+    const v = patch[key];
+    if (v === null) delete value[key];
+    else if (v !== undefined) value[key] = v;
+  }
+  const updatedAt = new Date().toISOString();
+  await db
+    .insert(t.strengthTests)
+    .values({ id, athleteId, date, test, value, updatedAt })
+    .onConflictDoUpdate({ target: t.strengthTests.id, set: { value, updatedAt } });
+  return { date, test, ...value, updatedAt };
 }

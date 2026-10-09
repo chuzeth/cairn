@@ -575,6 +575,11 @@ export function compensationHomeDay(model: PhysiologyModel, dow: number): Sessio
  * alléger (3) pour que le travail se transforme et que les tests de fin
  * mesurent un athlète frais. Debout sur une jambe, jamais d'échec : avec un
  * plâtre, l'échec, c'est la chute.
+ *
+ * Le même jour, Pierre veut ouvrir sa séance et la suivre « exercice par
+ * exercice », en grandes parties. Chaque bloc dit donc sa partie (`part`), son
+ * côté (`sides`), son tempo, sa réserve, et l'effort guidé que le minuteur
+ * rythme (`pulse`) ; la consigne longue reste dans la fiche.
  */
 
 /** La semaine du bloc : 0, les trois jours d'ouverture ; 1 construire ; 2 charger ; 3 alléger. */
@@ -629,97 +634,192 @@ const BLOCK_DAYS = 24;
 export const blockWeekOf = (index: number): BlockWeek =>
   (index < 3 ? 0 : Math.min(3, Math.floor((index - 3) / 7) + 1)) as BlockWeek;
 
-/**
- * L'imagerie du bras plâtré, cinq jours sur sept : imaginer des contractions
- * maximales, sans contracter. Quatre semaines de plâtre ont coûté deux fois
- * moins de force du poignet à ceux qui la pratiquaient (Clark 2014).
- */
-function imagery(): SessionBlock {
+/** Les parties d'une séance, dans les mots de la séance. */
+const PART = {
+  warmUp: 'Échauffement',
+  tests: 'Les tests',
+  legs: 'Jambes',
+  hips: 'Hanches',
+  adductors: 'Adducteurs',
+  calves: 'Mollets',
+  calvesFeet: 'Mollets et pieds',
+  balanceCore: 'Équilibre et tronc',
+  feetBalance: 'Pieds et équilibre',
+  arm: 'Bras valide',
+  core: 'Tronc',
+  walk: 'Marche',
+  intervals: 'Fractionné',
+  coolDown: 'Retour au calme',
+  climbs: 'Endurance des côtes',
+  mobility: 'Souplesse',
+  cast: 'Bras plâtré et respiration',
+} as const;
+
+/** Ce qu'un exercice demande, dit pour être suivi en le faisant. */
+interface Rx {
+  label: string;
+  /** Séries, par côté quand `sides` est dit. */
+  sets: number;
+  reps?: number;
+  /** Un maintien, s par série. */
+  holdS?: number;
+  sides?: 'jambe' | 'côté';
+  /** Repos après chaque série — après les deux côtés pour un exercice d'une jambe. */
+  restS: number;
+  tempo?: string;
+  reserve?: number;
+  pulse?: { workS: number; restS: number };
+  effort?: string;
+  /** Ce que la séance ajoute à la fiche : la hauteur du step, ce qui change cette semaine. */
+  notes?: string;
+  /** Durée d'une série, s, quand ni le maintien ni l'effort guidé ne la donnent. */
+  setS?: number;
+}
+
+/** Un exercice du bloc, rangé dans sa partie. */
+function ex(exercise: ExerciseKey, part: string, r: Rx): SessionBlock {
+  const setS = r.holdS ?? (r.pulse && r.reps ? r.reps * (r.pulse.workS + r.pulse.restS) : r.setS ?? 45);
   return {
-    label: 'Imagerie du bras plâtré', kind: 'mobility', zone: 'Z1', durationS: 660, exercise: 'soins-bras',
-    notes:
-      'Allongé, les yeux fermés : imagine que tu plies le coude plâtré de toutes tes forces 5 s, sans contracter ' +
-      'le bras, puis 5 s de repos. 13 fois, quatre séries, 1 min entre elles ; une série sur deux, imagine que tu ' +
-      'le tends.',
+    label: r.label,
+    part,
+    exercise,
+    zone: r.holdS ? 'Z2' : 'Z3',
+    durationS: setS,
+    repeat: r.sides ? r.sets * 2 : r.sets,
+    ...(r.reps ? { reps: r.reps } : {}),
+    ...(r.sides ? { sides: r.sides } : {}),
+    ...(r.tempo ? { tempo: r.tempo } : {}),
+    ...(r.reserve != null ? { reserve: r.reserve } : {}),
+    ...(r.pulse ? { pulse: r.pulse } : {}),
+    effort: r.effort ?? (r.reserve != null ? reserveText(r.reserve) : r.holdS ? 'Tenir sans trembler' : 'Contrôlé'),
+    ...(r.notes ? { notes: r.notes } : {}),
+    recovery: { durationS: r.restS, zone: 'Z1', active: false, betweenReps: true },
   };
 }
 
-/** Les soins de chaque jour ; l'imagerie s'y ajoute du lundi au vendredi. */
-const blockDaily = (weekday: boolean): SessionBlock[] => [...daily(), ...(weekday ? [imagery()] : [])];
-
-/** Le mollet sous le cadre de porte : quatre fois par semaine, comme dans l'étude. */
-function calfIso(d: BlockDose, sets = d.isoSets): SessionBlock {
-  return lift('mollets-iso', `Mollet sous le cadre de porte, ${sets} séries par jambe`, sets * 2, 4, 20,
-    'Pousse à fond 3 s, relâche 3 s',
-    'Sur un pied, à mi-hauteur sur la pointe, la main valide qui pousse le haut du cadre. Les jambes en ' +
-      'alternance : la pause de l\'une est la série de l\'autre.',
-    25);
+/** L'échauffement des séances à la maison. */
+function blockWarmUp(model: PhysiologyModel): SessionBlock {
+  // Ses consignes sont dans la fiche ; un échauffement à la maison ne se pilote pas au cœur.
+  const { hrRange: _hr, provenance: _p, notes: _n, ...rest } = homeWarmUp(model);
+  return { ...rest, part: PART.warmUp };
 }
 
-/** Les tests du premier et du dernier jour. */
+/**
+ * Le bras plâtré et la respiration, chaque jour ; l'imagerie s'y ajoute du lundi
+ * au vendredi — imaginer des contractions maximales, sans contracter : quatre
+ * semaines de plâtre ont coûté deux fois moins de force du poignet à ceux qui
+ * la pratiquaient (Clark 2014).
+ */
+function armCare(weekday: boolean): SessionBlock[] {
+  return [
+    ...daily().map((b) => ({ ...b, part: PART.cast })),
+    ...(weekday
+      ? [{
+          label: 'Imagerie du bras plâtré', kind: 'mobility' as const, part: PART.cast, zone: 'Z1' as const,
+          durationS: 130, repeat: 4, reps: 13, pulse: { workS: 5, restS: 5 }, exercise: 'imagerie',
+          notes: 'Une série sur deux, imagine que tu tends le coude.',
+          recovery: { durationS: 60, zone: 'Z1' as const, active: false, betweenReps: true },
+        }]
+      : []),
+  ];
+}
+
+/** Le mollet sous le cadre de porte : quatre fois par semaine, comme dans l'étude. */
+const calfIso = (d: BlockDose, sets = d.isoSets, part: string = PART.calves) =>
+  ex('mollets-iso', part, {
+    label: 'Mollet sous le cadre de porte', sets, reps: 4, sides: 'jambe', pulse: { workS: 3, restS: 3 }, restS: 20,
+    effort: 'Pousse à fond',
+  });
+
+/** Pousser et tirer avec le bras valide, l'un après l'autre. */
+const pushPull = (d: BlockDose): SessionBlock[] => [
+  ex('pousse-elastique', PART.arm, {
+    label: 'Poussée à un bras', sets: d.sets, reps: 12, restS: 30, reserve: d.reserve,
+    tempo: '1 s pour pousser, 1 s tenue, 2 s pour revenir', setS: 40,
+  }),
+  ex('tirage-elastique', PART.arm, {
+    label: 'Tirage à un bras', sets: d.sets, reps: 12, restS: 30, reserve: d.reserve,
+    tempo: '1 s pour tirer, 1 s tenue, 2 s pour rendre', setS: 40,
+  }),
+];
+
+/** Les adducteurs : la Copenhague du côté où elle se fait, le coussin pour les deux. */
+const adductors = (d: BlockDose): SessionBlock[] => [
+  ex('copenhague', PART.adductors, {
+    label: 'Copenhague, la jambe du côté du plâtre', sets: d.harder ? 3 : 2, reps: d.harder ? 8 : 6, restS: 45,
+    tempo: '1 s pour monter, 2 s pour redescendre', setS: 30,
+  }),
+  ex('adducteurs-coussin', PART.adductors, {
+    label: 'Serrage de coussin', sets: 1, reps: 6, pulse: { workS: 10, restS: 10 }, restS: 0, effort: 'Serre à fond',
+  }),
+];
+
+const deadBug = (part: string, effort = 'Dos plaqué') =>
+  ex('dead-bug', part, {
+    label: 'Dead bug, jambes seules', sets: 2, reps: 10, restS: 30, effort, setS: 40,
+    tempo: '3 s pour descendre le talon, en alternant les jambes',
+  });
+
+/** Les tests du premier et du dernier jour, un par étape. */
 export function blockTests(model: PhysiologyModel, when: 'start' | 'end'): SessionTemplate {
   const start = when === 'start';
+  const test = (exercise: ExerciseKey, label: string, r: Omit<Rx, 'label' | 'effort'> & { effort?: string }) =>
+    ex(exercise, PART.tests, { label, effort: 'Jusqu\'à l\'échec', ...r });
   return template(model, `bloc_tests_${when}`, 'strength', start ? 'Tests de départ' : 'Tests de fin de bloc',
     start
       ? 'Savoir d\'où tu pars : sept mesures, chacune vise une de tes lacunes ou un pilier du trail long. Le ' +
-          '1er novembre, les mêmes diront ce que tu as gagné. Ce soir, une marche tranquille si tu as envie de bouger.'
+          '1er novembre, les mêmes diront ce que tu as gagné.'
       : 'Les sept mesures du 9 octobre, dans le même ordre et à la même heure : ce que trois semaines de force ont ' +
           'changé, jambe par jambe.',
     [
-      homeWarmUp(model),
-      {
-        label: 'Les sept tests', zone: 'Z3', durationS: 35 * 60, exercise: 'tests-maison',
-        effort: 'Jusqu\'à l\'échec, sauf l\'équilibre',
-        notes:
-          'Dans l\'ordre de la fiche, 2 min entre chaque test. Note chaque résultat, jambe par jambe, dans le point ' +
-          'du jour. Plus de 10 % d\'écart entre tes deux jambes sur un test : une série de plus du côté faible, ' +
-          'jusqu\'au test de fin.',
-      },
+      blockWarmUp(model),
+      test('test-mollets', 'Mollets, sur un pied', { sets: 1, sides: 'jambe', setS: 75, restS: 120 }),
+      test('test-pont', 'Pont sur une jambe, talon sur le step', { sets: 1, sides: 'jambe', setS: 75, restS: 120 }),
+      test('test-chaise', 'Chaise contre le mur', { sets: 1, setS: 180, restS: 120 }),
+      test('test-gainage', 'Gainage sur le côté', { sets: 1, setS: 90, restS: 120 }),
+      test('test-equilibre', 'Équilibre yeux fermés', {
+        sets: 3, sides: 'jambe', setS: 60, restS: 20, effort: '60 s au plus', notes: 'Trois essais par jambe : note le meilleur.',
+      }),
+      test('test-cheville', 'Cheville, genou au mur', { sets: 1, sides: 'jambe', setS: 90, restS: 30, effort: 'La mesure' }),
+      test('test-souplesse', 'Souplesse, debout', { sets: 1, setS: 60, restS: 0, effort: 'La mesure' }),
       // Le vendredi des tests de départ est un jour de semaine, le dimanche des tests de fin non.
-      ...blockDaily(start),
+      ...armCare(start),
     ]);
 }
 
 /** Force 1 — les genoux et le freinage : le quadriceps qui freine les descentes. */
 export function blockForce1(model: PhysiologyModel, week: BlockWeek): SessionTemplate {
   const d = BLOCK_DOSE[week];
-  const effort = `Appuyé : ${reserveText(d.reserve)}`;
-  return template(model, `bloc_force_1_${week}`, 'strength', 'Force 1 · genoux et freinage',
+  return template(model, `bloc_force_1_${week}`, 'strength', 'Force 1 : genoux et freinage',
     'Le quadriceps qui freine en s\'allongeant, comme dans chaque descente : ton aisance en descente, mesurée sur ' +
       'tes sorties, est à 0,68 de celle d\'un bon traileur — ta marge la plus nette. Et le bras valide, qui ' +
       'entretient l\'autre.',
     [
-      homeWarmUp(model),
-      lift('split-squat-maison', `Fente bulgare, ${d.sets} séries par jambe`, d.sets * 2, 10, 45, effort,
-        'Le pied arrière sur le step à 40 cm calé contre un mur, la main valide sur l\'encadrement. 3 s pour ' +
-          'descendre, 1 s en bas, 1 s pour monter.' +
-          (d.harder ? ' Cette semaine, 2 s tenues en bas — ou un sac à dos chargé de 5 kg, si tu l\'enfiles sans forcer le coude.' : ''),
-        50),
-      lift('descente-marche', `Descente lente du step, ${d.sets} séries par jambe`, d.sets * 2, 8, 30, 'Descente en 4 s',
-        d.harder
-          ? 'Le step à 40 cm cette semaine, la main valide au mur. Le talon libre effleure le sol, il ne s\'y pose pas.'
-          : 'Le step à 20 cm, la main valide au mur. Le talon libre effleure le sol, il ne s\'y pose pas.',
-        45),
-      lift('reverse-nordic', 'Bascule arrière à genoux', d.sets, d.harder ? 8 : 6, 60, effort,
-        'Le corps droit des genoux à la tête, 3 s pour partir en arrière, 2 s pour revenir. Pas plus loin que ' +
-          'l\'endroit d\'où tu reviens sans casser au bassin.',
-        35),
-      lift('leg-curl-serviette', 'Flexion des jambes sur serviette', d.sets, d.harder ? 8 : 6, 75, 'Freine 4 s',
-        'Bassin haut pendant la glissade, posé pour ramener les talons.' +
-          (d.harder ? ' Cette semaine, ramène aussi les talons bassin haut.' : ''),
-        40),
-      hold('chaise', 'Chaise contre le mur', week === 3 ? 1 : 2, d.wallS, 60,
-        'Cuisses parallèles au sol. Ou la moitié de ton temps au test, si c\'est plus long.'),
+      blockWarmUp(model),
+      ex('split-squat-maison', PART.legs, {
+        label: 'Fente bulgare', sets: d.sets, reps: 10, sides: 'jambe', restS: 45, reserve: d.reserve, setS: 50,
+        tempo: '3 s pour descendre, 1 s en bas, 1 s pour monter',
+        notes: d.harder ? 'Cette semaine : 2 s tenues en bas, ou un sac à dos de 5 kg si tu l\'enfiles sans forcer le coude.' : undefined,
+      }),
+      ex('descente-marche', PART.legs, {
+        label: 'Descente lente du step', sets: d.sets, reps: 8, sides: 'jambe', restS: 30, reserve: d.reserve, setS: 45,
+        tempo: '4 s pour descendre, 1 s pour remonter',
+        notes: d.harder ? 'Le step à 40 cm cette semaine.' : 'Le step à 20 cm.',
+      }),
+      ex('reverse-nordic', PART.legs, {
+        label: 'Bascule arrière à genoux', sets: d.sets, reps: d.harder ? 8 : 6, restS: 60, reserve: d.reserve, setS: 35,
+        tempo: '3 s pour partir en arrière, 2 s pour revenir',
+      }),
+      ex('leg-curl-serviette', PART.legs, {
+        label: 'Flexion des jambes sur serviette', sets: d.sets, reps: d.harder ? 8 : 6, restS: 75, reserve: d.reserve,
+        setS: 40, tempo: '4 s pour faire glisser les talons',
+        notes: d.harder ? 'Cette semaine, ramène aussi les talons bassin haut.' : undefined,
+      }),
+      ex('chaise', PART.legs, { label: 'Chaise contre le mur', sets: week === 3 ? 1 : 2, holdS: d.wallS, restS: 60 }),
       calfIso(d),
-      lift('pousse-elastique', 'Poussée à un bras, élastique', d.sets, 12, 30, effort,
-        'Dos à la porte, accroche à hauteur de poitrine, deux élastiques (5 et 7 kg) : 1 s pour pousser, 1 s ' +
-          'tenue, 2 s pour revenir. En alternance avec le tirage.',
-        40),
-      lift('tirage-elastique', 'Tirage à un bras, élastique', d.sets, 12, 30, effort,
-        'Face à la porte, la même accroche : 1 s pour tirer, 1 s tenue, 2 s pour rendre.', 40),
-      lift('dead-bug', 'Dead bug, jambes seules', 2, 10, 30, 'Dos plaqué',
-        'Une jambe puis l\'autre, 3 s pour descendre le talon.', 40),
-      ...blockDaily(true),
+      ...pushPull(d),
+      deadBug(PART.core),
+      ...armCare(true),
     ]);
 }
 
@@ -727,65 +827,80 @@ export function blockForce1(model: PhysiologyModel, week: BlockWeek): SessionTem
 export function blockTendons(model: PhysiologyModel, week: BlockWeek): SessionTemplate {
   const d = BLOCK_DOSE[week];
   const ecc = Math.max(1, d.sets - 1);
+  const slow = d.harder ? '5 s pour descendre' : '3 s pour descendre';
   return template(model, `bloc_tendons_${week}`, 'cross_training', 'Tendons, pieds, gainage',
     'Le tendon d\'Achille, le pied et la cheville encaissent chaque foulée : sans course, ce sont eux qui perdent ' +
       'le plus vite. L\'isométrie lourde les raidit, la descente lente les renforce, l\'équilibre les réveille.',
     [
       heart(model, 'Marche tranquille', 'Z1', 40 * 60, {
-        exercise: 'marche',
+        exercise: 'marche', part: PART.walk,
         notes: 'D\'abord la marche : elle chauffe les mollets avant l\'isométrie. Sol sec et régulier.',
       }),
-      calfIso(d, week === 3 ? 3 : 5),
-      lift('mollets-excentriques', `Mollets en descente lente : ${ecc} séries genou tendu, ${ecc} genou fléchi, par jambe`,
-        ecc * 4, 12, 30, 'Descente en 3 s',
-        'Le step à 20 cm contre un mur, la main valide au mur. Monte sur les deux pointes, redescends sur une.' +
-          (d.harder ? ' Cette semaine, 5 s pour redescendre.' : ''),
-        45),
-      lift('releves-pointe', 'Relevés de pointe', 2, 20, 30, 'Jusqu\'à la brûlure', 'Dos au mur, talons à 30 cm devant.', 40),
-      lift('pied-court', 'Pied court et orteils', 1, 10, 0, 'Lent, sans plier les orteils',
-        '10 pieds courts de 5 s par pied, puis 10 gros orteils seuls et 10 fois les quatre autres.' +
-          (d.harder ? ' Cette semaine, debout.' : ''),
-        240),
-      hold('equilibre', 'Équilibre yeux fermés, 3 fois par jambe', 6, 30, 15,
-        'Dans un angle de mur, la main valide à 20 cm du mur.'),
-      hold('gainage-lateral', 'Gainage sur le côté, coude valide', 3, d.holdS, 45, 'Genoux au sol si le bassin tombe.'),
-      lift('anti-rotation', 'Anti-rotation, 2 séries par côté', 4, 8, 30, 'Bras tendu 3 s',
-        'De profil à la porte, un élastique de 6 ou 7 kg ; tourne-toi pour l\'autre côté.', 40),
-      ...blockDaily(true),
+      calfIso(d, week === 3 ? 3 : 5, PART.calvesFeet),
+      ex('mollets-excentriques', PART.calvesFeet, {
+        label: 'Mollets en descente lente, genou tendu', sets: ecc, reps: 12, sides: 'jambe', restS: 30, setS: 45,
+        tempo: slow, effort: 'Contrôlé', notes: 'Le step à 20 cm contre un mur.',
+      }),
+      ex('mollets-excentriques', PART.calvesFeet, {
+        label: 'Mollets en descente lente, genou fléchi', sets: ecc, reps: 12, sides: 'jambe', restS: 30, setS: 45,
+        tempo: slow, effort: 'Contrôlé', notes: 'Le genou fléchi de 30° toute la série : c\'est le soléaire.',
+      }),
+      ex('releves-pointe', PART.calvesFeet, {
+        label: 'Relevés de pointe', sets: 2, reps: 20, restS: 30, setS: 40, effort: 'Jusqu\'à la brûlure',
+        tempo: '1 s pour lever, 2 s pour redescendre',
+      }),
+      ex('pied-court', PART.calvesFeet, {
+        label: 'Pied court', sets: 1, reps: 10, sides: 'jambe', pulse: { workS: 5, restS: 3 }, restS: 0, effort: 'Lent',
+        notes: 'Puis 10 gros orteils seuls et 10 fois les quatre autres.' + (d.harder ? ' Cette semaine, debout.' : ''),
+      }),
+      ex('equilibre', PART.balanceCore, { label: 'Équilibre yeux fermés', sets: 3, holdS: 30, sides: 'jambe', restS: 15 }),
+      ex('gainage-lateral', PART.balanceCore, { label: 'Gainage sur le côté', sets: 3, holdS: d.holdS, restS: 45 }),
+      ex('anti-rotation', PART.balanceCore, {
+        label: 'Anti-rotation', sets: 2, reps: 8, sides: 'côté', restS: 30, setS: 40, effort: 'Bras tendu 3 s',
+        tempo: '2 s pour tendre, 3 s tenu, 2 s pour revenir', notes: 'Un élastique de 6 ou 7 kg.',
+      }),
+      ...armCare(true),
     ]);
 }
 
 /** Force 2 — les hanches et la chaîne arrière : le moteur des montées, ce qui tient le bassin. */
 export function blockForce2(model: PhysiologyModel, week: BlockWeek): SessionTemplate {
   const d = BLOCK_DOSE[week];
-  const effort = `Appuyé : ${reserveText(d.reserve)}`;
-  return template(model, `bloc_force_2_${week}`, 'strength', 'Force 2 · hanches et chaîne arrière',
+  return template(model, `bloc_force_2_${week}`, 'strength', 'Force 2 : hanches et fessiers',
     'Les fessiers et l\'arrière des cuisses te poussent en montée ; les adducteurs et le moyen fessier tiennent le ' +
       'bassin quand la fatigue arrive — ta durabilité sur les sorties longues se joue là.',
     [
-      homeWarmUp(model),
-      lift('souleve-une-jambe', `Bascule sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, 10, 30, effort,
-        'Main valide sur l\'encadrement. Dos plat, 3 s pour descendre.' +
-          (d.harder ? ' Cette semaine, 4 s, et un sac à dos chargé de 5 kg si tu l\'enfiles sans forcer le coude.' : ''),
-        45),
-      lift('hip-thrust', `Pont sur le canapé, ${d.sets} séries par jambe`, d.sets * 2, 12, 30, effort,
-        'Les omoplates sur le bord de l\'assise, un pied au sol : 1 s pour monter, 2 s tenues, 2 s pour redescendre ' +
-          'sans poser le bassin.',
-        45),
-      lift('pas-chasses', 'Pas chassés à la mini-bande', 3, 12, 30, 'Jusqu\'à la brûlure',
-        '12 pas dans chaque sens, face au mur, la main valide qui glisse dessus.', 40),
-      lift('copenhague', 'Copenhague, la jambe du côté du plâtre', d.harder ? 3 : 2, d.harder ? 8 : 6, 45, 'Contrôlé',
-        'Sur le coude valide, le genou du dessus sur le step à 40 cm : 1 s pour monter, 2 s pour redescendre.', 30),
-      lift('adducteurs-coussin', 'Serrage de coussin', 1, 6, 0, 'À fond 10 s, relâche 10 s',
-        'Les deux jambes à la fois : c\'est l\'adducteur que la Copenhague ne fait pas.', 120),
-      lift('montee-genou', `Montée de genou sur le dos, ${d.sets} séries par jambe`, d.sets * 2, 10, 20,
-        'Bas du dos collé', 'Mini-bande aux pieds : 1 s pour monter le genou, 2 s pour repartir.', 30),
+      blockWarmUp(model),
+      ex('souleve-une-jambe', PART.hips, {
+        label: 'Bascule sur une jambe', sets: d.sets, reps: 10, sides: 'jambe', restS: 30, reserve: d.reserve, setS: 45,
+        tempo: d.harder ? '4 s pour descendre, 1 s pour remonter' : '3 s pour descendre, 1 s pour remonter',
+        notes: d.harder ? 'Cette semaine, un sac à dos de 5 kg si tu l\'enfiles sans forcer le coude.' : undefined,
+      }),
+      ex('hip-thrust', PART.hips, {
+        label: 'Pont sur le canapé', sets: d.sets, reps: 12, sides: 'jambe', restS: 30, reserve: d.reserve, setS: 45,
+        tempo: '1 s pour monter, 2 s tenues, 2 s pour redescendre',
+      }),
+      ex('pas-chasses', PART.hips, {
+        label: 'Pas chassés à la mini-bande', sets: 3, reps: 12, sides: 'côté', restS: 30, setS: 30,
+        effort: 'Jusqu\'à la brûlure', notes: '12 pas dans un sens, 12 dans l\'autre, la bande toujours tendue.',
+      }),
+      ex('montee-genou', PART.hips, {
+        label: 'Montée de genou sur le dos', sets: d.sets, reps: 10, sides: 'jambe', restS: 20, setS: 30,
+        effort: 'Bas du dos collé', tempo: '1 s pour monter le genou, 2 s pour repartir',
+      }),
+      ...adductors(d),
       calfIso(d),
-      lift('bras-elastique', 'Bras valide : plier, tendre, serrer — puis le maximum', 2, 12, 60, effort,
-        'Deux tours : 12 flexions (accroche en bas de porte), 12 extensions (accroche en haut), 10 serrages de 5 s. ' +
-          'Puis, sous la table, 3 poussées de 5 s à fond vers le haut, 3 vers le bas.',
-        180),
-      ...blockDaily(true),
+      ex('bras-elastique', PART.arm, {
+        label: 'Plier, tendre, serrer', sets: 2, reps: 12, restS: 60, reserve: d.reserve, setS: 180,
+        tempo: '1 s pour plier ou tendre, 3 s pour revenir',
+        notes: 'Un tour : 12 flexions (accroche en bas de porte), 12 extensions (accroche en haut), 10 serrages de 5 s.',
+      }),
+      ex('bras-elastique', PART.arm, {
+        label: 'Le maximum, sous la table', sets: 2, reps: 3, pulse: { workS: 5, restS: 10 }, restS: 30,
+        effort: 'De toutes tes forces',
+        notes: 'Assis à une table, coude à angle droit : une série paume sous le plateau, pousse vers le haut ; une série paume dessus, pousse vers le bas.',
+      }),
+      ...armCare(true),
     ]);
 }
 
@@ -798,16 +913,17 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek): SessionTem
   const { reps, zone } = d.climb;
   const vert = zone === 'Z4' ? 55 : 45;
   const name = zone === 'Z4' ? 'au seuil' : 'en zone 3';
-  return template(model, `bloc_moteur_${week}`, 'cross_training', `Fractionné en côte ${name}, en marche`,
+  return template(model, `bloc_moteur_${week}`, 'cross_training', 'Fractionné en côte',
     'L\'intensité garde la VO2max quand le volume baisse : un fractionné par semaine suffit. En marche rapide ' +
       'dans les escaliers, c\'est aussi la marche en côte des trails longs.',
     [
-      heart(model, 'Échauffement : marche progressive', 'Z2', 15 * 60, {
-        exercise: 'marche-cote', notes: 'Jusqu\'au pied des escaliers, en accélérant peu à peu.',
+      heart(model, 'Marche progressive', 'Z2', 15 * 60, {
+        exercise: 'marche-cote', part: PART.warmUp, notes: 'Jusqu\'au pied des escaliers, en accélérant peu à peu.',
       }),
       {
         ...heart(model, `Montées rapides ${name}`, zone, 180, {
           exercise: 'marche-cote',
+          part: PART.intervals,
           elevationGainM: vert,
           notes:
             `${zone === 'Z4' ? 'Effort 7 sur 10, phrases courtes' : 'Effort 6 sur 10'} : monte vite, en marche, une ` +
@@ -818,55 +934,56 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek): SessionTem
         repeat: reps,
         recovery: { durationS: 180, zone: 'Z1', active: true, betweenReps: true, elevationLossM: vert },
       },
-      heart(model, 'Retour au calme', 'Z1', 10 * 60, {
-        exercise: 'marche', elevationLossM: vert, notes: 'La dernière descente, lente, puis à plat.',
+      heart(model, 'Marche facile', 'Z1', 10 * 60, {
+        exercise: 'marche', part: PART.coolDown, elevationLossM: vert, notes: 'La dernière descente, lente, puis à plat.',
       }),
-      souplesse(600),
-      lift('dead-bug', 'Dead bug, jambes seules', 2, 10, 30, 'Dos plaqué', 'À la maison, en rentrant.', 40),
-      hold('gainage-lateral', 'Gainage sur le côté, coude valide', 2, d.holdS, 45, 'Genoux au sol si le bassin tombe.'),
-      ...blockDaily(true),
+      { ...souplesse(600), part: PART.coolDown },
+      deadBug(PART.core),
+      ex('gainage-lateral', PART.core, { label: 'Gainage sur le côté', sets: 2, holdS: d.holdS, restS: 45 }),
+      ...armCare(true),
     ]);
 }
 
 /** Force 3 — une jambe et les montées : la puissance, l'appui, l'endurance des côtes. */
 export function blockForce3(model: PhysiologyModel, week: BlockWeek): SessionTemplate {
   const d = BLOCK_DOSE[week];
-  const effort = `Appuyé : ${reserveText(d.reserve)}`;
-  return template(model, `bloc_force_3_${week}`, 'strength', 'Force 3 · une jambe et montées',
+  return template(model, `bloc_force_3_${week}`, 'strength', 'Force 3 : une jambe, montées',
     'La puissance des montées, la force qui tient sur un pied, et pour finir des montées continues : l\'endurance ' +
       'des côtes, ce qui manque après trois heures.',
     [
-      homeWarmUp(model),
-      lift('montee-tabouret', `Montée explosive sur le step à 40 cm, ${d.sets} séries par jambe`, d.sets * 2, 6, 45,
-        'Monte vite, redescends en 4 s',
-        'Le step calé contre un mur, la main valide au mur. Monte le plus vite possible sans sauter, redescends en ' +
-          '4 s en freinant avec la jambe du haut.' +
-          (d.harder ? ' Cette semaine, un sac à dos chargé de 5 kg si tu l\'enfiles sans forcer le coude.' : ''),
-        40),
-      hold('chaise', `Chaise sur une jambe, ${d.sets} séries par jambe`, d.sets * 2, d.harder ? 30 : 20, 30,
-        'Contre le mur, l\'autre pied levé de 5 cm. Les jambes en alternance.'),
-      lift('reverse-nordic', 'Bascule arrière à genoux', 2, d.harder ? 8 : 6, 60, effort,
-        'Le corps droit des genoux à la tête, 3 s pour partir, 2 s pour revenir.', 35),
-      lift('leg-curl-serviette', 'Flexion des jambes sur serviette', d.sets, d.harder ? 8 : 6, 75, 'Freine 4 s',
-        'Bassin haut pendant la glissade.' + (d.harder ? ' Cette semaine, une jambe sur deux séries.' : ''), 40),
-      lift('copenhague', 'Copenhague, la jambe du côté du plâtre', d.harder ? 3 : 2, d.harder ? 8 : 6, 45, 'Contrôlé',
-        'Sur le coude valide, le genou du dessus sur le step à 40 cm.', 30),
-      lift('adducteurs-coussin', 'Serrage de coussin', 1, 6, 0, 'À fond 10 s, relâche 10 s', 'Les deux jambes à la fois.', 120),
+      blockWarmUp(model),
+      ex('montee-tabouret', PART.legs, {
+        label: 'Montée explosive sur le step', sets: d.sets, reps: 6, sides: 'jambe', restS: 45, reserve: d.reserve,
+        setS: 40, tempo: 'Monte le plus vite possible sans sauter, redescends en 4 s',
+        notes: 'Le step à 40 cm.' + (d.harder ? ' Cette semaine, un sac à dos de 5 kg si tu l\'enfiles sans forcer le coude.' : ''),
+      }),
+      ex('chaise-une-jambe', PART.legs, {
+        label: 'Chaise sur une jambe', sets: d.sets, holdS: d.harder ? 30 : 20, sides: 'jambe', restS: 30,
+      }),
+      ex('reverse-nordic', PART.legs, {
+        label: 'Bascule arrière à genoux', sets: 2, reps: d.harder ? 8 : 6, restS: 60, reserve: d.reserve, setS: 35,
+        tempo: '3 s pour partir en arrière, 2 s pour revenir',
+      }),
+      ex('leg-curl-serviette', PART.legs, {
+        label: 'Flexion des jambes sur serviette', sets: d.sets, reps: d.harder ? 8 : 6, restS: 75, reserve: d.reserve,
+        setS: 40, tempo: '4 s pour faire glisser les talons',
+        notes: d.harder ? 'Cette semaine, sur une jambe à la dernière série.' : undefined,
+      }),
+      ...adductors(d),
       calfIso(d),
-      lift('pousse-elastique', 'Poussée à un bras, élastique', d.sets, 12, 30, effort,
-        'En alternance avec le tirage.', 40),
-      lift('tirage-elastique', 'Tirage à un bras, élastique', d.sets, 12, 30, effort, 'Face à la porte.', 40),
+      ...pushPull(d),
       {
-        ...heart(model, 'Montées continues sur le step à 40 cm', 'Z2', d.enduranceMin * 60, {
+        ...heart(model, 'Montées continues sur le step', 'Z2', d.enduranceMin * 60, {
           exercise: 'montee-tabouret',
+          part: PART.climbs,
           notes:
-            'Une montée toutes les 2 s, change de jambe toutes les 30 s, la main au mur. Sous la plage : un sac à dos ' +
-            'chargé. Arrête si la jambe tremble.',
+            'Le step à 40 cm : une montée toutes les 2 s, change de jambe toutes les 30 s, la main au mur. Sous la ' +
+            'plage : un sac à dos chargé. Arrête si la jambe tremble.',
         }),
         repeat: d.enduranceSets,
         recovery: { durationS: 120, zone: 'Z1', active: true, betweenReps: true },
       },
-      ...blockDaily(true),
+      ...armCare(true),
     ]);
 }
 
@@ -879,15 +996,19 @@ export function blockLongue(model: PhysiologyModel, week: BlockWeek): SessionTem
     [
       heart(model, 'Longue marche en côte', 'Z2', d.longMin * 60, {
         exercise: 'marche-cote',
+        part: PART.walk,
         elevationGainM: d.longVertM,
         elevationLossM: d.longVertM,
         notes:
           'Fourvière par la montée Saint-Barthélemy, les escaliers, la Sarra : revêtu et sec. Monte fort sans ' +
           'dépasser le haut de la plage ; redescends lentement, la main sur la rampe.',
       }),
-      lift('pied-court', 'Pied court et orteils', 1, 10, 0, 'Lent', 'En rentrant, assis : 10 pieds courts de 5 s par pied.', 180),
-      hold('equilibre', 'Équilibre yeux fermés, 3 fois par jambe', 6, 30, 15, 'Dans un angle de mur.'),
-      ...blockDaily(false),
+      ex('pied-court', PART.feetBalance, {
+        label: 'Pied court', sets: 1, reps: 10, sides: 'jambe', pulse: { workS: 5, restS: 3 }, restS: 0, effort: 'Lent',
+        notes: 'En rentrant, assis.',
+      }),
+      ex('equilibre', PART.feetBalance, { label: 'Équilibre yeux fermés', sets: 3, holdS: 30, sides: 'jambe', restS: 15 }),
+      ...armCare(false),
     ]);
 }
 
@@ -898,11 +1019,11 @@ export function blockRecup(model: PhysiologyModel): SessionTemplate {
       'ne gagne qu\'avec la régularité.',
     [
       heart(model, 'Marche facile, à plat', 'Z1', 45 * 60, {
-        exercise: 'marche', notes: 'Quais, parc de la Tête d\'Or : tu dois pouvoir parler tout du long.',
+        exercise: 'marche', part: PART.walk, notes: 'Quais, parc de la Tête d\'Or : tu dois pouvoir parler tout du long.',
       }),
-      souplesse(900),
-      lift('dead-bug', 'Dead bug, jambes seules', 2, 10, 30, 'Facile', 'Le gainage léger du jour.', 40),
-      ...blockDaily(false),
+      { ...souplesse(900), part: PART.mobility },
+      deadBug(PART.core, 'Facile'),
+      ...armCare(false),
     ]);
 }
 

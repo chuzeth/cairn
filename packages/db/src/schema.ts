@@ -474,6 +474,22 @@ export const sessionRoutes = sqliteTable('session_routes', {
   computedAt: text('computed_at').notNull(),
 });
 
+/**
+ * Les résultats des tests de force, test par test : des mesures, pas une note
+ * libre — le dernier jour du bloc les compare au premier. Créée au premier
+ * usage par `ensureTestTables`.
+ */
+export const strengthTests = sqliteTable('strength_tests', {
+  /** `athleteId:date:test` : un résultat par test et par jour. */
+  id: text('id').primaryKey(),
+  athleteId: text('athlete_id').notNull(),
+  date: text('date').notNull(),
+  test: text('test').notNull(),
+  /** `{ left?, right?, value? }`. */
+  value: text('value', { mode: 'json' }).notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export type AthleteRow = typeof athletes.$inferSelect;
 export type ActivityRow = typeof activities.$inferSelect;
 export type PlannedSessionRow = typeof plannedSessions.$inferSelect;

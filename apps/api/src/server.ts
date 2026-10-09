@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import * as db from '@cairn/db';
-import { directivesFor } from '@cairn/core';
+import { EXERCISES, directivesFor, isExerciseKey } from '@cairn/core';
 import {
   CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, describeAdjustments,
   describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, isQualitySession, labGaps,
@@ -512,6 +512,41 @@ export async function buildServer() {
   app.delete('/api/home', async () => {
     await db.setHome(A, null);
     return { home: null };
+  });
+
+  /**
+   * Les résultats des tests de force — le 09/10 et le 01/11, sept tests, jambe
+   * par jambe. L'écran de la séance les note pendant qu'on les fait, et montre
+   * ceux du premier jour à côté de ceux du dernier.
+   */
+  app.get('/api/tests', async () => db.listStrengthTests(A));
+
+  app.post('/api/tests', async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const date = typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
+    if (!date) return reply.code(400).send({ error: 'date : AAAA-MM-JJ attendu.' });
+    const test = typeof body.test === 'string' ? body.test : '';
+    const measure = isExerciseKey(test) ? EXERCISES[test].measure : undefined;
+    if (!measure) return reply.code(400).send({ error: `test : « ${test} » n'est pas une fiche de test.` });
+    // Des bornes larges, mais des bornes : une faute de frappe ne devient pas une mesure.
+    const [lo, hi] = measure.unit === 'cm' ? [-60, 60] : measure.unit === 'secondes' ? [0, measure.max ?? 900] : [0, 300];
+    const field = (k: 'left' | 'right' | 'value'): number | null | undefined => {
+      const v = body[k];
+      if (v === undefined || v === null) return v;
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) {
+        throw new Error(`${k} : un nombre entre ${lo} et ${hi} ${measure.unit} est attendu.`);
+      }
+      return Math.round(v * 10) / 10;
+    };
+    try {
+      const patch = measure.perSide ? { left: field('left'), right: field('right') } : { value: field('value') };
+      if (Object.values(patch).every((v) => v === undefined)) {
+        return reply.code(400).send({ error: measure.perSide ? 'left ou right attendu.' : 'value attendu.' });
+      }
+      return await db.saveStrengthTest(A, date, test, patch);
+    } catch (e) {
+      return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+    }
   });
 
   app.get('/api/insights', async (req) => {

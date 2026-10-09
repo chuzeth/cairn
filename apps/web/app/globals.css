@@ -311,7 +311,7 @@ button { font-family: inherit; font-size: inherit; }
 
 .plan-slots { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .plan-slot {
-  text-align: left; border: none; cursor: pointer; padding: 0;
+  display: block; text-align: left; border: none; cursor: pointer; padding: 0;
   background: transparent; color: inherit; width: 100%;
 }
 .plan-session { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
@@ -1256,3 +1256,168 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xf .fg-arrow-head { fill: var(--metabolic); stroke: none; }
 .xf .fg-note line { stroke: var(--text-faint); stroke-width: 0.5; }
 .xf .fg-note text { fill: var(--text-dim); font-size: 5.2px; }
+
+/* ── La séance à suivre (`/seance`, `components/Workout.tsx`) ────────────────
+ * Le 09/10, Pierre veut ouvrir la séance du jour et la suivre en la faisant,
+ * l'ordinateur posé devant lui : les parties en grand, chaque exercice avec
+ * son schéma, ce qu'il y a à faire lisible à deux mètres. La structure tient à
+ * la typographie et au blanc, comme le reste de l'app ; l'ocre du bouton est
+ * la seule action du moment.
+ */
+.w { display: flex; flex-direction: column; gap: 26px; max-width: 1060px; margin: 0 auto; padding-bottom: 48px; container: workout / inline-size; }
+.w-crumbs { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-dim); }
+.w-crumbs a { color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.w-days { display: flex; gap: 18px; }
+.w-head { display: flex; flex-direction: column; gap: 8px; }
+.w-date { font-size: 14px; color: var(--text-dim); }
+.w-title { margin: 0; font-stretch: 70%; font-weight: 640; font-size: 50px; line-height: 0.95; letter-spacing: -0.005em; text-wrap: balance; }
+.w-summary { margin: 0; font-size: 15px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.w-done { margin: 0; font-size: 15px; color: var(--good); }
+.w-start { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 12px; }
+.w-go { min-height: 50px; padding: 10px 22px; font-size: 16px; }
+.w-start-note { font-size: 13px; color: var(--text-faint); }
+
+/* Le sommaire : la séance d'un coup d'œil, partie par partie. */
+.w-toc { display: grid; gap: 20px; padding: 20px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+@container workout (width >= 760px) { .w-toc { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 44px; } }
+.w-toc-head { display: flex; justify-content: space-between; gap: 12px; font-size: 15px; font-weight: 640; margin-bottom: 4px; }
+.w-toc-time { color: var(--text-faint); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.w-toc ol { list-style: none; margin: 0; padding: 0; }
+.w-toc li a { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 5px 0; font-size: 14.5px; color: var(--text); }
+.w-toc li a:hover .w-toc-name { text-decoration: underline; text-underline-offset: 3px; }
+.w-toc-n { text-align: right; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.w-toc li[data-done="true"] .w-toc-n { color: var(--good); }
+.w-toc li[data-done="true"] .w-toc-name { color: var(--text-dim); }
+.w-toc-rx { color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* Les parties, et leurs exercices. */
+.w-part-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border-strong); }
+.w-part-head h2 { margin: 0; font-stretch: 70%; font-size: 32px; font-weight: 640; line-height: 1; }
+.w-part-head span { font-size: 13px; color: var(--text-faint); white-space: nowrap; }
+.w-step { display: flex; flex-direction: column; gap: 14px; padding: 24px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 20px; }
+.w-step-head { display: flex; flex-direction: column; gap: 4px; }
+/* Le chiffre s'aligne sur le nom, pas sur le numéro. */
+.w-step-head .w-main { padding-left: calc(1.3 * 22px + 12px); }
+.w-step-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@container workout (width >= 760px) { .w-step-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 32px; align-items: start; } }
+.w-step:target .w-step-name { color: var(--ochre); }
+.w-step[data-done="true"] .w-step-fig { opacity: 0.55; }
+.w-step-fig .xf-panels { margin: 0; }
+.w-step-name { display: flex; align-items: baseline; gap: 12px; margin: 0; font-size: 22px; font-weight: 640; line-height: 1.2; }
+.w-step-n { min-width: 1.3em; color: var(--text-faint); font-weight: 560; font-variant-numeric: tabular-nums; }
+
+/* Ce qu'il y a à faire : le chiffre qu'on lit de loin, puis ce qui le précise. */
+.w-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-stretch: 70%; font-size: 36px; font-weight: 640; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.w-main-big { font-size: 60px; }
+.w-main-note { font-stretch: 100%; font-size: 15px; font-weight: 500; color: var(--text-dim); }
+.w-main-big .w-main-note { font-size: 18px; }
+.w-details { margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 15px; line-height: 1.4; }
+.w-details div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
+.w-details dt { color: var(--text-faint); }
+.w-details dd { margin: 0; color: var(--text); }
+.w-today { margin: 12px 0 0; padding: 8px 12px; border-left: 3px solid var(--border-strong); background: var(--bg-inset); border-radius: 0 6px 6px 0; font-size: 14.5px; color: var(--text); }
+.w-cues { margin: 14px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; font-size: 16px; line-height: 1.45; color: var(--text); }
+.w-cues li::marker { color: var(--text-faint); }
+
+/* Les séries à cocher. */
+.w-dots { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+.w-dot {
+  width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--border-strong); background: transparent;
+  color: var(--text-dim); font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.w-dot:hover { border-color: var(--text-dim); color: var(--text); }
+.w-dot[data-done="true"] { background: var(--good); border-color: var(--good); color: var(--bg); }
+.w-dots-big .w-dot { width: 54px; height: 54px; font-size: 19px; }
+.w-dots-note { margin-left: 4px; font-size: 13px; color: var(--text-faint); }
+.w-check {
+  margin-top: 16px; min-height: 40px; padding: 8px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border-strong);
+  background: transparent; color: var(--text-dim); font-weight: 560; cursor: pointer;
+}
+.w-check[data-done="true"] { border-color: var(--good); color: var(--good); }
+
+/* Les tests : le résultat se note là où il se mesure. */
+.w-test { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.w-test-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+/* Le libellé de l'app est en petites capitales ; ici, un mot qui se lit pendant l'effort. */
+.w-test-field { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 500; text-transform: none; letter-spacing: normal; }
+.w-test-field span { font-size: 13.5px; color: var(--text-dim); text-transform: none; letter-spacing: normal; }
+.w-test-field input {
+  width: 88px; height: 46px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--bg-inset); color: var(--text); font: inherit; font-size: 21px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.w-test-field input:focus { outline: none; border-color: var(--ochre); }
+.w-test-field em { font-style: normal; font-size: 13px; color: var(--text-faint); text-transform: none; letter-spacing: normal; }
+.w-test-note { margin: 0; font-size: 13.5px; line-height: 1.45; color: var(--text-dim); }
+.w-test-error { color: var(--warn); }
+
+/* La fiche, dépliée à la demande. */
+.w-more { margin-top: 16px; }
+.w-more summary {
+  cursor: pointer; list-style: none; font-size: 13px; color: var(--text-dim);
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong);
+}
+.w-more summary::-webkit-details-marker { display: none; }
+.w-more summary::after { content: ' ›'; }
+.w-more[open] summary { margin-bottom: 10px; }
+.w-more h4 { margin: 14px 0 4px; font-size: 13px; font-weight: 640; color: var(--text); }
+.w-more p, .w-more li { font-size: 14px; line-height: 1.5; color: var(--text-dim); }
+.w-more ul, .w-more ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.w-more-what { color: var(--text) !important; }
+.w-cast { padding: 8px 12px; border-left: 3px solid var(--ochre); background: var(--bg-inset); border-radius: 0 6px 6px 0; }
+.w-why h2 { margin: 0 0 6px; font-size: 15px; font-weight: 640; }
+.w-why p { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--text-dim); }
+
+/* Pas à pas : tout l'écran, un exercice à la fois. */
+.w-player {
+  position: fixed; inset: 0; z-index: 200; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  padding-top: var(--safe-top); padding-bottom: env(safe-area-inset-bottom); background: var(--bg); outline: none;
+}
+.w-p-top { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--border); }
+.w-p-close { width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--bg-elev-2); color: var(--text-dim); font-size: 17px; cursor: pointer; }
+.w-p-close:hover { color: var(--text); }
+.w-p-where { display: flex; flex-direction: column; min-width: 0; }
+.w-p-title { overflow: hidden; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; text-overflow: ellipsis; }
+.w-p-part { font-size: 16px; font-weight: 640; }
+.w-p-count { font-size: 15px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.w-p-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; }
+.w-p-bar span { display: block; height: 100%; background: var(--good); transition: width 200ms; }
+.w-p-main { width: 100%; max-width: 1320px; margin: 0 auto; padding: 18px 20px 24px; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
+@media (min-width: 900px) {
+  .w-p-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 44px; padding: 28px 40px; align-items: start; }
+}
+.w-p-fig .xf { max-height: 34vh; }
+@media (min-width: 900px) { .w-p-fig .xf { max-height: 64vh; } }
+/* Au téléphone, l'action du moment — le bouton, le minuteur, les séries — reste
+   épinglée en bas : on ne fait pas défiler l'écran entre deux séries. */
+@media (width < 900px) {
+  .w-p-action {
+    position: sticky; bottom: 0; z-index: 1; margin-top: 14px; padding: 12px 0 6px;
+    background: var(--bg); box-shadow: 0 -14px 18px -14px rgba(0, 0, 0, 0.75);
+  }
+  .w-p-primary { width: 100%; }
+  .w-clock-value { font-size: 64px; }
+}
+.w-p-kicker { font-size: 13px; color: var(--text-faint); }
+.w-p-name { margin: 2px 0 10px; font-size: 34px; font-weight: 640; line-height: 1.1; text-wrap: balance; }
+.w-p-action { margin-top: 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+.w-p-primary { min-height: 58px; padding: 12px 26px; font-size: 18px; }
+.w-p-switch { margin: 0; font-size: 17px; color: var(--text); }
+.w-clock { display: flex; align-items: baseline; gap: 16px; }
+.w-clock-label { font-size: 16px; color: var(--text-dim); }
+.w-clock-value { font-stretch: 70%; font-size: 92px; font-weight: 640; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.w-clock[data-tone="rest"] .w-clock-value { color: var(--metabolic); }
+.w-p-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid var(--border); }
+.w-p-keys { font-size: 12.5px; color: var(--text-faint); text-align: center; }
+@media (width < 700px) { .w-p-keys { display: none; } }
+.w-p-end { width: 100%; max-width: 640px; margin: 0 auto; padding: 48px 24px; display: flex; flex-direction: column; gap: 12px; }
+.w-p-end h2 { margin: 0; font-stretch: 70%; font-size: 52px; font-weight: 640; line-height: 1; }
+.w-p-end p { margin: 0; font-size: 16px; color: var(--text-dim); }
+.w-p-end-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+
+/* Sur l'écran du matin : la séance à ouvrir. */
+.m-open { align-self: flex-start; min-height: 50px; padding: 10px 22px; font-size: 16px; }
+.m-toc { display: flex; flex-direction: column; gap: 10px; }
+.m-toc-part { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; }
+.m-toc-part strong { font-size: 15px; font-weight: 640; }
+.m-toc-part span { font-size: 13px; color: var(--text-faint); white-space: nowrap; }
+.m-toc-part p { grid-column: 1 / -1; margin: 0; font-size: 13.5px; line-height: 1.4; color: var(--text-dim); }

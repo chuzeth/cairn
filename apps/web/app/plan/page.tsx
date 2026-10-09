@@ -16,6 +16,7 @@ import { SessionMap } from '@/components/SessionMap';
 import { Itinerary } from '@/components/Itinerary';
 import { onForeground } from '@/lib/version';
 import { followsPace } from '@cairn/core/blocks';
+import { isWorkout } from '@/lib/workout';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -178,12 +179,8 @@ export default function PlanPage() {
                       </div>
                       <div className="plan-slots">
                         {daily.length === 0 && <div className="plan-figures">—</div>}
-                        {daily.map((s) => (
-                          <button
-                            key={s.id}
-                            className="plan-slot"
-                            onClick={() => setOpen(open === s.id ? null : s.id)}
-                          >
+                        {daily.map((s) => {
+                          const card = (
                             <div
                               className="plan-session"
                               data-faded={s.status === 'missed' || s.status === 'withdrawn' || s.status === 'cancelled'}
@@ -214,8 +211,17 @@ export default function PlanPage() {
                                 </div>
                               )}
                             </div>
-                          </button>
-                        ))}
+                          );
+                          // Une séance de renforcement s'ouvre en entier, exercice par exercice
+                          // (`/seance`) ; une course se déplie ici, sous la semaine.
+                          return isWorkout(s) && s.status !== 'withdrawn' && s.status !== 'cancelled' ? (
+                            <Link key={s.id} href={`/seance?d=${s.date}`} className="plan-slot">{card}</Link>
+                          ) : (
+                            <button key={s.id} className="plan-slot" onClick={() => setOpen(open === s.id ? null : s.id)}>
+                              {card}
+                            </button>
+                          );
+                        })}
                         {completed && !daily.some((s) => s.completedActivityId === completed.id) && (
                           <Link href={`/activities/${completed.id}`} className="plan-done-link">
                             ↗ séance faite

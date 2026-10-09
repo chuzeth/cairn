@@ -14,12 +14,15 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   {
     title: 'Les tests',
     lead: 'Le 9 octobre et le 1er novembre : sept mesures, les mêmes, à la même heure.',
-    keys: ['tests-maison'],
+    keys: ['test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse'],
   },
   {
     title: 'Cuisses et genoux',
     lead: 'Le quadriceps qui pousse en montée et freine en descente : l’échauffement, puis le step, le mur, le tapis.',
-    keys: ['echauffement-maison', 'split-squat-maison', 'descente-marche', 'reverse-nordic', 'montee-tabouret', 'chaise'],
+    keys: [
+      'echauffement-maison', 'split-squat-maison', 'descente-marche', 'reverse-nordic', 'montee-tabouret', 'chaise',
+      'chaise-une-jambe',
+    ],
   },
   {
     title: 'Hanches et arrière des cuisses',
@@ -52,7 +55,7 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   {
     title: 'Chaque jour',
     lead: 'Le bras plâtré, la respiration, la souplesse : quelques minutes, tous les jours.',
-    keys: ['soins-bras', 'respiration', 'souplesse'],
+    keys: ['soins-bras', 'imagerie', 'respiration', 'souplesse'],
   },
   {
     title: 'À la salle, plus tard',

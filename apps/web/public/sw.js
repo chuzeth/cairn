@@ -49,7 +49,7 @@ const SHELL = 'cairn-shell-v2';
 const DATA = 'cairn-data';
 
 /** Les écrans du menu : gardés dès l'installation, et renouvelés à chaque version. */
-const SHELL_ROUTES = ['/', '/point', '/coach', '/plan', '/activities', '/exercices'];
+const SHELL_ROUTES = ['/', '/point', '/coach', '/plan', '/activities', '/exercices', '/seance'];
 
 /** Leurs noms, ceux du menu : la page « pas de réseau » les dit comme l'app. */
 const SHELL_NAMES = {
@@ -59,6 +59,7 @@ const SHELL_NAMES = {
   '/plan': 'Plan',
   '/activities': 'Séances',
   '/exercices': 'Exercices',
+  '/seance': 'Séance',
 };
 
 /**
@@ -73,7 +74,7 @@ const SHELL_NAMES = {
  */
 const KEPT = [
   '/api/state', '/api/plan', '/health', '/api/glossary', '/api/activities', '/api/races', '/api/curves',
-  '/api/pmc', '/api/insights', '/api/chat/history',
+  '/api/pmc', '/api/insights', '/api/chat/history', '/api/tests',
 ];
 
 /** La date du relevé, portée du cache jusqu'à l'écran. */

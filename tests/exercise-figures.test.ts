@@ -157,6 +157,20 @@ describe('Les consignes, mesurées sur le dessin', () => {
     expect(j['right.knee']![1] - 3.1).toBeCloseTo(FURNITURE.stool.seat, 0);
   });
 
+  it('test de la cheville : le genou au mur, le talon au sol, le gros orteil à 10 cm du mur', () => {
+    const j = joints(figure('test-cheville').pose);
+    expect(30 - j['near.toe']![0]).toBeCloseTo(10 / 1.8, 0);
+    // Le genou touche le mur : son contour, de 3 unités autour de l'articulation, y arrive.
+    expect(30 - j['near.knee']![0]).toBeLessThan(3.6);
+    expect(j['near.heel']![1]).toBeCloseTo(0, 0);
+  });
+
+  it('test de souplesse : jambes tendues, le bout des doigts à 1 cm du sol', () => {
+    const j = joints(figure('test-souplesse').pose);
+    expect(angleAt(j['near.hip']!, j['near.knee']!, j['near.ankle']!)).toBeGreaterThan(178);
+    expect(j['free.tip']![1] * 1.8).toBeCloseTo(1, 0);
+  });
+
   it('mollet sous le cadre : le talon à mi-hauteur, pas tout en haut', () => {
     const j = joints(figure('mollets-iso').pose);
     expect(j['near.heel']![1]).toBeGreaterThan(3);
@@ -164,7 +178,7 @@ describe('Les consignes, mesurées sur le dessin', () => {
   });
 
   it('test du pont : le talon sur le step de 40 cm, l’autre jambe à la verticale', () => {
-    const j = joints(figure('tests-maison', 1).pose);
+    const j = joints(figure('test-pont').pose);
     expect(j['near.heel']![1]).toBeCloseTo(FURNITURE.stool.seat, 0);
     expect(Math.abs(j['far.ankle']![0] - j['far.hip']![0])).toBeLessThan(1);
   });
