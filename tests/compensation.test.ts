@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EXERCISES, FORCE_BLOCK_DAYS, annexOf, isExerciseKey, type ExerciseKey } from '@cairn/core';
-import { blockDay, blockWeekOf, compensationDay, compensationHomeDay, remeasured } from '@cairn/coach';
+import { EXERCISES, FORCE_BLOCK_DAYS, annexOf, isExerciseKey, type ExerciseKey, type StrengthTestResult } from '@cairn/core';
+import { blockDay, blockWeekOf, compensationDay, compensationHomeDay, remeasured, weakSides } from '@cairn/coach';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
@@ -144,13 +144,28 @@ describe('La semaine du 05/10 à la maison', () => {
 
 describe('Le bloc de force, du 09/10 au 01/11', () => {
   // « Je vais commencer le renforcement musculaire de façon quotidienne. De façon bien énervée. »
-  const block = Array.from({ length: 24 }, (_, i) => blockDay(PIERRE_MODEL, i));
+  // Le soir des tests : « concentre-toi sur le renforcement plutôt que les marches longues […]
+  // spécifique trail, spécifique mon profil et mes lacunes ».
+  /** Les tests du 09/10, tels que Pierre les a notés. */
+  const TESTS_0910: StrengthTestResult[] = [
+    { date: '2026-10-09', test: 'test-mollets', left: 91, right: 117, updatedAt: '' },
+    { date: '2026-10-09', test: 'test-pont', left: 32, right: 36, updatedAt: '' },
+    { date: '2026-10-09', test: 'test-chaise', value: 130, updatedAt: '' },
+    { date: '2026-10-09', test: 'test-gainage', value: 117, updatedAt: '' },
+    { date: '2026-10-09', test: 'test-equilibre', left: 22, right: 60, updatedAt: '' },
+    { date: '2026-10-09', test: 'test-cheville', left: 11, right: 9, updatedAt: '' },
+    { date: '2026-10-09', test: 'test-souplesse', value: 0, updatedAt: '' },
+  ];
+  const weak = weakSides(TESTS_0910, '2026-10-10');
+  const block = Array.from({ length: 24 }, (_, i) => blockDay(PIERRE_MODEL, i, weak));
   /** Le jour `i` du bloc tombe un vendredi pour i = 0 : lundi = 0. */
   const dow = (i: number) => (i + 4) % 7;
   const weeks = [1, 2, 3].map((w) => block.filter((_, i) => blockWeekOf(i) === w));
-  const LEGS_HEAVY: Record<string, ExerciseKey[]> = {
-    genoux: ['split-squat-maison', 'descente-marche', 'reverse-nordic'],
-    ischios: ['leg-curl-serviette', 'souleve-une-jambe'],
+  const blocksOf = (key: ExerciseKey) => block.flatMap((s) => s.blocks).filter((b) => b.exercise === key);
+  /** Ce qui charge lourdement un groupe : les exercices comptés en répétitions, hors marche. */
+  const HEAVY: Record<string, ExerciseKey[]> = {
+    genoux: ['split-squat-maison', 'descente-marche', 'reverse-nordic', 'squat-une-jambe'],
+    'chaîne arrière': ['souleve-une-jambe', 'hip-thrust', 'leg-curl-serviette'],
   };
   /** Les séries de force de la semaine : tout ce qui se compte en répétitions ou se tient, hors marche, soins et tests. */
   const sets = (days: typeof block) =>
@@ -159,6 +174,29 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
       .filter((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort) && !EXERCISES[b.exercise as ExerciseKey]?.measure)
       .reduce((a, b) => a + (b.repeat ?? 1), 0);
   const TESTS = ['test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse'];
+
+  it('lit les côtés faibles des tests : plus de 10 % d’écart, ou 1,5 cm à la cheville', () => {
+    expect(weak).toEqual({
+      calves: { side: 'gauche', measured: 'au test, 91 montées contre 117' },
+      hips: { side: 'gauche', measured: 'au test, 32 ponts contre 36' },
+      balance: { side: 'gauche', measured: 'au test, 22 s contre 60 s' },
+      ankle: { side: 'droite', measured: 'au test, 9 cm contre 11' },
+    });
+    // Sous le seuil, aucun côté n'est faible ; et ce sont les derniers tests qui comptent.
+    expect(weakSides([{ date: '2026-10-09', test: 'test-pont', left: 34, right: 36, updatedAt: '' }], '2026-10-10')).toEqual({});
+    expect(weakSides(TESTS_0910, '2026-10-08')).toEqual({});
+  });
+
+  it('donne une série de plus au côté faible, et le dit', () => {
+    const rdl = blocksOf('souleve-une-jambe')[0]!;
+    expect([rdl.repeat, rdl.extra]).toEqual([9, { side: 'gauche', sets: 1 }]);
+    expect(rdl.notes).toContain('Jambe gauche : une série de plus — au test, 32 ponts contre 36.');
+    expect(blocksOf('mollets-iso')[0]!.extra).toEqual({ side: 'gauche', sets: 1 });
+    expect(blocksOf('equilibre')[0]!.extra).toEqual({ side: 'gauche', sets: 2 });
+    expect(blocksOf('cheville-mobilite')[0]!.extra).toEqual({ side: 'droite', sets: 1 });
+    // Sans test, pas de série en plus.
+    expect(blockDay(PIERRE_MODEL, 4).blocks.find((b) => b.exercise === 'souleve-une-jambe')!.extra).toBeUndefined();
+  });
 
   it('donne un entraînement chaque jour, sans rien à courir', () => {
     expect(block).toHaveLength(24);
@@ -171,7 +209,7 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     }
   });
 
-  it('se fait sans salle : rien, le step, le kit d’élastiques, la rue', () => {
+  it('se fait sans salle : rien, le step, le kit d’élastiques, un sac chargé, la rue', () => {
     for (const s of block) {
       for (const b of s.blocks) {
         expect(isExerciseKey(b.exercise!), `${s.title} — ${b.label}`).toBe(true);
@@ -180,19 +218,21 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     }
   });
 
-  it('renforce chaque jour, sans jamais charger les mêmes muscles deux jours de suite', () => {
-    for (const s of block) expect(s.blocks.some((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort)), s.title).toBe(true);
-    for (const [group, keys] of Object.entries(LEGS_HEAVY)) {
-      const days = block.map((s, i) => (s.blocks.some((b) => keys.includes(b.exercise as ExerciseKey)) ? i : -1)).filter((i) => i >= 0);
-      for (let k = 1; k < days.length; k++) expect(days[k]! - days[k - 1]!, `${group} : jours ${days.join(', ')}`).toBeGreaterThanOrEqual(2);
+  it('se concentre sur la force : plus de marche longue, cinq séances de force par semaine', () => {
+    for (const s of block) {
+      for (const b of s.blocks.filter((x) => x.exercise === 'marche' || x.exercise === 'marche-cote')) {
+        expect(b.durationS!, `${s.title} — ${b.label}`).toBeLessThanOrEqual(30 * 60);
+      }
     }
+    for (const w of weeks.slice(0, 2)) expect(w.filter((s) => s.type === 'strength')).toHaveLength(5);
   });
 
-  it('porte les titres que la page Exercices annonce, jour par jour', () => {
-    block.forEach((s, i) => {
-      if (i === 0 || i === 23) return;
-      expect(s.title.startsWith(FORCE_BLOCK_DAYS[dow(i)]!.title), s.title).toBe(true);
-    });
+  it('renforce chaque jour, sans jamais charger les mêmes muscles lourds deux jours de suite', () => {
+    for (const s of block) expect(s.blocks.some((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort)), s.title).toBe(true);
+    for (const [group, keys] of Object.entries(HEAVY)) {
+      const days = block.map((s, i) => (s.blocks.some((b) => b.reps && keys.includes(b.exercise as ExerciseKey)) ? i : -1)).filter((i) => i >= 0);
+      for (let k = 1; k < days.length; k++) expect(days[k]! - days[k - 1]!, `${group} : jours ${days.join(', ')}`).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('ouvre et ferme sur les mêmes sept tests, un par étape, dans le même ordre', () => {
@@ -213,22 +253,29 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     }
   });
 
-  it('dit chaque exercice d’une jambe par jambe, avec ses séries paires', () => {
+  it('dit chaque exercice d’une jambe par jambe : autant de séries de chaque côté, plus celles du côté faible', () => {
     for (const b of block.flatMap((s) => s.blocks).filter((x) => x.sides)) {
-      expect((b.repeat ?? 1) % 2, b.label).toBe(0);
+      expect(((b.repeat ?? 1) - (b.extra?.sets ?? 0)) % 2, b.label).toBe(0);
     }
     const fente = block[3]!.blocks.find((b) => b.exercise === 'split-squat-maison')!;
-    expect([fente.repeat, fente.reps, fente.sides, fente.reserve]).toEqual([6, 10, 'jambe', 2]);
+    expect([fente.repeat, fente.reps, fente.sides, fente.reserve]).toEqual([8, 8, 'jambe', 2]);
     expect(fente.tempo).toContain('3 s pour descendre');
+    expect(fente.notes).toContain('6 à 8 kg');
   });
 
-  it('suit la semaine type : trois séances de force à 48 h, un fractionné, une longue marche le samedi', () => {
+  it('suit la semaine type, et ses titres sont ceux que la page Exercices annonce', () => {
     for (const w of weeks.slice(0, 2)) {
       expect(w.map((s) => s.type)).toEqual([
-        'strength', 'cross_training', 'strength', 'cross_training', 'strength', 'cross_training', 'cross_training',
+        'strength', 'strength', 'cross_training', 'strength', 'strength', 'strength', 'cross_training',
       ]);
     }
-    expect(block.filter((_, i) => dow(i) === 5).every((s) => s.title.startsWith('Longue marche en côte'))).toBe(true);
+    block.forEach((s, i) => {
+      if (i <= 2 || i === 23) return;
+      expect(s.title.startsWith(FORCE_BLOCK_DAYS[dow(i)]!.title), s.title).toBe(true);
+    });
+    // Le samedi 10/10, le lendemain des tests : la force A, sans les mollets vidés la veille.
+    expect(block[1]!.title.startsWith('Force A')).toBe(true);
+    expect(block[1]!.blocks.some((b) => b.exercise === 'mollets-iso')).toBe(false);
   });
 
   it('construit, charge, puis allège avant les tests de fin', () => {
@@ -242,19 +289,18 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     }
   });
 
-  it('garde l’intensité une fois par semaine, dans les escaliers et pas sur le step', () => {
-    const moteurs = block.filter((s) => s.title.startsWith('Fractionné en côte'));
+  it('garde l’intensité une fois par semaine, au seuil, dans les escaliers et pas sur le step', () => {
+    const moteurs = block.filter((s) => s.title.startsWith('Moteur et mollets'));
     expect(moteurs).toHaveLength(3);
-    const reps = moteurs.map((s) => s.blocks.find((b) => (b.repeat ?? 1) > 1)!);
-    expect(reps.map((b) => b.zone)).toEqual(['Z3', 'Z4', 'Z4']);
-    expect(reps.map((b) => b.exercise)).toEqual(['marche-cote', 'marche-cote', 'marche-cote']);
-    // La semaine allégée garde l'intensité et coupe le volume.
+    const reps = moteurs.map((s) => s.blocks.find((b) => b.part === 'Fractionné')!);
+    expect(reps.map((b) => [b.zone, b.exercise])).toEqual([['Z4', 'marche-cote'], ['Z4', 'marche-cote'], ['Z4', 'marche-cote']]);
     expect(reps[2]!.repeat).toBeLessThan(reps[1]!.repeat!);
   });
 
-  it('charge le tendon d’Achille quatre fois par semaine, comme dans l’étude', () => {
+  it('charge le mollet trois fois par semaine : l’isométrie lourde deux fois, lesté une fois', () => {
     for (const w of weeks.slice(0, 2)) {
-      expect(w.filter((s) => s.blocks.some((b) => b.exercise === 'mollets-iso'))).toHaveLength(4);
+      expect(w.filter((s) => s.blocks.some((b) => b.exercise === 'mollets-iso'))).toHaveLength(2);
+      expect(w.filter((s) => s.blocks.some((b) => b.exercise === 'mollets-charges'))).toHaveLength(1);
     }
   });
 

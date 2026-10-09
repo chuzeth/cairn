@@ -145,13 +145,13 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
           view: 'side', hip: [5.2, 67.6], lean: 2,
           near: { ankle: ankleFromBall([7.5, STEP.low], -35), sole: -35 },
           far: { thigh: -10, shank: -78, sole: -60 },
-          free: { hand: [22, 88] },
+          free: { hand: [20, 88], fingers: 180 }, cast: 'across',
         },
         pose: {
           view: 'side', hip: [0.6, 60.7], lean: 2,
           near: { ankle: ankleFromBall([7.5, STEP.low], 20), sole: 20 },
           far: { thigh: -10, shank: -78, sole: -60 },
-          free: { hand: [22, 84] },
+          free: { hand: [20, 84], fingers: 180 }, cast: 'across',
         },
         motions: [{ joint: 'near.heel', bend: -5, label: '3 s' }],
         notes: [{ text: 'talon sous\nle step', at: 'near.heel', dx: -10, dy: 7 }],
@@ -166,7 +166,7 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
           view: 'side', hip: [-3.1, 60.1], lean: 10,
           near: { ankle: ankleFromBall([7.5, STEP.low], 15), sole: 15 },
           far: { thigh: 4, shank: -58, sole: -55 },
-          free: { hand: [22, 82] },
+          free: { hand: [20, 82], fingers: 180 }, cast: 'across',
         },
         notes: [{ text: 'genou fléchi\nde 30°', at: 'near.knee', dx: -14, dy: 22 }],
         muscles: [{ muscle: 'soleus' }],
@@ -458,16 +458,16 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghostLabel: 'Tout le pied sur le step de 40 cm',
         props: [{ kind: 'floor' }, { kind: 'stool', x: 18, face: 1 }, { kind: 'wall', x: 19, face: -1 }],
         ghost: {
-          view: 'side', hip: [-8, 45], lean: 14,
-          near: { ankle: [8, FURNITURE.stool.seat + A] }, far: { ankle: [-16, A] },
-          free: { hand: [18, 70] },
+          view: 'side', hip: [-8, 50], lean: 14,
+          near: { ankle: [5.3, FURNITURE.stool.seat + A] }, far: { ankle: [-16, A] },
+          free: { hand: [17, 70], fingers: 180 }, cast: 'across',
         },
         pose: {
-          view: 'side', hip: [7, 74.2], lean: 3,
-          near: { ankle: [8, FURNITURE.stool.seat + A] }, far: { thigh: -6, shank: -40, sole: -30 },
-          free: { hand: [18, 88] },
+          view: 'side', hip: [5, 74.2], lean: 3,
+          near: { ankle: [5.3, FURNITURE.stool.seat + A] }, far: { thigh: -6, shank: -40, sole: -30 },
+          free: { hand: [17, 88], fingers: 180 }, cast: 'across',
         },
-        motions: [{ joint: 'hip', bend: -8, label: '1 s' }],
+        motions: [{ joint: 'hip', bend: 8, label: '1 s' }],
         notes: [{ text: 'la main au mur,\ntoujours', at: 'free.wrist', dx: -24, dy: 2 }],
         muscles: [{ muscle: 'quads' }, { muscle: 'glutes' }],
         contacts: [{ ref: 'near.heel', y: FURNITURE.stool.seat }, { ref: 'near.ball', y: FURNITURE.stool.seat }],
@@ -478,16 +478,16 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghostLabel: 'Debout sur le step',
         props: [{ kind: 'floor' }, { kind: 'stool', x: 18, face: 1 }, { kind: 'wall', x: 19, face: -1 }],
         ghost: {
-          view: 'side', hip: [7, 74.2], lean: 3,
-          near: { ankle: [8, FURNITURE.stool.seat + A] }, far: { thigh: -6, shank: -40, sole: -30 },
-          free: { hand: [18, 88] },
+          view: 'side', hip: [5, 74.2], lean: 3,
+          near: { ankle: [5.3, FURNITURE.stool.seat + A] }, far: { thigh: -6, shank: -40, sole: -30 },
+          free: { hand: [17, 88], fingers: 180 }, cast: 'across',
         },
         pose: {
-          view: 'side', hip: [-3, 56.5], lean: 20,
-          near: { ankle: [8, FURNITURE.stool.seat + A] }, far: { ankle: ankleFromToe([-6, 0], -35), sole: -35 },
-          free: { hand: [18, 80] },
+          view: 'side', hip: [-7, 56], lean: 20,
+          near: { ankle: [5.3, FURNITURE.stool.seat + A] }, far: { ankle: ankleFromToe([-6, 0], -35), sole: -35 },
+          free: { hand: [17, 80], fingers: 180 }, cast: 'across',
         },
-        motions: [{ joint: 'hip', bend: 8, label: '4 s' }],
+        motions: [{ joint: 'hip', bend: -8, label: '4 s' }],
         angles: [{ at: 'near.knee', a: 'near.hip', b: 'near.ankle' }],
         notes: [{ text: 'la pointe arrière\nse pose à peine', at: 'far.toe', dx: -4, dy: -6 }],
         muscles: [{ muscle: 'quads' }],
@@ -505,12 +505,12 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghost: {
           view: 'side', hip: [0.3, 52.5], lean: 0,
           near: { ankle: ankleFromBall([8, 0], 0) }, far: { thigh: 4, shank: -58, sole: -55 },
-          free: { hand: [21, 70] },
+          free: { hand: [20, 70], fingers: 180 }, cast: 'across',
         },
         pose: {
           view: 'side', hip: [3.3, 56], lean: 0,
           near: { ankle: ankleFromToe([11.4, 0], -28), sole: -28 }, far: { thigh: 4, shank: -58, sole: -55 },
-          free: { hand: [21, 72] },
+          free: { hand: [20, 72], fingers: 180 }, cast: 'across',
         },
         motions: [{ joint: 'near.heel', bend: -4, label: '1 s' }],
         notes: [{ text: 'tout en haut,\nle poids sous\nle gros orteil', at: 'near.ball', dx: -24, dy: 30 }],
@@ -524,7 +524,7 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         pose: {
           view: 'side', hip: [-3.6, 54.5], lean: 8,
           near: { ankle: ankleFromToe([11.4, 0], -24), sole: -24 }, far: { thigh: 8, shank: -55, sole: -55 },
-          free: { hand: [21, 68] },
+          free: { hand: [20, 68], fingers: 180 }, cast: 'across',
         },
         notes: [{ text: 'genou fléchi\nde 30°, toute\nla série', at: 'near.knee', dx: 10, dy: 10 }],
         muscles: [{ muscle: 'soleus' }],
@@ -617,12 +617,12 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghost: {
           view: 'side', hip: [0.3, 52.5], lean: 0,
           near: { ankle: ankleFromBall([8, 0], 0) }, far: { thigh: 4, shank: -58, sole: -55 },
-          free: { hand: [21.5, 76] },
+          free: { hand: [20, 76], fingers: 180 }, cast: 'across',
         },
         pose: {
           view: 'side', hip: [3.3, 56], lean: 0,
           near: { ankle: ankleFromToe([11.4, 0], -28), sole: -28 }, far: { thigh: 4, shank: -58, sole: -55 },
-          free: { hand: [21.5, 78] },
+          free: { hand: [20, 78], fingers: 180 }, cast: 'across',
         },
         motions: [{ joint: 'near.heel', bend: -4, label: '1 s' }],
         muscles: [{ muscle: 'calves' }, { muscle: 'soleus' }],
@@ -669,13 +669,12 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         pose: {
           view: 'side', hip: [11.15, 42.97], lean: 10,
           near: { ankle: [13, A] }, far: { ankle: [-14, A] },
-          free: { hand: [26, 70] },
+          free: { elbow: [20.5, 58], hand: [28, 63], fingers: 180 }, cast: 'across',
         },
         guides: [{ from: [24.4, 2.4], to: [30, 2.4] }],
         notes: [
-          { text: 'le genou\ntouche le mur', at: 'near.knee', dx: -10, dy: 14 },
-          { text: 'talon au sol', at: 'near.heel', dx: -8, dy: 6 },
-          { text: 'du gros orteil\nau mur : 10 cm ?', at: [27.2, 2.4], dx: -2, dy: -10 },
+          { text: 'talon au sol', at: 'near.heel', dx: -3, dy: -9 },
+          { text: 'du gros orteil\nau mur : 10 cm ?', at: [27.2, 2.4], dx: 0, dy: -9 },
         ],
         muscles: [{ muscle: 'soleus' }],
         contacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }, { ref: 'far.heel', y: 0 }],
@@ -912,6 +911,97 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  // ───────────────────────── La force spécifique trail, chargée ───────────────
+
+  'squat-une-jambe': {
+    panels: [
+      {
+        label: 'En bas : 4 s pour y descendre, les fesses effleurent le step',
+        ghostLabel: 'Debout sur une jambe',
+        props: [
+          { kind: 'floor' }, { kind: 'backdrop', from: -22, to: 26, top: 100 },
+          { kind: 'wall', x: -22, face: 1 }, { kind: 'stool', x: -4, face: 1 },
+        ],
+        ghost: {
+          view: 'side', hip: [3, 52], lean: 5,
+          near: { ankle: [8, A] }, far: { thigh: 25, shank: 30, sole: 20 },
+          free: { hand: [8, 52], fingers: 180 },
+        },
+        pose: {
+          view: 'side', hip: [-10, 28.8], lean: 40,
+          near: { ankle: [8, A] }, far: { thigh: 80, shank: 85, sole: 75 },
+          free: { elbow: [12, 37], hand: [21, 38], fingers: 180 },
+        },
+        motions: [{ joint: 'hip', bend: -7, label: '4 s' }],
+        angles: [{ at: 'near.knee', a: 'near.hip', b: 'near.ankle' }],
+        notes: [
+          { text: 'les fesses effleurent,\nelles ne s’assoient pas', at: [-14, 22.6], dx: -12, dy: 18 },
+          { text: 'la jambe libre devant', at: 'far.ankle', dx: 2, dy: 10 },
+        ],
+        muscles: [{ muscle: 'quads' }, { muscle: 'glutes' }],
+        contacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }, { part: 'trunk', y: FURNITURE.stool.seat + 0.6, tol: 0.8 }],
+        ghostContacts: [{ ref: 'near.heel', y: 0 }],
+      },
+    ],
+  },
+
+  'soleaire-assis': {
+    panels: [
+      {
+        label: 'Les talons en haut, 1 s ; 3 s pour redescendre',
+        ghostLabel: 'Les talons presque au sol',
+        props: [
+          { kind: 'floor' },
+          { kind: 'chair', x: -2, face: 1 },
+          { kind: 'box', x: 24, h: 2.8, depth: 10, face: 1 },
+        ],
+        carry: 'genoux',
+        ghost: {
+          view: 'side', hip: [-11, 31.6], lean: 4,
+          near: { ankle: ankleFromBall([20, 2.8], 10), sole: 10 }, far: { ankle: [9.94, 5.25], sole: 10 },
+          free: { hand: [5, 42] },
+        },
+        pose: {
+          view: 'side', hip: [-11, 31.6], lean: 4,
+          near: { ankle: ankleFromBall([20, 2.8], -25), sole: -25 }, far: { ankle: [12.9, 9.72], sole: -25 },
+          free: { hand: [5, 43] },
+        },
+        motions: [{ joint: 'near.heel', bend: 4, label: '1 s' }],
+        angles: [{ at: 'near.knee', a: 'near.hip', b: 'near.ankle' }],
+        notes: [
+          { text: 'le sac chargé\nsur les genoux', at: [6, 44], dx: 12, dy: 14 },
+          { text: 'l’avant du pied\nsur un gros livre', at: [20, 2.8], dx: 6, dy: 8 },
+        ],
+        muscles: [{ muscle: 'soleus' }],
+        contacts: [{ ref: 'near.ball', y: 2.8 }, { part: 'trunk', y: FURNITURE.chair.seat, tol: 1.2 }],
+        ghostContacts: [{ ref: 'near.ball', y: 2.8 }],
+      },
+    ],
+  },
+
+  'port-valise': {
+    panels: [
+      {
+        label: 'De face : le sac dans la main valide, les épaules à niveau',
+        props: [{ kind: 'floor' }],
+        carry: 'main',
+        pose: {
+          view: 'front', pelvis: [0, 52.8],
+          left: { ankle: [-6, A] }, right: { ankle: [6, A] },
+          free: { side: 'right', elbow: [11.8, 62], hand: [12.6, 46.5] },
+        },
+        guides: [{ from: [-16, 79.8], to: [16, 79.8] }],
+        notes: [
+          { text: 'les épaules\nà niveau', at: [-16, 79.8], dx: -4, dy: 4 },
+          { text: 'ce flanc\ntravaille', at: [-6, 62], dx: -10, dy: -6 },
+          { text: '8 à 15 kg', at: [13, 27], dx: 6, dy: -2 },
+        ],
+        muscles: [{ muscle: 'obliques', side: 'left' }],
+        contacts: [{ ref: 'left.ankle', y: A }, { ref: 'right.ankle', y: A }],
+      },
+    ],
+  },
+
   // ───────────────────────── La salle, et le reste du programme ─────────────
 
   activation: {
@@ -923,12 +1013,12 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghost: {
           view: 'side', hip: [2, 52.3], lean: 0,
           near: { ankle: [6, A] }, far: { ankle: [0, A] },
-          free: { hand: [30, 70] },
+          free: { hand: [29, 70], fingers: 180 },
         },
         pose: {
           view: 'side', hip: [-8, 34], lean: 15,
           near: { ankle: [6, A] }, far: { ankle: ankleFromToe([-24, 0], -60), sole: -60 },
-          free: { hand: [30, 59] },
+          free: { hand: [29, 59], fingers: 180 },
         },
         motions: [{ joint: 'hip', bend: 6, label: '2 s' }],
         muscles: [{ muscle: 'glutes' }, { muscle: 'quads' }],
@@ -1366,6 +1456,36 @@ export const FIGURES: Partial<Record<ExerciseKey, FigureSpec>> = {
   chaise: { panels: [FIGURE_LIST.chaise!.panels[0]!] },
   'chaise-une-jambe': { panels: [FIGURE_LIST.chaise!.panels[1]!] },
   'test-chaise': { panels: [FIGURE_LIST.chaise!.panels[0]!] },
+  // Le sac sur le dos change la charge, pas le geste : le schéma de l'exercice, le sac en plus.
+  'mollets-charges': {
+    panels: [{
+      ...FIGURE_LIST['mollets-excentriques']!.panels[0]!,
+      label: 'Sur un pied : 3 s pour monter, 3 s pour redescendre sous le step',
+      ghostLabel: 'Tout en haut',
+      carry: 'dos',
+    }],
+  },
+  'fente-arriere': {
+    panels: [{ ...FIGURE_LIST.activation!.panels[0]!, label: 'Le genou arrière à une main du sol, le sac sur le dos', carry: 'dos' }],
+  },
+  'cheville-mobilite': {
+    panels: [{
+      ...FIGURE_LIST['test-cheville']!.panels[0]!,
+      label: 'Le genou va toucher le mur, 2 s, et revient',
+      ghostLabel: 'Le genou en retrait',
+      ghost: {
+        view: 'side', hip: [4, 49.5], lean: 6,
+        near: { ankle: [13, A] }, far: { ankle: [-14, A] },
+        free: { hand: [28, 63], fingers: 180 }, cast: 'across',
+      },
+      motions: [{ joint: 'near.knee', bend: -3, label: '2 s' }],
+      notes: [
+        { text: 'talon au sol', at: 'near.heel', dx: -3, dy: -9 },
+        { text: 'à 10 cm\ndu mur', at: [27.2, 2.4], dx: 0, dy: -9 },
+      ],
+      ghostContacts: [{ ref: 'near.heel', y: 0 }],
+    }],
+  },
   'test-gainage': FIGURE_LIST['gainage-lateral'],
   'test-equilibre': FIGURE_LIST.equilibre,
 };

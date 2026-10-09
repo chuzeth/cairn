@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EXERCISE_KEYS } from '@cairn/core';
 import { FIGURES } from '../apps/web/lib/exerciseFigures';
 import { EXERCISE_GROUPS } from '../apps/web/lib/exerciseGroups';
-import { FURNITURE, angleAt, dist, parts, resolve, type Pose } from '../apps/web/lib/figure';
+import { FURNITURE, angleAt, dist, parts, resolve, type Pose, type Prop } from '../apps/web/lib/figure';
 
 /**
  * Les schémas d'exercices disent ce que les fiches demandent, et le disent juste.
@@ -55,6 +55,22 @@ describe('Les schémas d’exercices', () => {
       if (pose.view === 'top') continue;
       const lowest = Math.min(...list.flatMap((p) => p.pts.map((q) => q[1])));
       expect(lowest, `${name} : le corps descend à ${lowest.toFixed(2)}`).toBeGreaterThanOrEqual(-0.8);
+    }
+  });
+
+  it('ne font rien passer à travers un mur : ni le plâtre, ni la main qui s’y appuie, ni le genou', () => {
+    const isWall = (q: Prop): q is Extract<Prop, { kind: 'wall' }> => q.kind === 'wall';
+    for (const { key, i, p } of panels) {
+      for (const wall of p.props.filter(isWall)) {
+        for (const pose of [p.pose, p.ghost]) {
+          if (!pose || pose.view !== 'side') continue;
+          for (const part of parts(pose).parts) {
+            // Le trait du contour a un peu d'épaisseur : une unité au-delà de la face, la main y est posée.
+            const over = Math.max(...part.pts.map(([x]) => (wall.face === -1 ? x - wall.x : wall.x - x)));
+            expect(over, `${key} n° ${i + 1}${pose === p.ghost ? ', départ' : ''} : ${part.name}`).toBeLessThanOrEqual(1);
+          }
+        }
+      }
     }
   });
 

@@ -639,6 +639,8 @@ export interface SessionRow {
     reserve?: number;
     /** Un effort guidé, `reps` fois par série : `workS` à fond, `restS` relâché. */
     pulse?: { workS: number; restS: number };
+    /** Des séries en plus du côté que les tests disent faible, comptées dans `repeat`. */
+    extra?: { side: 'gauche' | 'droite'; sets: number };
   }[];
   /** Ce qui fait que la séance a atteint son but, tel que le dossier le formule. */
   successCriteria?: { metric: 'hr_drift'; maxValue?: number; origin: DirectiveOriginRow }[];

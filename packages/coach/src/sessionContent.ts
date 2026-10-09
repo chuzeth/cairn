@@ -73,6 +73,7 @@ const WRITABLE_BLOCK_FIELDS: Record<Exclude<keyof SessionBlock, DerivedBlockFiel
   elevationGainM: true, elevationLossM: true, hrRange: true, speedRangeMs: true, vamTargetMh: true,
   cadenceTargetSpm: true, effort: true, recovery: true, circuit: true, notes: true, terrain: true,
   lastOptional: true, reps: true, exercise: true, part: true, sides: true, tempo: true, reserve: true, pulse: true,
+  extra: true,
 };
 
 type Recovery = NonNullable<SessionBlock['recovery']>;
@@ -375,10 +376,20 @@ function parseBlock(
     if (raw.sides !== 'jambe' && raw.sides !== 'côté') {
       throw new Error(`${at}.sides : « jambe » ou « côté » attendu, reçu ${JSON.stringify(raw.sides)}.`);
     }
-    if ((block.repeat ?? 1) % 2 !== 0) {
-      throw new Error(`${at}.sides : un nombre pair de séries est attendu, autant de chaque côté.`);
-    }
     block.sides = raw.sides;
+  }
+  if (raw.extra !== undefined) {
+    const e = raw.extra as Record<string, unknown> | null;
+    if (typeof e !== 'object' || e === null || Array.isArray(e)) throw new Error(`${at}.extra : objet attendu.`);
+    if (e.side !== 'gauche' && e.side !== 'droite') {
+      throw new Error(`${at}.extra.side : « gauche » ou « droite » attendu, reçu ${JSON.stringify(e.side)}.`);
+    }
+    if (block.sides !== 'jambe') throw new Error(`${at}.extra : une série en plus d'un côté suppose un exercice par jambe.`);
+    block.extra = { side: e.side, sets: Math.round(number(e.sets, `${at}.extra.sets`, 1, 4)) };
+  }
+  // Autant de séries de chaque côté, plus celles du côté faible.
+  if (block.sides && ((block.repeat ?? 1) - (block.extra?.sets ?? 0)) % 2 !== 0) {
+    throw new Error(`${at}.sides : autant de séries de chaque côté sont attendues, en plus de \`extra\`.`);
   }
   if (raw.tempo !== undefined) block.tempo = text(raw.tempo, `${at}.tempo`, 120);
   if (raw.reserve !== undefined) block.reserve = Math.round(number(raw.reserve, `${at}.reserve`, 0, 10));

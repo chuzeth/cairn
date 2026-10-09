@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { ExerciseKey } from '@cairn/core/exercises';
 import { FIGURES } from '@/lib/exerciseFigures';
 import {
-  FURNITURE, add, angleAt, dist, doorHook, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
+  FURNITURE, add, angleAt, carryShape, dist, doorHook, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
   type Panel, type Part, type Prop, type Pt, type Ref, type Skeleton,
 } from '@/lib/figure';
 
@@ -366,6 +366,9 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
   const ring = panel.hold === 'handle' ? 2 : 3.2;
   const held = panel.hold ? { pose: weight(k), ghost: ghost ? weight(ghost.skeleton) : null } : null;
   if (held) for (const q of [held.pose, held.ghost]) if (q) { grow(box, add(q, [-3.4, -3.4])); grow(box, add(q, [3.4, 3.4])); }
+  // Le sac chargé : derrière le buste, ou devant le corps, sur les genoux ou à la main.
+  const carried = panel.carry ? carryShape(panel.carry, k) : null;
+  if (carried) for (const q of carried.pts) grow(box, q);
 
   const pad = 3.5;
   const floor = panel.props.some((p) => p.kind === 'floor');
@@ -393,7 +396,9 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
         {ghost && <GhostView list={ghost.parts} />}
         {ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
         {bands.filter((b) => b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `bb${i}`))}
+        {carried && !carried.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
         <BodyView list={list} muscles={muscles} uid={uid} />
+        {carried?.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
         {held && (
           <g className={panel.hold === 'handle' ? 'fg-handle' : 'fg-disc'}>
             <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r={ring} />

@@ -1233,6 +1233,8 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xf .fg-furniture .fg-anchor { stroke: var(--good); stroke-width: 1.3; }
 .xf .fg-mat { fill: #2a3533; }
 .xf .fg-towel { fill: #4a5a63; }
+/* Le sac chargé : la seule charge que porte le corps, sombre et bordé pour se détacher de lui. */
+.xf .fg-carry { fill: #56626a; stroke: var(--bg-inset); stroke-width: 0.8; }
 .xf .fg-weight line { stroke: var(--text-dim); stroke-width: 1.2; stroke-linecap: round; }
 .xf .fg-weight .fg-plate { stroke-width: 2.4; }
 .xf .fg-band { stroke: var(--good); stroke-linecap: round; }

@@ -20,8 +20,8 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
     title: 'Cuisses et genoux',
     lead: 'Le quadriceps qui pousse en montée et freine en descente : l’échauffement, puis le step, le mur, le tapis.',
     keys: [
-      'echauffement-maison', 'split-squat-maison', 'descente-marche', 'reverse-nordic', 'montee-tabouret', 'chaise',
-      'chaise-une-jambe',
+      'echauffement-maison', 'split-squat-maison', 'squat-une-jambe', 'descente-marche', 'reverse-nordic',
+      'montee-tabouret', 'fente-arriere', 'chaise', 'chaise-une-jambe',
     ],
   },
   {
@@ -35,12 +35,15 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   {
     title: 'Mollets, chevilles, pieds',
     lead: 'Le tendon d’Achille et le pied, qui encaissent chaque foulée : ce qu’un arrêt de course déconditionne en premier.',
-    keys: ['mollets-iso', 'mollets-excentriques', 'mollets-sol', 'releves-pointe', 'pied-court', 'equilibre'],
+    keys: [
+      'mollets-charges', 'soleaire-assis', 'mollets-iso', 'mollets-excentriques', 'mollets-sol', 'releves-pointe',
+      'cheville-mobilite', 'pied-court', 'equilibre',
+    ],
   },
   {
     title: 'Le tronc',
     lead: 'Il ne se creuse pas, ne tourne pas, ne s’affaisse pas : le gainage, sans jamais s’appuyer sur le bras plâtré.',
-    keys: ['dead-bug', 'gainage-lateral', 'anti-rotation'],
+    keys: ['dead-bug', 'gainage-lateral', 'anti-rotation', 'port-valise'],
   },
   {
     title: 'Le bras valide',

@@ -7,7 +7,7 @@ import { sendOrQueue } from '@/lib/offline';
 import { planName } from '@/lib/sessions';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
 import {
-  measureText, parseMeasure, partDuration, partSummary, setLabel, stepsOf, workoutOf, workoutSummary, type Part, type Step,
+  measureText, parseMeasure, partDuration, partSummary, setLabel, stepRx, stepsOf, workoutOf, workoutSummary, type Part, type Step,
 } from '@/lib/workout';
 
 /**
@@ -302,10 +302,7 @@ function Sommaire({ parts, finished: isFinished }: { parts: Part[]; finished: (s
                   <a href={`#etape-${s.n}`}>
                     <span className="w-toc-n">{finished ? '✓' : s.n}</span>
                     <span className="w-toc-name">{s.name}</span>
-                    <span className="w-toc-rx">
-                      {s.main}
-                      {s.measure ? (s.measure.perSide ? ', par jambe' : '') : s.block.sides ? ` par ${s.block.sides}` : ''}
-                    </span>
+                    <span className="w-toc-rx">{stepRx(s)}</span>
                   </a>
                 </li>
               );
@@ -436,11 +433,17 @@ function SetDots({ step, done, onDone, big = false }: { step: Step; done: number
           // Toucher la dernière faite la décoche : une erreur se rattrape d'un geste.
           onClick={() => onDone(i < done ? i : i + 1)}
         >
-          {i < done ? '✓' : i + 1}
+          {i < done ? '✓' : i >= step.base && step.block.extra ? step.block.extra.side[0]!.toUpperCase() : i + 1}
         </button>
       ))}
       <span className="w-dots-note">
-        {done >= step.sets ? 'Fait' : step.block.sides === 'jambe' ? 'une série = gauche, puis droite' : `${done} sur ${step.sets}`}
+        {done >= step.sets
+          ? 'Fait'
+          : step.block.extra && done >= step.base
+            ? `la série en plus : jambe ${step.block.extra.side} seule`
+            : step.block.sides === 'jambe'
+              ? `une série = gauche, puis droite${step.block.extra ? ` ; ${step.block.extra.side[0]!.toUpperCase()} : jambe ${step.block.extra.side} seule` : ''}`
+              : `${done} sur ${step.sets}`}
       </span>
     </div>
   );
@@ -576,9 +579,10 @@ function Player({
       setRun(null);
       return;
     }
+    const weakOnly = Boolean(step.block.extra) && (progressRef.current.sets[step.index] ?? 0) >= step.base;
     if (run.kind === 'hold') {
       BEEP.done();
-      if (step.block.sides && run.side === 0) {
+      if (step.block.sides && run.side === 0 && !weakOnly) {
         setHalf({ index: step.index, side: 1 });
         setRun(null);
       } else {
@@ -598,7 +602,7 @@ function Player({
       setRun({ ...run, phase: 'work', rep: run.rep + 1, endsAt: run.endsAt + t.workS * 1000 });
     } else {
       BEEP.done();
-      if (step.block.sides && run.side === 0) {
+      if (step.block.sides && run.side === 0 && !weakOnly) {
         setHalf({ index: step.index, side: 1 });
         setRun(null);
       } else {
@@ -631,7 +635,10 @@ function Player({
   /** La seule action à faire maintenant, celle que la barre d'espace déclenche. */
   const primary = useMemo((): { label: string; act: () => void } => {
     const side = half?.index === step.index ? 1 : 0;
-    const sideWord = step.block.sides === 'jambe' ? (side === 0 ? ' — jambe gauche' : ' — jambe droite') : step.block.sides === 'côté' ? (side === 0 ? ' — premier côté' : ' — second côté') : '';
+    const onlyWeak = step.block.extra && done >= step.base ? step.block.extra.side : null;
+    const sideWord = onlyWeak
+      ? ` — jambe ${onlyWeak} seule`
+      : step.block.sides === 'jambe' ? (side === 0 ? ' — jambe gauche' : ' — jambe droite') : step.block.sides === 'côté' ? (side === 0 ? ' — premier côté' : ' — second côté') : '';
     if (run?.kind === 'rest') return { label: 'Passer le repos', act: () => setRun(null) };
     if (run?.kind === 'hold' || run?.kind === 'pulse') return { label: 'Arrêter', act: () => setRun(null) };
     if (run?.kind === 'watch') {
@@ -689,7 +696,9 @@ function Player({
       };
     }
     return {
-      label: step.sets > 1 ? `Série ${done + 1} faite${step.block.sides === 'jambe' ? ' (gauche et droite)' : ''}` : 'C’est fait',
+      label: onlyWeak
+        ? `Série en plus faite (jambe ${onlyWeak})`
+        : step.sets > 1 ? `Série ${done + 1} faite${step.block.sides === 'jambe' ? ' (gauche et droite)' : ''}` : 'C’est fait',
       act: () => tick(step.index, step.sets, step.restS),
     };
   }, [run, half, step, done, at, steps.length, go, tick, beatS, tests]);
@@ -770,7 +779,9 @@ function Player({
                     run.kind === 'rest'
                       ? 'Repos'
                       : run.kind === 'hold'
-                        ? step.block.sides === 'jambe' ? (run.side === 0 ? 'Jambe gauche' : 'Jambe droite') : 'Tiens'
+                        ? step.block.extra && done >= step.base
+                          ? `Jambe ${step.block.extra.side}`
+                          : step.block.sides === 'jambe' ? (run.side === 0 ? 'Jambe gauche' : 'Jambe droite') : 'Tiens'
                         : run.phase === 'work' ? `Pousse · ${run.rep} sur ${step.timer?.kind === 'pulse' ? step.timer.reps : ''}` : 'Relâche'
                   }
                   value={clock(remaining)}

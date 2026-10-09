@@ -107,9 +107,14 @@ export type LegSpec =
 
 /**
  * Un bras : la main où elle doit être (le coude se résout), ses angles, ou ses
- * points quand le bras vient vers nous et que la vue le raccourcit.
+ * points quand le bras vient vers nous et que la vue le raccourcit. `hand` est
+ * le poignet ; `fingers`, la direction des doigts quand la main ne prolonge pas
+ * l'avant-bras — 180, à plat contre un mur, les doigts vers le haut.
  */
-export type ArmSpec = { hand: Pt } | { upper: number; fore: number } | { elbow: Pt; hand: Pt };
+export type ArmSpec =
+  | { hand: Pt; fingers?: number }
+  | { upper: number; fore: number }
+  | { elbow: Pt; hand: Pt; fingers?: number };
 
 /** De profil, l'athlète regarde vers les x croissants. */
 export interface SidePose {
@@ -125,8 +130,12 @@ export interface SidePose {
   /** Le bras libre, et son côté (`near` par défaut). */
   free: ArmSpec;
   freeSide?: 'near' | 'far';
-  /** Le bras plâtré : en écharpe par défaut ; `over` le pose sur le corps, dessiné par-dessus. */
-  cast?: (ArmSpec & { over?: boolean }) | 'sling';
+  /**
+   * Le bras plâtré : en écharpe par défaut, l'avant-bras dessiné devant soi ;
+   * `across`, l'avant-bras en travers du ventre, que le profil raccourcit —
+   * face à un mur, il ne le traverse pas ; `over` le pose sur le corps, dessiné par-dessus.
+   */
+  cast?: (ArmSpec & { over?: boolean }) | 'sling' | 'across';
 }
 
 /** De face (ou de dos) : la gauche et la droite sont celles de l'image. */
@@ -195,9 +204,10 @@ function legOf(hip: Pt, spec: LegSpec): LegPts {
 }
 
 function armOf(shoulder: Pt, spec: ArmSpec): ArmPts {
+  const fingers = (wrist: Pt, elbow: Pt, k: number): Pt =>
+    add(wrist, mul('fingers' in spec && spec.fingers != null ? dir(spec.fingers) : unit(sub(wrist, elbow)), SEG.hand * k));
   if ('elbow' in spec) {
-    const tip = add(spec.hand, mul(unit(sub(spec.hand, spec.elbow)), SEG.hand * 0.75));
-    return { shoulder, elbow: spec.elbow, wrist: spec.hand, tip, projected: true, reach: true };
+    return { shoulder, elbow: spec.elbow, wrist: spec.hand, tip: fingers(spec.hand, spec.elbow, 0.75), projected: true, reach: true };
   }
   let elbow: Pt;
   let wrist: Pt;
@@ -211,8 +221,7 @@ function armOf(shoulder: Pt, spec: ArmSpec): ArmPts {
     elbow = add(shoulder, mul(dir(spec.upper), SEG.upperArm));
     wrist = add(elbow, mul(dir(spec.fore), SEG.forearm));
   }
-  const tip = add(wrist, mul(unit(sub(wrist, elbow)), SEG.hand));
-  return { shoulder, elbow, wrist, tip, projected: false, reach };
+  return { shoulder, elbow, wrist, tip: fingers(wrist, elbow, 1), projected: false, reach };
 }
 
 /** La cheville d'un pied dont l'avant (la tête des métatarses) est posé en `ball`, la plante inclinée de `sole`. */
@@ -225,6 +234,15 @@ export const ankleFromHeel = (heel: Pt, sole: number): Pt => sub(heel, rot([-SEG
 /** L'angle d'une direction, réciproque de `dir`. */
 export const thetaOf = (v: Pt): number => Math.atan2(v[0], -v[1]) / RAD;
 
+/**
+ * L'écharpe vue de profil, l'avant-bras en travers du ventre : l'avant-bras et
+ * la main, presque perpendiculaires à la vue, n'en montrent qu'un peu moins de la moitié.
+ */
+function across(shoulder: Pt, elbow: Pt, fore: Pt): ArmPts {
+  const wrist = add(elbow, mul(fore, SEG.forearm * 0.45));
+  return { shoulder, elbow, wrist, tip: add(wrist, mul(fore, SEG.hand * 0.45)), projected: true, reach: true };
+}
+
 function sideSkeleton(p: SidePose): Skeleton {
   const up = dir(180 - p.lean);
   const shoulder = add(p.hip, mul(up, SEG.trunk));
@@ -234,10 +252,13 @@ function sideSkeleton(p: SidePose): Skeleton {
   const free = armOf(shoulder, p.free);
   // L'écharpe : le bras le long du buste, l'avant-bras devant la poitrine.
   const down = thetaOf(sub(p.hip, shoulder));
+  const slingElbow = add(shoulder, mul(dir(down + 6), SEG.upperArm));
   const cast =
     p.cast === undefined || p.cast === 'sling'
       ? armOf(shoulder, { upper: down + 6, fore: down + 100 })
-      : armOf(shoulder, p.cast);
+      : p.cast === 'across'
+        ? across(shoulder, slingElbow, dir(down + 95))
+        : armOf(shoulder, p.cast);
   const joints: Record<string, Pt> = {
     hip: p.hip, shoulder, head,
     'near.hip': p.hip, 'near.knee': near.knee, 'near.ankle': near.ankle, 'near.heel': near.heel,
@@ -753,6 +774,8 @@ export interface Panel {
   ghostContacts?: Contact[];
   /** Ce que tient la main valide, dans les deux positions : un haltère, ou la poignée du kit. */
   hold?: 'dumbbell' | 'handle';
+  /** La charge que porte le corps : le sac sur le dos, posé sur les genoux, ou tenu à la main. */
+  carry?: 'dos' | 'genoux' | 'main';
 }
 
 export interface FigureSpec {
@@ -773,4 +796,32 @@ export function resolve(ref: Ref, k: Skeleton): Pt {
   const p = k.joints[ref];
   if (!p) throw new Error(`Point inconnu sur le schéma : ${ref}`);
   return p;
+}
+
+/**
+ * Le sac chargé, posé là où la fiche le dit : sur le dos, derrière le buste ;
+ * sur les genoux, sur la cuisse de notre côté ; à la main, pendu sous la main
+ * valide. `front` : il se dessine devant le corps — sur les genoux, à la main.
+ */
+export function carryShape(carry: NonNullable<Panel['carry']>, k: Skeleton): { pts: Pt[]; front: boolean } | null {
+  const j = k.joints;
+  if (carry === 'main') {
+    const tip = j['free.tip'];
+    if (!tip) return null;
+    return { pts: blob([{ c: add(tip, [0, -3.5]), r: 3.8 }, { c: add(tip, [0, -9]), r: 4.4 }]), front: true };
+  }
+  if (k.view !== 'side') return null;
+  if (carry === 'dos') {
+    const hip = j.hip!;
+    const up = unit(sub(j.shoulder!, hip));
+    const front = rot(up, -90);
+    const at = (h: number, f: number): Pt => add(add(hip, mul(up, h)), mul(front, f));
+    return { pts: blob([{ c: at(9, -9), r: 3.6 }, { c: at(22.5, -9.2), r: 3.9 }]), front: false };
+  }
+  const hip = j['near.hip']!;
+  const knee = j['near.knee']!;
+  const d = unit(sub(knee, hip));
+  const n = rot(d, 90);
+  const c = add(lerp(hip, knee, 0.62), mul(n, 6.4));
+  return { pts: blob([{ c: add(c, mul(d, -3.4)), r: 3.5 }, { c: add(c, mul(d, 3.4)), r: 3.5 }]), front: true };
 }

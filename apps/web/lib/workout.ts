@@ -40,8 +40,10 @@ export interface Step {
   mainNote: string;
   /** Le tempo, le repos, l'effort, le cœur : une ligne chacun, nommée. */
   details: Detail[];
-  /** Les séries à cocher ; 1 pour ce qui se fait d'une traite. */
+  /** Les séries à cocher ; 1 pour ce qui se fait d'une traite. Les dernières sont celles du côté faible. */
   sets: number;
+  /** Les séries des deux côtés : au-delà, celles du seul côté faible (`block.extra`). */
+  base: number;
   /** Le repos après chaque série, s ; 0 quand il n'y en a pas. */
   restS: number;
   timer: StepTimer | null;
@@ -63,8 +65,9 @@ export interface Part {
   durationS: number;
 }
 
-/** Les mots d'un côté : « par jambe », « par côté ». */
-const perSide = (b: Block) => (b.sides ? `par ${b.sides}` : '');
+/** Les mots d'un côté : « par jambe », « par côté » — et la série en plus du côté faible. */
+const perSide = (b: Block) =>
+  [b.sides ? `par ${b.sides}` : '', b.extra ? `+${b.extra.sets} à ${b.extra.side}` : ''].filter(Boolean).join(', ');
 
 /** L'effort qui ne se lit nulle part ailleurs : ce que la réserve, le maintien ou le contrôle ne disent pas déjà. */
 const GENERIC_EFFORT = /^(contrôlé|tenir sans trembler|\d+ répétitions? en réserve)$/i;
@@ -91,7 +94,9 @@ function stepOf(b: Block, index: number, n: number): Step {
   const measure = sheet?.measure ?? null;
   const repeat = b.repeat ?? 1;
   const sides = b.sides ? 2 : 1;
-  const sets = Math.max(1, Math.round(repeat / sides));
+  const extra = b.extra?.sets ?? 0;
+  const base = Math.max(1, Math.round((repeat - extra) / sides));
+  const sets = base + extra;
   const restS = b.recovery?.durationS ?? 0;
   const setS = b.durationS ?? 0;
   const details: Detail[] = [];
@@ -106,15 +111,15 @@ function stepOf(b: Block, index: number, n: number): Step {
     if (measure.guide) timer = { kind: 'stopwatch', max: measure.max, beatS: measure.beatS };
   } else if (b.pulse && b.reps) {
     // L'effort guidé : « 4 × 3 s », le minuteur dit quand pousser et quand relâcher.
-    main = sets > 1 ? `${sets} × ${b.reps}` : `${b.reps} fois`;
+    main = base > 1 ? `${base} × ${b.reps}` : `${b.reps} fois`;
     mainNote = [perSide(b), `${b.pulse.workS} s à fond, ${b.pulse.restS} s relâché`].filter(Boolean).join(' · ');
     timer = { kind: 'pulse', workS: b.pulse.workS, restS: b.pulse.restS, reps: b.reps };
   } else if (b.reps) {
-    main = `${sets} × ${b.reps}`;
+    main = `${base} × ${b.reps}`;
     mainNote = perSide(b);
   } else if (!b.hrRange && !b.kind && setS > 0 && setS <= 300) {
     // Un maintien : la chaise, le gainage, l'équilibre.
-    main = sets > 1 ? `${sets} × ${blockDuration(setS)}` : blockDuration(setS);
+    main = base > 1 ? `${base} × ${blockDuration(setS)}` : blockDuration(setS);
     mainNote = perSide(b);
     timer = { kind: 'hold', seconds: setS };
   } else if (repeat > 1) {
@@ -152,7 +157,7 @@ function stepOf(b: Block, index: number, n: number): Step {
   const span = repeat * setS + Math.max(0, repeat - 1) * restS;
   return {
     n, index, block: b, sheet, part: b.part ?? (b.kind ? 'Souplesse et respiration' : 'Séance'), name: b.label,
-    main, mainNote, details, sets, restS, timer, measure, durationS: span,
+    main, mainNote, details, sets, base, restS, timer, measure, durationS: span,
   };
 }
 
@@ -200,10 +205,17 @@ export function partSummary(part: Part): string {
   return `${n} exercice${n > 1 ? 's' : ''} · ${partDuration(part)}`;
 }
 
+/** Ce que le sommaire dit d'une étape : « 4 × 8 par jambe, +1 à gauche ». */
+export function stepRx(step: Step): string {
+  if (step.measure) return `${step.main}${step.measure.perSide ? ', par jambe' : ''}`;
+  return step.block.sides ? `${step.main} ${perSide(step.block)}` : step.main;
+}
+
 /** Ce que la case d'une série dit : « jambe gauche puis droite » pour un exercice d'une jambe. */
 export function setLabel(step: Step, i: number): string {
+  if (i >= step.base && step.block.extra) return `Série en plus, jambe ${step.block.extra.side} seule`;
   const which = step.block.sides === 'jambe' ? ' · gauche, puis droite' : step.block.sides === 'côté' ? ' · un côté, puis l’autre' : '';
-  return `Série ${i + 1} sur ${step.sets}${which}`;
+  return `Série ${i + 1} sur ${step.base}${which}`;
 }
 
 /** Un nombre écrit à la française, pour un champ : « 1,5 » se lit comme 1.5. */

@@ -1349,6 +1349,12 @@ export interface SessionBlock {
    * Le minuteur de la séance le rythme, pour qu'on n'ait pas à compter.
    */
   pulse?: { workS: number; restS: number };
+  /**
+   * Des séries en plus d'un seul côté — celui que les tests disent faible. Elles
+   * se comptent dans `repeat` : `repeat - sets` est pair, une par côté, le reste
+   * va à `side`.
+   */
+  extra?: { side: 'gauche' | 'droite'; sets: number };
 }
 
 /**

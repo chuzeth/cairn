@@ -24,6 +24,8 @@ export const EXERCISE_KEYS = [
   // Le bloc de force du 09/10 au 01/11 : tous les jours, au poids du corps, à l'élastique, sur le step.
   'reverse-nordic', 'pousse-elastique', 'hip-thrust', 'copenhague', 'adducteurs-coussin',
   'mollets-iso', 'pied-court', 'equilibre', 'imagerie', 'chaise-une-jambe',
+  // Le 09/10 au soir : la force spécifique trail, chargée, réglée sur les tests.
+  'squat-une-jambe', 'soleaire-assis', 'mollets-charges', 'port-valise', 'fente-arriere', 'cheville-mobilite',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
@@ -887,7 +889,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Pencher le bassin du côté de la jambe libre.',
     ],
     easier: 'La moitié du chemin seulement.',
-    harder: '5 secondes pour descendre ; puis le step à 40 cm.',
+    harder: '5 secondes pour descendre ; puis un sac à dos chargé.',
     cast: 'La main valide sur l\'encadrement ou le mur, toujours. Arrête la série dès que la jambe tremble.',
   },
   'souleve-une-jambe': {
@@ -1119,6 +1121,185 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Moins bas : genou à 120°.',
     harder: '10 secondes de plus.',
     cast: 'Rien à tenir : le bras plâtré contre toi.',
+  },
+  'squat-une-jambe': {
+    key: 'squat-une-jambe',
+    name: 'Squat sur une jambe, jusqu\'au step',
+    what: 'Debout sur une jambe devant le step de 40 cm, tu descends lentement jusqu\'à effleurer le step des fesses, sur cette seule jambe, puis tu te relèves.',
+    cues: [
+      'Dans un angle : le step de 40 cm contre un mur, toi dos au step, la main valide sur l\'autre mur.',
+      'Sur une jambe, l\'autre pied décollé devant : descends en 4 s, les fesses effleurent le step sans s\'y poser.',
+      'Relève-toi en poussant dans le talon ; le genou reste au-dessus du pied.',
+    ],
+    where: ['maison'],
+    equipment: 'Le step à 40 cm (ou le tabouret) dans un angle de mur : un mur derrière lui, l\'autre à côté de toi pour la main valide',
+    why:
+      'La descente de trail sur une seule jambe, freinée jusqu\'en bas : c\'est cette force qui manque quand les ' +
+      'quadriceps lâchent en fin de descente, et c\'est elle qui garde le genou dans l\'axe du pied.',
+    setup: [
+      'Le step dans un angle, contre un mur ; toi debout devant, dos au step, à un petit pas.',
+      'Sur une jambe, l\'autre jambe tendue devant, le talon à quelques centimètres du sol.',
+      'La main valide à plat sur l\'autre mur, à côté de toi, à hauteur de hanche.',
+    ],
+    steps: [
+      'Pousse les hanches en arrière et descends en 4 secondes, le buste penché en avant.',
+      'Les fesses effleurent le step : ne t\'assieds pas.',
+      'Relève-toi en 1 seconde en poussant dans le talon d\'appui.',
+      'Toutes les répétitions d\'une jambe, puis l\'autre.',
+    ],
+    breath: 'Inspire en descendant, souffle en te relevant.',
+    feel: 'Le devant de la cuisse et la fesse de la jambe d\'appui.',
+    mistakes: [
+      'Se laisser tomber sur le step les derniers centimètres.',
+      'Laisser le genou rentrer vers l\'intérieur.',
+      'Tirer sur le mur avec la main pour se relever.',
+    ],
+    easier: 'T\'asseoir franchement sur le step, puis te relever.',
+    harder: 'Un sac à dos chargé ; puis 2 secondes tenues juste au-dessus du step.',
+    cast: 'La main valide au mur, toujours. Si l\'équilibre part, assieds-toi sur le step : c\'est lui, le filet.',
+  },
+  'soleaire-assis': {
+    key: 'soleaire-assis',
+    name: 'Soléaire assis, sac sur les genoux',
+    what: 'Assis, l\'avant des pieds sur un gros livre, un sac chargé sur les genoux : tu montes les talons le plus haut possible, puis tu les redescends presque au sol.',
+    cues: [
+      'Assis sur une chaise, l\'avant des pieds sur un gros livre (5 cm), les talons dans le vide.',
+      'Le sac chargé posé sur les genoux, tenu par la main valide.',
+      'Monte les talons en 1 s, tiens 1 s, redescends en 3 s jusqu\'à frôler le sol.',
+    ],
+    where: ['maison'],
+    equipment: 'Une chaise, un gros livre ou une planche de 5 cm, un sac à dos chargé (8 à 15 kg)',
+    why:
+      'Le soléaire, le muscle profond du mollet, porte jusqu\'à six à huit fois ton poids à chaque foulée ; genou ' +
+      'plié, c\'est lui qui travaille seul. Tes mollets sont déjà très endurants : c\'est la charge qui les fera ' +
+      'progresser.',
+    setup: [
+      'Le livre au sol devant la chaise, l\'avant des deux pieds sur son bord, les talons dans le vide.',
+      'Les genoux à angle droit, au-dessus des chevilles.',
+      'Le sac posé sur les genoux, la main valide dessus ; le bras plâtré contre toi.',
+    ],
+    steps: [
+      'Monte les talons le plus haut possible, en 1 seconde.',
+      'Tiens 1 seconde en haut.',
+      'Redescends en 3 secondes, jusqu\'à frôler le sol des talons.',
+    ],
+    breath: 'Souffle en montant.',
+    feel: 'Le bas du mollet, profond, sous le genou.',
+    mistakes: ['Rebondir en bas.', 'Monter à moitié.', 'Pousser avec la main sur le sac.'],
+    easier: 'Sans le livre, les pieds à plat au sol.',
+    harder: 'Un sac plus lourd, ou une jambe à la fois.',
+    cast: 'Le sac se pose et se retire d\'une main, assis : rien ne passe par le bras plâtré.',
+  },
+  'mollets-charges': {
+    key: 'mollets-charges',
+    name: 'Mollet lesté, sur un pied, au bord du step',
+    what: 'Sur un pied au bord du step, un sac chargé sur le dos : tu montes lentement tout en haut, puis tu redescends le talon sous le step.',
+    cues: [
+      'Sur un pied au bord du step calé contre un mur, le sac chargé sur le dos, la main valide au mur.',
+      'Monte en 3 s tout en haut, tiens 1 s.',
+      'Redescends en 3 s jusqu\'au talon sous le step.',
+    ],
+    where: ['maison'],
+    equipment: 'Le step à 20 cm contre un mur, un sac à dos chargé',
+    why:
+      'La force lourde et lente du mollet raidit le tendon d\'Achille et rend la foulée plus économique. Ton ' +
+      'endurance du mollet est déjà très haute aux tests : c\'est la charge, pas le nombre, qui la fera progresser.',
+    setup: [
+      'Le sac sur le dos ; l\'avant d\'un pied sur le bord du step, le talon dans le vide.',
+      'La main valide au mur, l\'autre pied levé derrière.',
+    ],
+    steps: [
+      'Monte sur la pointe en 3 secondes, le plus haut possible.',
+      'Tiens 1 seconde.',
+      'Redescends en 3 secondes, jusqu\'au talon nettement sous le step.',
+      'Toutes les répétitions d\'une jambe, puis l\'autre.',
+    ],
+    breath: 'Souffle en montant.',
+    feel: 'Tout le mollet, et un étirement franc en bas.',
+    mistakes: ['Aller vite : c\'est la lenteur qui fait la charge.', 'Laisser la cheville partir vers l\'extérieur.'],
+    easier: 'Sans le sac.',
+    harder: 'Un sac plus lourd ; puis 5 secondes pour redescendre.',
+    cast:
+      'Enfile le sac assis, le bras plâtré dans la bretelle d\'abord, sans plier le coude. La main valide au mur, ' +
+      'toujours.',
+  },
+  'port-valise': {
+    key: 'port-valise',
+    name: 'Port de valise, à une main',
+    what: 'Un sac lourd dans la main valide, tu marches lentement, le buste droit, sans pencher du côté du sac.',
+    cues: [
+      'Un sac de 8 à 15 kg dans la main valide, le bras tendu le long du corps.',
+      'Marche lentement, le buste droit : les épaules restent à niveau.',
+      'C\'est le flanc opposé au sac qui travaille : il t\'empêche de pencher.',
+    ],
+    where: ['maison'],
+    equipment: 'Un sac lourd (sac à dos chargé, cabas de bouteilles)',
+    why:
+      'Le gainage sur le côté que le plâtre interdit sur l\'autre coude : un sac tenu d\'un côté fait travailler le ' +
+      'flanc opposé. Et la poigne et l\'épaule du bras valide, celles des bâtons dans les longues montées.',
+    setup: ['Le sac au sol à côté du pied du côté valide ; plie les jambes pour le saisir, dos droit.'],
+    steps: [
+      'Redresse-toi : le sac pend au bout du bras, l\'épaule basse et serrée.',
+      'Marche lentement pendant le temps dit, demi-tour compris, sans pencher.',
+      'Repose le sac en pliant les jambes.',
+    ],
+    breath: 'Régulière, ventre gainé.',
+    feel: 'Le côté du ventre opposé au sac, l\'avant-bras, l\'épaule.',
+    mistakes: ['Pencher vers le sac ou à l\'opposé.', 'Hausser l\'épaule du sac.'],
+    easier: 'Un sac plus léger, ou sur place.',
+    harder: 'Plus lourd, ou plus long.',
+    cast: 'Le bras plâtré en écharpe, loin du sac : il ne doit pas le cogner.',
+  },
+  'fente-arriere': {
+    key: 'fente-arriere',
+    name: 'Fente arrière lestée',
+    what: 'Un grand pas en arrière, tu descends le genou arrière vers le sol, puis tu reviens pieds joints en poussant sur la jambe avant.',
+    cues: [
+      'Le sac chargé sur le dos, la main valide au mur.',
+      'Un grand pas en arrière : descends le genou arrière à une main du sol.',
+      'Reviens en poussant dans le talon avant ; alterne les jambes.',
+    ],
+    where: ['maison'],
+    equipment: 'Un sac à dos chargé, un mur',
+    why:
+      'L\'endurance des cuisses et des fessiers sous charge, répétée longtemps : ce qui lâche après des heures de ' +
+      'montées et de descentes. La fente arrière ménage le genou mieux que la fente avant.',
+    setup: ['Debout, pieds à la largeur des hanches, la main valide au mur, le sac sur le dos.'],
+    steps: [
+      'Recule une jambe d\'un grand pas, sur la pointe.',
+      'Descends le genou arrière vers le sol, le buste droit, jusqu\'à une main du sol.',
+      'Reviens pieds joints en poussant dans le talon avant.',
+      'Alterne les jambes.',
+    ],
+    breath: 'Inspire en descendant, souffle en revenant.',
+    feel: 'La cuisse et la fesse de la jambe avant.',
+    mistakes: ['Pousser avec la jambe arrière.', 'Laisser le genou avant rentrer.'],
+    easier: 'Sans le sac, ou moins bas.',
+    harder: 'Un sac plus lourd.',
+    cast: 'La main valide au mur pendant tout l\'exercice.',
+  },
+  'cheville-mobilite': {
+    key: 'cheville-mobilite',
+    name: 'Mobilité de la cheville, genou au mur',
+    what: 'Face au mur, un pied devant, tu avances le genou jusqu\'au mur, le talon collé au sol, puis tu reviens.',
+    cues: [
+      'Face au mur, le gros orteil à 10 cm du mur, le talon au sol.',
+      'Avance le genou jusqu\'au mur, tiens 2 s, reviens.',
+      'Le genou passe au-dessus du deuxième orteil ; le talon ne décolle jamais.',
+    ],
+    where: ['maison'],
+    equipment: 'Un mur',
+    why:
+      'Une cheville qui plie peu reporte la charge sur le genou et le tendon d\'Achille, dans chaque montée et chaque ' +
+      'descente. Au test, la tienne plie moins d\'un côté : c\'est elle qui travaille d\'abord.',
+    steps: [
+      'Face au mur, un pied devant, l\'autre derrière, la main valide au mur.',
+      'Avance le genou jusqu\'à toucher le mur, le talon collé au sol ; tiens 2 secondes.',
+      'Reviens, et recommence. Quand c\'est facile, recule le pied d\'un centimètre.',
+    ],
+    feel: 'Un étirement au mollet et au tendon, jamais une douleur devant la cheville.',
+    mistakes: ['Laisser le talon décoller.', 'Laisser le genou partir vers l\'intérieur.'],
+    cast: 'La main valide au mur.',
   },
   imagerie: {
     key: 'imagerie',
@@ -1606,45 +1787,45 @@ export const EXERCISE_WORDS: { word: string; plain: string }[] = [
 export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why: string }[] = [
   {
     day: 'Lundi',
-    title: 'Force 1 : genoux et freinage',
-    focus: 'Fente bulgare, descente lente du step, bascule arrière à genoux, flexion sur serviette, chaise, mollet sous le cadre ; pousser et tirer avec le bras valide.',
-    why: 'Les quadriceps qui freinent dans les descentes : ton aisance en descente, mesurée sur tes sorties, est à 0,68 de celle d\'un bon traileur — ta marge la plus nette.',
+    title: 'Force A : genoux et descentes',
+    focus: 'Fente bulgare lestée, descente lente du step, bascule arrière à genoux, chaise sur une jambe, mollet sous le cadre ; pousser et tirer avec le bras valide.',
+    why: 'Les quadriceps qui freinent : ton aisance en descente, mesurée sur tes sorties, est à 0,68 de celle d\'un bon traileur — ta marge la plus nette pour la Maxi-Race.',
   },
   {
     day: 'Mardi',
-    title: 'Tendons, pieds, gainage',
-    focus: '40 min de marche, puis le mollet sous le cadre, les mollets en descente lente, les relevés de pointe, le pied court, l\'équilibre, le gainage.',
-    why: 'Le tendon d\'Achille, le pied et la cheville encaissent chaque foulée : sans course, ce sont eux qui perdent le plus vite.',
+    title: 'Force B : chaîne arrière',
+    focus: 'Soulevé de terre sur une jambe lesté, pont sur le canapé, flexion sur serviette, Copenhague ; le bras valide au maximum.',
+    why: 'Les fessiers et l\'arrière des cuisses poussent dans chaque montée ; ta jambe gauche, en retrait au test du pont, y fait une série de plus.',
   },
   {
     day: 'Mercredi',
-    title: 'Force 2 : hanches et fessiers',
-    focus: 'Bascule sur une jambe, pont sur le canapé, pas chassés, Copenhague, coussin, montée de genou, mollet sous le cadre ; le bras valide au maximum.',
-    why: 'Les fessiers et l\'arrière des cuisses te poussent en montée ; les adducteurs et le moyen fessier tiennent le bassin quand la fatigue arrive.',
+    title: 'Moteur et mollets',
+    focus: 'Le fractionné en côte dans les escaliers, puis le mollet lesté, le soléaire assis, la cheville, l\'équilibre, le pied.',
+    why: 'L\'intensité garde ta VO2max ; tes mollets, très endurants aux tests, ne progressent plus qu\'en charge.',
   },
   {
     day: 'Jeudi',
-    title: 'Fractionné en côte',
-    focus: 'Des montées rapides en marche dans les escaliers de Fourvière : 3 min, en zone 3 puis au seuil ; souplesse et gainage en rentrant.',
-    why: 'L\'intensité garde la VO2max quand le volume baisse (Hickson). Pas sur le step : il ne monte pas le cœur jusqu\'au seuil.',
+    title: 'Force C : une jambe, puissance',
+    focus: 'Montée explosive sur le step, squat sur une jambe jusqu\'au step, bascule arrière, mollet sous le cadre, équilibre.',
+    why: 'La puissance des relances et la force sur un seul appui, celle de chaque foulée, en montée comme en descente.',
   },
   {
     day: 'Vendredi',
-    title: 'Force 3 : une jambe, montées',
-    focus: 'Montée explosive sur le step à 40 cm, chaise sur une jambe, bascule arrière, flexion sur serviette, Copenhague, mollet sous le cadre ; pousser et tirer ; montées continues.',
-    why: 'La puissance, la force qui tient sur un pied, et l\'endurance des côtes : ce qui manque après trois heures de trail.',
+    title: 'Hanches et tronc',
+    focus: 'Pas chassés, Copenhague, montée de genou, port de valise, gainage, anti-rotation, souplesse.',
+    why: 'Le bassin qui tient quand la fatigue arrive : sur 100 km de backyard comme dans les dévers de la Maxi-Race.',
   },
   {
     day: 'Samedi',
-    title: 'Longue marche en côte',
-    focus: 'Fourvière, la montée Saint-Barthélemy, la Sarra, les escaliers secs : de 1 h 30 à 2 h 15, jusqu\'à 650 m de dénivelé ; pied court et équilibre au retour.',
-    why: 'La sortie longue devient marche : du temps debout, des montées, le moteur des trails longs.',
+    title: 'Endurance des montées',
+    focus: 'Des montées continues lestées sur le step, des fentes, la chaise, le pont : longtemps, sous charge.',
+    why: 'Ta durabilité, moyenne sur les sorties longues, est ton plus gros gisement : c\'est elle qui fait tenir 15 boucles ou 5 000 m de dénivelé.',
   },
   {
     day: 'Dimanche',
     title: 'Récupération',
-    focus: 'Marche facile, souplesse longue, gainage léger.',
-    why: 'La semaine s\'assimile : le muscle se construit entre les séances. Ta souplesse, courte au test d\'effort, ne gagne qu\'avec la régularité.',
+    focus: 'Marche facile, souplesse, cheville, équilibre, pied.',
+    why: 'La semaine s\'assimile : c\'est maintenant que le muscle se construit.',
   },
 ];
 
@@ -1653,21 +1834,21 @@ export const FORCE_BLOCK_WEEKS: { dates: string; name: string; what: string }[] 
   {
     dates: '9 au 11 octobre',
     name: 'Ouvrir',
-    what: 'Les tests le vendredi, une longue marche le samedi, la récupération le dimanche.',
+    what: 'Les tests le vendredi, une première force le samedi, la récupération le dimanche.',
   },
   {
     dates: '12 au 18 octobre',
     name: 'Construire',
-    what: '3 séries par jambe, 2 répétitions en réserve : apprendre les gestes, encaisser les courbatures.',
+    what: '4 séries sur les exercices principaux, un sac de 6 à 8 kg, 2 répétitions en réserve.',
   },
   {
     dates: '19 au 25 octobre',
     name: 'Charger',
-    what: 'Une série de plus, 1 répétition en réserve, les versions plus dures : la semaine qui fait progresser.',
+    what: '5 séries, un sac de 10 à 12 kg, 1 répétition en réserve : la semaine qui fait progresser.',
   },
   {
     dates: '26 octobre au 1er novembre',
     name: 'Alléger',
-    what: '2 séries, 3 en réserve, l\'intensité gardée : le travail devient de la force. Les tests le dimanche 1er novembre.',
+    what: 'La moitié des séries, la charge gardée : le travail devient de la force. Les tests le dimanche 1er novembre.',
   },
-];
+]
