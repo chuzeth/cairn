@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EXERCISES, annexOf, isExerciseKey, type ExerciseKey } from '@cairn/core';
-import { compensationDay, compensationHomeDay, remeasured } from '@cairn/coach';
+import { EXERCISES, FORCE_BLOCK_DAYS, annexOf, isExerciseKey, type ExerciseKey } from '@cairn/core';
+import { blockDay, blockWeekOf, compensationDay, compensationHomeDay, remeasured } from '@cairn/coach';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
@@ -138,6 +138,115 @@ describe('La semaine du 05/10 à la maison', () => {
         plannedMechanicalLoad: s.plannedMechanicalLoad, plannedDistanceM: s.plannedDistanceM,
       }, PIERRE_MODEL);
       expect(m.plannedDistanceM, s.title).toBe(s.plannedDistanceM);
+    }
+  });
+});
+
+describe('Le bloc de force, du 09/10 au 01/11', () => {
+  // « Je vais commencer le renforcement musculaire de façon quotidienne. De façon bien énervée. »
+  const block = Array.from({ length: 24 }, (_, i) => blockDay(PIERRE_MODEL, i));
+  /** Le jour `i` du bloc tombe un vendredi pour i = 0 : lundi = 0. */
+  const dow = (i: number) => (i + 4) % 7;
+  const weeks = [1, 2, 3].map((w) => block.filter((_, i) => blockWeekOf(i) === w));
+  const LEGS_HEAVY: Record<string, ExerciseKey[]> = {
+    genoux: ['split-squat-maison', 'descente-marche', 'reverse-nordic'],
+    ischios: ['leg-curl-serviette', 'souleve-une-jambe'],
+  };
+  /** Les séries dures de la semaine : tout ce qui se compte en répétitions ou se tient, hors marche et soins. */
+  const sets = (days: typeof block) =>
+    days.flatMap((s) => s.blocks).filter((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort)).reduce((a, b) => a + (b.repeat ?? 1), 0);
+
+  it('donne un entraînement chaque jour, sans rien à courir', () => {
+    expect(block).toHaveLength(24);
+    for (const s of block) {
+      expect(['strength', 'cross_training']).toContain(s.type);
+      for (const b of s.blocks) {
+        expect(b.speedRangeMs, `${s.title} — ${b.label}`).toBeUndefined();
+        expect(b.paceRange, `${s.title} — ${b.label}`).toBeUndefined();
+      }
+    }
+  });
+
+  it('se fait sans salle : rien, le step, le kit d’élastiques, la rue', () => {
+    for (const s of block) {
+      for (const b of s.blocks) {
+        expect(isExerciseKey(b.exercise!), `${s.title} — ${b.label}`).toBe(true);
+        expect(EXERCISES[b.exercise as ExerciseKey].where, `${s.title} — ${b.label}`).not.toEqual(['salle']);
+      }
+    }
+  });
+
+  it('renforce chaque jour, sans jamais charger les mêmes muscles deux jours de suite', () => {
+    for (const s of block) expect(s.blocks.some((b) => !b.kind && b.zone !== 'Z1' && (b.reps || b.effort)), s.title).toBe(true);
+    for (const [group, keys] of Object.entries(LEGS_HEAVY)) {
+      const days = block.map((s, i) => (s.blocks.some((b) => keys.includes(b.exercise as ExerciseKey)) ? i : -1)).filter((i) => i >= 0);
+      for (let k = 1; k < days.length; k++) expect(days[k]! - days[k - 1]!, `${group} : jours ${days.join(', ')}`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('porte les titres que la page Exercices annonce, jour par jour', () => {
+    block.forEach((s, i) => {
+      if (i === 0 || i === 23) return;
+      expect(s.title.startsWith(FORCE_BLOCK_DAYS[dow(i)]!.title), s.title).toBe(true);
+    });
+  });
+
+  it('ouvre et ferme sur les mêmes tests', () => {
+    expect(block[0]!.blocks.some((b) => b.exercise === 'tests-maison')).toBe(true);
+    expect(block[23]!.blocks.some((b) => b.exercise === 'tests-maison')).toBe(true);
+    expect(block.filter((s) => s.blocks.some((b) => b.exercise === 'tests-maison'))).toHaveLength(2);
+  });
+
+  it('suit la semaine type : trois séances de force à 48 h, un fractionné, une longue marche le samedi', () => {
+    for (const w of weeks.slice(0, 2)) {
+      expect(w.map((s) => s.type)).toEqual([
+        'strength', 'cross_training', 'strength', 'cross_training', 'strength', 'cross_training', 'cross_training',
+      ]);
+    }
+    expect(block.filter((_, i) => dow(i) === 5).every((s) => s.title.startsWith('Longue marche en côte'))).toBe(true);
+  });
+
+  it('construit, charge, puis allège avant les tests de fin', () => {
+    const [w1, w2, w3] = weeks.map(sets);
+    expect(w2).toBeGreaterThan(w1!);
+    expect(w3).toBeLessThan(w1! * 0.8);
+    // Le temps d'entraînement, sans les soins du bras ni la respiration : moins de dix heures.
+    for (const w of weeks) {
+      const minutes = w.reduce((a, s) => a + s.durationS - (annexOf(s.blocks)?.durationS ?? 0), 0) / 60;
+      expect(minutes).toBeLessThan(10 * 60);
+    }
+  });
+
+  it('garde l’intensité une fois par semaine, dans les escaliers et pas sur le step', () => {
+    const moteurs = block.filter((s) => s.title.startsWith('Fractionné en côte'));
+    expect(moteurs).toHaveLength(3);
+    const reps = moteurs.map((s) => s.blocks.find((b) => (b.repeat ?? 1) > 1)!);
+    expect(reps.map((b) => b.zone)).toEqual(['Z3', 'Z4', 'Z4']);
+    expect(reps.map((b) => b.exercise)).toEqual(['marche-cote', 'marche-cote', 'marche-cote']);
+    // La semaine allégée garde l'intensité et coupe le volume.
+    expect(reps[2]!.repeat).toBeLessThan(reps[1]!.repeat!);
+  });
+
+  it('charge le tendon d’Achille quatre fois par semaine, comme dans l’étude', () => {
+    for (const w of weeks.slice(0, 2)) {
+      expect(w.filter((s) => s.blocks.some((b) => b.exercise === 'mollets-iso'))).toHaveLength(4);
+    }
+  });
+
+  it('entretient le bras plâtré tous les jours, et l’imagine forcer cinq jours sur sept', () => {
+    for (const s of block) expect(s.blocks.some((b) => b.exercise === 'soins-bras'), s.title).toBe(true);
+    for (const w of weeks) expect(w.filter((s) => s.blocks.some((b) => b.label.startsWith('Imagerie'))).length).toBe(5);
+  });
+
+  it('se recompte sans devenir des kilomètres', () => {
+    for (const s of block) {
+      const m = remeasured({
+        type: s.type, blocks: s.blocks, plannedDurationS: s.durationS, plannedLoad: s.plannedLoad,
+        plannedMechanicalLoad: s.plannedMechanicalLoad, plannedDistanceM: s.plannedDistanceM,
+      }, PIERRE_MODEL);
+      expect([m.plannedLoad, m.plannedDistanceM, m.plannedMechanicalLoad], s.title).toEqual([
+        s.plannedLoad, s.plannedDistanceM, s.plannedMechanicalLoad,
+      ]);
     }
   });
 });

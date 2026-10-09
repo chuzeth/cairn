@@ -101,10 +101,13 @@ describe('Les consignes, mesurées sur le dessin', () => {
     expect(angleAt(j['near.hip']!, j['near.knee']!, j['near.ankle']!)).toBeGreaterThan(130);
   });
 
-  it('mollets : le talon passe sous la marche en bas, au-dessus en haut', () => {
+  it('mollets : le talon passe sous le step en bas, au-dessus en haut ; le soléaire, genou fléchi de 30°', () => {
     const p = figure('mollets-excentriques');
-    expect(joints(p.pose)['near.heel']![1]).toBeLessThan(FURNITURE.stair.rise - 2);
-    expect(joints(p.ghost!)['near.heel']![1]).toBeGreaterThan(FURNITURE.stair.rise + 2);
+    const step = 20 / 1.8;
+    expect(joints(p.pose)['near.heel']![1]).toBeLessThan(step - 2);
+    expect(joints(p.ghost!)['near.heel']![1]).toBeGreaterThan(step + 2);
+    const flechi = joints(figure('mollets-excentriques', 1).pose);
+    expect(Math.abs(180 - angleAt(flechi['near.hip']!, flechi['near.knee']!, flechi['near.ankle']!) - 30)).toBeLessThanOrEqual(3);
   });
 
   it('mollets au sol : la montée se fait sur la pointe, le genou fléchi de 30° en séance B', () => {
@@ -126,8 +129,43 @@ describe('Les consignes, mesurées sur le dessin', () => {
     expect(j['near.toe']![1] - j['near.heel']![1]).toBeGreaterThan(5);
   });
 
-  it('descente de marche : le talon libre effleure la marche du dessous', () => {
+  it('descente lente du step : le talon libre effleure le sol', () => {
     const j = joints(figure('descente-marche').pose);
-    expect(j['far.heel']![1]).toBeCloseTo(FURNITURE.stair.rise, 0);
+    expect(j['far.heel']![1]).toBeCloseTo(0, 0);
+  });
+
+  it('bascule arrière : des genoux à la tête, une seule ligne, droite puis penchée', () => {
+    const p = figure('reverse-nordic');
+    for (const pose of [p.ghost!, p.pose]) {
+      const j = joints(pose);
+      expect(angleAt(j['near.knee']!, j.hip!, j.head!)).toBeGreaterThan(178);
+    }
+  });
+
+  it('pont sur le canapé : en haut, épaule, hanche et genou alignés, genou à angle droit', () => {
+    const j = joints(figure('hip-thrust').pose);
+    expect(angleAt(j.shoulder!, j.hip!, j['near.knee']!)).toBeGreaterThan(175);
+    expect(angleAt(j['near.hip']!, j['near.knee']!, j['near.ankle']!)).toBeCloseTo(90, 0);
+  });
+
+  it('Copenhague : la jambe du dessus dans le prolongement du tronc, son genou posé sur le step', () => {
+    const j = joints(figure('copenhague').pose);
+    // De face, la jambe du dessus est décalée de la largeur du bassin : elle prolonge le tronc, parallèle à lui.
+    const trunk = [j.pelvis![0] - j.head![0], j.pelvis![1] - j.head![1]] as const;
+    const thigh = [j['right.knee']![0] - j['right.hip']![0], j['right.knee']![1] - j['right.hip']![1]] as const;
+    expect(angleAt([trunk[0], trunk[1]], [0, 0], [thigh[0], thigh[1]])).toBeLessThan(3);
+    expect(j['right.knee']![1] - 3.1).toBeCloseTo(FURNITURE.stool.seat, 0);
+  });
+
+  it('mollet sous le cadre : le talon à mi-hauteur, pas tout en haut', () => {
+    const j = joints(figure('mollets-iso').pose);
+    expect(j['near.heel']![1]).toBeGreaterThan(3);
+    expect(j['near.heel']![1]).toBeLessThan(6);
+  });
+
+  it('test du pont : le talon sur le step de 40 cm, l’autre jambe à la verticale', () => {
+    const j = joints(figure('tests-maison', 1).pose);
+    expect(j['near.heel']![1]).toBeCloseTo(FURNITURE.stool.seat, 0);
+    expect(Math.abs(j['far.ankle']![0] - j['far.hip']![0])).toBeLessThan(1);
   });
 });

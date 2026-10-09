@@ -21,6 +21,9 @@ export const EXERCISE_KEYS = [
   'descente-marche', 'souleve-une-jambe', 'pas-chasses', 'montee-genou', 'marche',
   // Le matériel reçu le 06/10 : le kit d'élastiques, les mini-bandes, l'anneau, le tapis, un tabouret de 40 cm.
   'montee-tabouret', 'mollets-sol',
+  // Le bloc de force du 09/10 au 01/11 : tous les jours, au poids du corps, à l'élastique, sur le step.
+  'tests-maison', 'reverse-nordic', 'pousse-elastique', 'hip-thrust', 'copenhague', 'adducteurs-coussin',
+  'mollets-iso', 'pied-court', 'equilibre',
 ] as const;
 
 export type ExerciseKey = (typeof EXERCISE_KEYS)[number];
@@ -292,27 +295,27 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     feel: 'Les cuisses brûlent ; le dos reste à plat contre le mur.',
     mistakes: ['Bloquer sa respiration.', 'Laisser les genoux dépasser les pointes de pied.', 'Pousser sur le mur avec les mains.'],
     easier: 'Moins bas, genoux à 120°.',
-    harder: '15 secondes de plus ; puis une jambe tendue devant, 10 secondes chacune.',
+    harder: '15 secondes de plus ; puis sur une jambe, l\'autre pied levé de 5 cm, 20 à 30 secondes chacune.',
     cast: 'Rien à tenir : le bras plâtré contre toi.',
   },
   'mollets-excentriques': {
     key: 'mollets-excentriques',
-    name: 'Mollets en descente lente, sur une marche',
-    what: 'Sur le bord d\'une marche, tu montes sur la pointe des deux pieds, puis tu redescends sur un seul, lentement, le talon sous la marche.',
+    name: 'Mollets en descente lente, sur le step',
+    what: 'Sur le bord du step, tu montes sur la pointe des deux pieds, puis tu redescends sur un seul, lentement, le talon sous le step.',
     where: ['maison', 'salle'],
-    equipment: 'Une marche d\'escalier avec sa rampe, ou un step contre un mur',
+    equipment: 'Le step à 20 cm contre un mur, ou une marche d\'escalier avec sa rampe',
     why:
       'La descente lente sur une jambe renforce le tendon d\'Achille et le mollet, qui encaissent chaque foulée : ' +
       'c\'est le protocole qui soigne et prévient ses tendinopathies (Alfredson). Trois semaines sans courir les ' +
       'déchargent ; c\'est lui qui les garde prêts.',
     setup: [
-      'L\'avant des deux pieds sur la marche, talons dans le vide, la main libre sur la rampe.',
+      'Le step contre un mur. L\'avant des deux pieds sur le bord, talons dans le vide, la main valide au mur.',
       'Genou tendu pour le mollet ; genou fléchi de 20 à 30° pour le soléaire, le muscle profond qui porte le plus en course.',
     ],
     steps: [
       'Monte sur les deux pointes, en 1 seconde.',
       'Passe sur une jambe : soulève l\'autre pied.',
-      'Redescends en 3 secondes, jusqu\'au talon nettement sous la marche.',
+      'Redescends en 3 secondes, jusqu\'au talon nettement sous le step.',
       'Repose l\'autre pied et remonte sur les deux.',
     ],
     breath: 'Souffle en montant, inspire pendant la descente.',
@@ -324,7 +327,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'Descente sur les deux pieds.',
     harder: '5 secondes de descente ; puis un sac à dos chargé.',
-    cast: 'La main libre sur la rampe, toujours : un faux pas sur une marche se rattrape avec elle.',
+    cast: 'La main valide au mur, toujours : un faux pas sur un step se rattrape avec elle.',
   },
   'releves-pointe': {
     key: 'releves-pointe',
@@ -460,14 +463,18 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     equipment: 'De l\'eau, ton téléphone, ta montre au poignet libre',
     why:
       'La sortie longue du traileur qui ne court pas : du temps debout, du dénivelé, et l\'habitude de monter fort ' +
-      'en marchant — la moitié d\'un trail.',
+      'en marchant — la moitié d\'un trail. En fractionné, c\'est aussi ce qui garde ta VO2max : un escalier monté ' +
+      'vite fait grimper le cœur jusqu\'au seuil, ce qu\'aucun step ne fait — à 20 cm, il faudrait plus de 80 ' +
+      'montées par minute.',
     steps: [
-      'Des montées revêtues et des escaliers secs : montée Saint-Barthélemy, montée du Gourguillon, escaliers de Fourvière.',
-      'Monte en marche active, sans dépasser la FC prescrite.',
-      'Redescends lentement, la main libre sur la rampe des escaliers.',
+      'Des montées revêtues et des escaliers secs : montée Saint-Barthélemy, montée du Gourguillon, escaliers de Fourvière, montée de la Grande-Côte.',
+      'Longue marche : monte en marche active, sans dépasser le haut de la plage de FC prescrite.',
+      'Fractionné : monte vite, en marche, une marche à la fois, jusqu\'à la zone prescrite et pendant la durée de la répétition ; en zone 4, tu ne dis que quelques mots.',
+      'Redescends lentement, la main libre sur la rampe : entre deux répétitions, c\'est la récupération.',
+      'S\'il pleut, les escaliers de ton immeuble : les marches mouillées sont interdites.',
     ],
     feel: 'Les montées essoufflent sans brûler ; les descentes se font sans à-coups.',
-    mistakes: ['Courir les descentes.', 'Prendre un sentier glissant pour « faire trail ».'],
+    mistakes: ['Courir, même en montée : la marche rapide suffit à monter le cœur.', 'Courir les descentes.', 'Prendre un sentier glissant pour « faire trail ».'],
     cast:
       'Une chute sur le bras plâtré coûterait des semaines : pas de sentier technique, pas de marches mouillées, ' +
       'pas de descente rapide. L\'écharpe si la marche fait lancer le coude.',
@@ -480,15 +487,17 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     equipment: 'Rien',
     why:
       'Garder les doigts et l\'épaule mobiles évite la raideur et aide le gonflement à se résorber : ce sont les ' +
-      'consignes des services de fracture, trois à quatre fois par jour.',
+      'consignes des services de fracture, trois à quatre fois par jour. Et imaginer des contractions de toutes ses ' +
+      'forces, sans bouger, a réduit de moitié la perte de force d\'un poignet plâtré quatre semaines (Clark 2014).',
     steps: [
       'Doigts : ferme le poing, ouvre grand la main, écarte les doigts — 10 fois.',
       'Pouce : touche le bout de chaque doigt — 5 fois.',
       'Épaule : lève doucement le bras plâtré devant toi, aussi haut que possible sans douleur, puis redescends — 10 fois.',
       'Assis, le bras plâtré posé sur un coussin plus haut que le coude dès que tu peux.',
+      'L\'imagerie, du lundi au vendredi : allongé, les yeux fermés, imagine que tu plies le coude plâtré de toutes tes forces pendant 5 secondes, sans contracter le bras ; 5 secondes de repos. 13 fois, quatre séries, 1 minute entre elles : 11 minutes. Une série sur deux, imagine que tu le tends.',
     ],
-    feel: 'Une gêne qui passe dans les deux heures est normale ; une douleur qui monte ne l\'est pas.',
-    mistakes: ['Laisser la main pendre toute la journée : elle gonfle.'],
+    feel: 'Une gêne qui passe dans les deux heures est normale ; une douleur qui monte ne l\'est pas. Pendant l\'imagerie, le bras reste mou : seul le cerveau force.',
+    mistakes: ['Laisser la main pendre toute la journée : elle gonfle.', 'Contracter pour de vrai pendant l\'imagerie : si tu sens le muscle se tendre dans le plâtre, relâche.'],
     cast:
       'Doigts qui gonflent, bleuissent, s\'engourdissent, ou douleur qui augmente dans le plâtre : appelle ton ' +
       'chirurgien ou les urgences sans attendre.',
@@ -564,18 +573,18 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
 
   'split-squat-maison': {
     key: 'split-squat-maison',
-    name: 'Fente bulgare, pied arrière sur le tabouret',
-    what: 'Une fente sur une seule jambe : le dessus du pied arrière posé sur le tabouret, tu descends le genou arrière vers le sol en pliant la jambe avant, puis tu remontes.',
+    name: 'Fente bulgare, pied arrière sur le step',
+    what: 'Une fente sur une seule jambe : le dessus du pied arrière posé sur le step, tu descends le genou arrière vers le sol en pliant la jambe avant, puis tu remontes.',
     where: ['maison'],
-    equipment: 'Le tabouret de 40 cm calé contre un mur (ou le canapé), un encadrement de porte',
+    equipment: 'Le step à 40 cm (ou le tabouret) calé contre un mur, un encadrement de porte',
     why:
       'Le meilleur exercice de jambes qui se fasse chez soi : sur une jambe, ton poids devient la charge. Il ' +
       'entretient les quadriceps (le devant de la cuisse) et les fessiers, qui te font monter et qui freinent en ' +
       'descente.',
     setup: [
-      'Vérifie le tabouret : appuie fort sur chaque coin. S\'il bascule ou glisse, cale-le contre un mur, ou prends le canapé.',
-      'Dos au tabouret, à une grande enjambée devant lui, l\'encadrement de porte à portée de la main valide.',
-      'Pose le dessus du pied arrière, les lacets, sur le tabouret.',
+      'Vérifie le step : appuie fort sur chaque coin. S\'il bascule ou glisse, cale-le contre un mur, ou prends le canapé.',
+      'Dos au step, à une grande enjambée devant lui, l\'encadrement de porte à portée de la main valide.',
+      'Pose le dessus du pied arrière, les lacets, sur le step.',
       'Règle la distance : en bas, le tibia avant est vertical. Trop près, le genou avant file devant ; trop loin, la hanche arrière tire.',
     ],
     steps: [
@@ -665,7 +674,8 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     why:
       'Entraîner le bras valide entretient le bras plâtré par le système nerveux : après une fracture du poignet, ' +
       'ceux qui entraînaient la main saine avaient plus de force du côté fracturé à 12 semaines (Magnus 2013). ' +
-      'Pour un coude, ce sont les muscles qui le plient, ceux qui le tendent, et la poigne qui comptent.',
+      'Pour un coude, ce sont les muscles qui le plient, ceux qui le tendent, et la poigne qui comptent — poussés ' +
+      'près du maximum : c\'est l\'intensité qui passe d\'un bras à l\'autre.',
     setup: [
       'Plier : l\'accroche tout en bas de la porte, un élastique de 5 ou 6 kg, face à la porte, à un pas.',
       'Tendre : l\'accroche tout en haut de la porte, un élastique de 4 ou 5 kg, face à la porte.',
@@ -676,30 +686,32 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Tendre (le triceps) : le coude collé au flanc, plié à angle droit ; pousse la main vers la cuisse en 1 seconde, remonte en 3. C\'est le triceps, l\'arrière du bras.',
       'Serrer : serre l\'anneau à fond 5 secondes, relâche 5 secondes, 10 fois.',
       'Enchaîne les trois, deux tours ; change l\'accroche de hauteur entre les deux premiers.',
+      'Le maximum, sans élastique : assis à une table, la paume sous le plateau, coude à angle droit ; pousse vers le haut de toutes tes forces 5 secondes, 3 fois. Puis la paume sur le plateau, pousse vers le bas, 3 fois.',
     ],
     breath: 'Souffle à l\'effort, jamais en apnée.',
     feel: 'Le devant du bras quand tu plies, l\'arrière quand tu tends, l\'avant-bras quand tu serres.',
     mistakes: ['Balancer le buste.', 'Décoller le coude du flanc.'],
     easier: 'Un pas plus près de la porte.',
     harder: 'Un élastique plus dur, ou 4 secondes pour revenir.',
-    cast: 'L\'autre bras ne fait rien ; garde l\'écharpe si le coude lance.',
+    cast: 'L\'autre bras ne fait rien ; garde l\'écharpe si le coude lance. Sous la table, la table ne doit pas bouger : pousse moins fort si elle se soulève.',
   },
   'descente-marche': {
     key: 'descente-marche',
-    name: 'Descente lente d\'une marche',
-    what: 'Debout sur une marche, tu plies lentement la jambe d\'appui jusqu\'à ce que le talon de l\'autre pied effleure la marche du dessous.',
+    name: 'Descente lente du step',
+    what: 'Debout sur le step, tu plies lentement la jambe d\'appui jusqu\'à ce que le talon de l\'autre pied effleure le sol devant.',
     where: ['maison', 'dehors'],
-    equipment: 'Une marche d\'escalier (17 à 20 cm) avec sa rampe',
+    equipment: 'Le step à 20 cm (ou une marche d\'escalier), un encadrement de porte ou un mur pour la main valide',
     why:
       'La descente de trail au ralenti : le quadriceps qui freine en s\'allongeant. C\'est lui qui lâche en fin de ' +
-      'course quand on ne l\'a pas préparé, et lui qui protège le genou.',
+      'course quand on ne l\'a pas préparé, et lui qui protège le genou. Ton aisance en descente est ta marge de ' +
+      'progression la plus nette.',
     setup: [
-      'Face à la descente, sur la deuxième marche, la main libre sur la rampe.',
-      'Le pied d\'appui entier sur la marche ; l\'autre jambe tendue dans le vide, devant.',
+      'Le step à 20 cm devant un encadrement de porte ou à côté d\'un mur, pour la main valide.',
+      'Debout sur le step, le pied d\'appui entier dessus ; l\'autre jambe tendue dans le vide, devant.',
     ],
     steps: [
       'Plie le genou d\'appui en 4 secondes, les hanches en arrière comme pour t\'asseoir.',
-      'Le talon libre effleure la marche du dessous, sans s\'y poser.',
+      'Le talon libre effleure le sol, sans s\'y poser.',
       'Remonte en 1 seconde en poussant dans le talon d\'appui.',
       'Toutes les répétitions d\'une jambe, puis l\'autre.',
     ],
@@ -710,11 +722,9 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Se laisser tomber sur le talon libre : il touche, il ne porte pas.',
       'Pencher le bassin du côté de la jambe libre.',
     ],
-    easier: 'La première marche, ou la moitié du chemin.',
-    harder: '5 secondes pour descendre, puis une marche de plus.',
-    cast:
-      'La rampe du côté du bras libre : choisis l\'escalier, ou le sens, qui la met de ce côté. Les deux jambes ' +
-      'travaillent sans que tu te retournes. Jamais sur une marche mouillée.',
+    easier: 'La moitié du chemin seulement.',
+    harder: '5 secondes pour descendre ; puis le step à 40 cm.',
+    cast: 'La main valide sur l\'encadrement ou le mur, toujours. Arrête la série dès que la jambe tremble.',
   },
   'souleve-une-jambe': {
     key: 'souleve-une-jambe',
@@ -827,24 +837,24 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   },
   'montee-tabouret': {
     key: 'montee-tabouret',
-    name: 'Montée sur le tabouret, descente lente',
-    what: 'Un pied sur le tabouret, tu montes dessus en poussant sur cette jambe, puis tu redescends en 4 secondes en freinant avec elle.',
+    name: 'Montées sur le step : lentes, continues, rapides',
+    what: 'Un pied sur le step, tu montes dessus en poussant sur cette jambe, puis tu redescends : lentement pour la force, vite pour la puissance, en continu pour l\'endurance.',
     where: ['maison'],
-    equipment: 'Le tabouret de 40 cm calé contre un mur ; le mur ou un encadrement pour la main valide',
+    equipment: 'Le step à 40 cm (ou le tabouret) calé contre un mur ; un sac à dos chargé pour plus dur ; le mur pour la main valide',
     why:
       'Monter, c\'est la force des côtes. Redescendre en 4 secondes, c\'est le quadriceps qui freine en s\'allongeant ' +
       '— ce qu\'il fait dans chaque descente de trail, et ce qui lâche en fin de course quand il n\'est pas préparé. ' +
       'En continu, en fin de séance, c\'est l\'endurance des montées.',
     setup: [
-      'Vérifie le tabouret : appuie fort sur chaque coin ; il ne doit ni basculer ni glisser. Calé contre un mur, c\'est mieux.',
-      'Face au tabouret, la main valide posée sur le mur ou l\'encadrement, à côté.',
+      'Vérifie le step : appuie fort sur chaque coin ; il ne doit ni basculer ni glisser. Calé contre un mur, c\'est mieux.',
+      'Face au step, la main valide posée sur le mur ou l\'encadrement, à côté.',
     ],
     steps: [
-      'Pose tout le pied sur le tabouret.',
-      'Monte en 1 seconde en poussant dans ce talon, jusqu\'à être debout dessus ; la jambe du bas ne pousse pas.',
-      'Redescends en 4 secondes : la jambe du haut plie et freine, l\'autre pied va se poser derrière, au sol.',
-      'Toutes les répétitions de la même jambe, puis l\'autre.',
-      'Les montées continues de fin de séance : un pas toutes les 3 secondes, change de jambe toutes les 30 secondes.',
+      'Pose tout le pied sur le step.',
+      'Lente (la force) : monte en 1 seconde en poussant dans ce talon, la jambe du bas ne pousse pas ; redescends en 4 secondes en freinant avec la jambe du haut. Toutes les répétitions d\'une jambe, puis l\'autre.',
+      'Explosive (la puissance) : monte le plus vite possible, sans sauter, puis redescends en 4 secondes.',
+      'Continue (l\'endurance des côtes) : à 40 cm, une montée toutes les 2 secondes — monter, redescendre —, change de jambe toutes les 30 secondes.',
+      'Le fractionné ne se fait pas ici : même à 40 cm et vite, le step ne monte pas ton cœur jusqu\'au seuil. Il se fait dans les escaliers.',
     ],
     breath: 'Souffle en montant, inspire en descendant.',
     feel: 'La cuisse et la fesse de la jambe du haut ; en redescendant, le devant de la cuisse brûle.',
@@ -853,8 +863,8 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Se laisser tomber en redescendant : c\'est la descente lente qui compte.',
       'Laisser le genou rentrer vers l\'intérieur.',
     ],
-    easier: 'La première marche d\'un escalier à la place du tabouret.',
-    harder: '5 secondes pour redescendre ; puis 2 secondes debout sur une jambe en haut.',
+    easier: 'Le step à 20 cm.',
+    harder: '5 secondes pour redescendre ; puis un sac à dos chargé de 5 à 10 kg, si tu l\'enfiles sans forcer le coude.',
     cast:
       'La main valide toujours au mur : à 40 cm, une perte d\'équilibre se rattrape avec elle. Arrête la série dès ' +
       'que la jambe tremble.',
@@ -877,7 +887,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Monte sur la pointe le plus haut possible, en 1 seconde.',
       'Tiens 1 seconde en haut.',
       'Redescends en 3 secondes jusqu\'au talon posé.',
-      'Genou tendu en séance A ; genou fléchi d\'environ 30° en séance B, et il le reste toute la série.',
+      'Genou tendu, ou fléchi d\'environ 30° quand la séance le dit : il le reste toute la série.',
     ],
     breath: 'Souffle en montant.',
     feel: 'Le mollet brûle vers la dixième répétition.',
@@ -889,6 +899,242 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Sur les deux pieds.',
     harder: 'Sur le bord de la première marche d\'un escalier, le talon qui descend sous la marche ; ou 5 secondes de descente.',
     cast: 'La main valide au mur : sur un pied, c\'est elle qui rattrape.',
+  },
+  'tests-maison': {
+    key: 'tests-maison',
+    name: 'Les tests du bloc',
+    what: 'Sept mesures simples, le premier et le dernier jour du bloc, pour savoir d\'où tu pars et ce que tu as gagné.',
+    where: ['maison'],
+    equipment: 'Le step à 40 cm, un mur, un chrono, un mètre ruban',
+    why:
+      'Ce qui se mesure progresse. Chaque test vise une de tes lacunes ou un pilier du trail long : le mollet et ' +
+      'le tendon d\'Achille, l\'arrière de la cuisse, la force qui tient des quadriceps, le gainage, l\'équilibre, la ' +
+      'cheville, la souplesse. Les repères viennent d\'études publiées ; compare-toi d\'abord à toi-même.',
+    setup: [
+      'Échauffe-toi 6 minutes ; fais les tests dans l\'ordre, 2 minutes de pause entre chacun.',
+      'Note chaque résultat, jambe par jambe, dans la note du point du jour.',
+      'Plus de 10 % d\'écart entre tes deux jambes sur un test : une série de plus du côté faible, jusqu\'au test de fin.',
+    ],
+    steps: [
+      'Mollets : sur un pied, au sol, la main posée au mur sans tirer, monte tout en haut et redescends, une fois toutes les 2 secondes, jusqu\'à ne plus pouvoir monter en entier. Repère : environ 32 à ton âge (Hébert-Losier 2017).',
+      'Arrière de la cuisse : sur le dos, les bras croisés sur la poitrine, un talon sur le step à 40 cm, l\'autre jambe tendue vers le plafond ; monte le bassin, redescends effleurer le sol, jusqu\'à ne plus pouvoir. Repère sur un banc de 60 cm : moins de 20, faible ; plus de 30, bon (Freckleton 2014) ; sur 40 cm, compare-toi à toi-même.',
+      'Chaise contre le mur : cuisses parallèles au sol, chronomètre jusqu\'à ne plus tenir.',
+      'Gainage sur le côté, sur le coude valide : chronomètre jusqu\'à ce que le bassin tombe.',
+      'Équilibre : sur un pied, dans un angle de mur, yeux fermés ; chronomètre jusqu\'à ce que le pied bouge ou que l\'autre touche le sol, 60 secondes au plus.',
+      'Cheville (genou au mur) : face au mur, un pied devant ; pousse le genou contre le mur, talon au sol, et recule le pied jusqu\'à la plus grande distance où le genou touche encore. Mesure du gros orteil au mur. Repère : 10 cm et plus.',
+      'Souplesse : debout jambes tendues, penche-toi vers le sol ; mesure la distance du bout des doigts au sol, négative si tu ne touches pas. Ton test d\'effort : −1 cm.',
+    ],
+    breath: 'Respire pendant les maintiens ; ne bloque jamais.',
+    feel: 'Les tests jusqu\'à l\'échec brûlent : c\'est leur rôle. Rien ne doit faire mal au coude.',
+    mistakes: [
+      'Tricher sur l\'amplitude pour gagner des répétitions : un test ne vaut que par sa constance.',
+      'Les refaire fatigué : même moment de la journée, le premier et le dernier jour.',
+    ],
+    cast: 'Aucun test ne s\'appuie sur le bras plâtré ; l\'équilibre se teste dans un angle de mur, la main valide prête.',
+  },
+  'reverse-nordic': {
+    key: 'reverse-nordic',
+    name: 'Bascule arrière à genoux',
+    what: 'À genoux, le corps droit des genoux à la tête, tu te penches lentement en arrière, puis tu reviens : le devant des cuisses freine.',
+    where: ['maison'],
+    equipment: 'Le tapis plié en deux sous les genoux',
+    why:
+      'Le quadriceps freine en s\'allongeant, la hanche ouverte — comme dans les longues descentes, où il lâche en ' +
+      'premier. Peu d\'exercices le chargent à cette longueur sans haltère. Son nom anglais : « reverse Nordic ».',
+    setup: [
+      'À genoux sur le tapis plié, genoux écartés de la largeur des hanches, le dessus des pieds au sol.',
+      'Le bras plâtré contre le ventre, la main valide sur la poitrine.',
+      'Le corps droit des genoux à la tête : fesses serrées, le bassin ne casse pas.',
+    ],
+    steps: [
+      'Penche-toi en arrière en 3 secondes, d\'un bloc, comme une planche qui bascule depuis les genoux.',
+      'Va seulement jusqu\'où tu peux revenir sans casser au bassin : 20 à 30° au début.',
+      'Reviens en 2 secondes en tirant avec le devant des cuisses.',
+    ],
+    breath: 'Inspire en partant en arrière, souffle en revenant.',
+    feel: 'Le devant des cuisses brûle. Un étirement à l\'avant de la hanche est normal.',
+    mistakes: [
+      'Casser au bassin en s\'asseyant vers les talons : on perd l\'exercice.',
+      'Partir trop loin les premières fois : les courbatures du lendemain sont fortes.',
+    ],
+    easier: 'Moins loin, plus lentement.',
+    harder: 'Plus loin, puis 2 secondes tenues au point le plus bas.',
+    cast:
+      'Rien ne s\'appuie sur les mains. Si tu sens que tu ne reviendras pas, assieds-toi doucement sur les talons : ' +
+      'jamais de main tendue vers le sol.',
+  },
+  'pousse-elastique': {
+    key: 'pousse-elastique',
+    name: 'Poussée à un bras, élastique dans le dos',
+    what: 'Dos à la porte, tu pousses la poignée droit devant toi, comme un coup de poing lent, puis tu la ramènes.',
+    where: ['maison'],
+    equipment: 'Le kit d\'élastiques : deux élastiques, une poignée, l\'accroche de porte',
+    why:
+      'La poitrine, l\'avant de l\'épaule et le triceps du bras valide : le pendant du tirage, pour une épaule ' +
+      'équilibrée. Et le bras entraîné entretient l\'autre.',
+    setup: [
+      'L\'accroche à hauteur de poitrine ; dos à la porte, un pied devant l\'autre, à la distance où l\'élastique est déjà tendu coude plié.',
+      'La poignée à côté de la poitrine, le coude un peu sous l\'épaule.',
+    ],
+    steps: [
+      'Pousse droit devant en 1 seconde, jusqu\'au bras tendu sans le verrouiller.',
+      'Tiens 1 seconde.',
+      'Ramène en 2 secondes.',
+    ],
+    breath: 'Souffle en poussant.',
+    feel: 'La poitrine et l\'arrière du bras.',
+    mistakes: ['Tourner le buste pour pousser plus loin.', 'Hausser l\'épaule.'],
+    easier: 'Un seul élastique, ou un pas en arrière.',
+    harder: 'Un troisième élastique, ou un pas en avant.',
+    cast: 'Le bras plâtré reste en écharpe ; le buste ne tourne pas, et c\'est aussi un gainage.',
+  },
+  'hip-thrust': {
+    key: 'hip-thrust',
+    name: 'Pont sur le canapé, sur une jambe (hip thrust)',
+    what: 'Le haut du dos appuyé au bord du canapé, un pied au sol, tu montes le bassin jusqu\'à aligner les épaules, les hanches et le genou.',
+    where: ['maison'],
+    equipment: 'Le canapé (ou un lit bas)',
+    why:
+      'Le fessier, moteur des montées, sur sa plus grande amplitude : plus de chemin qu\'un pont au sol, donc plus ' +
+      'de travail sans charge.',
+    setup: [
+      'Assis au sol dos au canapé, les omoplates contre le bord de l\'assise.',
+      'Un pied à plat devant toi, l\'autre jambe pliée en l\'air.',
+      'Le bras valide posé sur l\'assise, le bras plâtré sur le ventre.',
+    ],
+    steps: [
+      'Pousse dans le talon et monte le bassin en 1 seconde, jusqu\'au tronc à plat, le genou à angle droit.',
+      'Tiens 2 secondes en serrant la fesse.',
+      'Redescends en 2 secondes sans poser le bassin.',
+    ],
+    breath: 'Souffle en montant.',
+    feel: 'La fesse de la jambe d\'appui, fort.',
+    mistakes: [
+      'Cambrer le bas du dos en haut : le menton vers la poitrine, les côtes rentrées.',
+      'Pousser sur la pointe du pied.',
+    ],
+    easier: 'Les deux pieds au sol.',
+    harder: '3 secondes tenues en haut, ou la série en continu sans poser le bassin.',
+    cast: 'Le bras valide stabilise sur l\'assise ; le bras plâtré ne prend aucun appui.',
+  },
+  copenhague: {
+    key: 'copenhague',
+    name: 'Gainage des adducteurs (Copenhague)',
+    what: 'Sur le côté, sur le coude valide, le genou du dessus posé sur le step : tu soulèves le bassin en serrant l\'intérieur de la cuisse.',
+    where: ['maison'],
+    equipment: 'Le step à 40 cm, le tapis',
+    why:
+      'Les adducteurs, l\'intérieur des cuisses, tiennent le bassin dans les dévers et les appuis de côté. Ce ' +
+      'programme a réduit de 41 % les problèmes d\'aine chez des footballeurs (Harøy 2019).',
+    setup: [
+      'Allongé sur le côté du bras valide, le coude sous l\'épaule, l\'avant-bras au sol.',
+      'Le genou de la jambe du dessus posé sur le step à 40 cm ; la jambe du dessous pliée au sol.',
+      'Le bras plâtré posé sur la hanche.',
+    ],
+    steps: [
+      'Monte le bassin en appuyant le genou du dessus sur le step, jusqu\'à aligner la tête, le bassin et le genou ; la jambe du dessous décolle.',
+      'Redescends en 2 secondes.',
+    ],
+    breath: 'Souffle en montant.',
+    feel: 'L\'intérieur de la cuisse du dessus, et le côté du ventre.',
+    mistakes: ['Laisser le bassin partir en arrière.', 'Monter par à-coups.'],
+    easier: 'La jambe du dessous reste au sol pour aider.',
+    harder: 'La cheville, et non le genou, posée sur le step : le levier s\'allonge.',
+    cast:
+      'Uniquement sur le coude valide : seule la jambe du côté du plâtre travaille ici. L\'autre jambe fait le ' +
+      'serrage de coussin.',
+  },
+  'adducteurs-coussin': {
+    key: 'adducteurs-coussin',
+    name: 'Serrage de coussin entre les genoux',
+    what: 'Sur le dos, genoux pliés, un coussin entre les genoux : tu le serres le plus fort possible, puis tu relâches.',
+    where: ['maison'],
+    equipment: 'Un coussin ferme, le tapis',
+    why: 'Les adducteurs des deux jambes à la fois, sans appui sur les bras : le complément de la Copenhague.',
+    setup: ['Sur le dos, pieds à plat, un coussin plié entre les genoux.'],
+    steps: ['Serre le coussin de toutes tes forces pendant 10 secondes.', 'Relâche 10 secondes.', 'Recommence.'],
+    breath: 'Continue de respirer en serrant : souffle lentement.',
+    feel: 'L\'intérieur des deux cuisses.',
+    mistakes: ['Bloquer la respiration.', 'Décoller le bas du dos.'],
+    easier: 'Serre à 70 %.',
+    harder: 'En pont fessier, le bassin levé.',
+    cast: 'Le bras plâtré posé sur le ventre.',
+  },
+  'mollets-iso': {
+    key: 'mollets-iso',
+    name: 'Mollet sous le cadre de porte (isométrie lourde)',
+    what: 'Sur la pointe d\'un pied, la main valide à plat sous le haut d\'un cadre de porte : tu pousses le cadre vers le haut et le sol avec l\'avant du pied, aussi fort que tu peux, sans bouger.',
+    where: ['maison'],
+    equipment: 'Un cadre de porte',
+    why:
+      'Une contraction proche du maximum, tenue 3 secondes, rend le tendon d\'Achille plus raide — et la course ' +
+      'plus économique : environ 4 % d\'oxygène en moins chez des coureurs après 14 semaines (Albracht et ' +
+      'Arampatzis 2013). Sans haltère, ta main contre le cadre est la charge.',
+    setup: [
+      'Debout sur un pied, juste en retrait du cadre de porte : la main valide atteint le haut du cadre devant toi, le coude plié.',
+      'Monte à mi-hauteur sur la pointe : le talon à mi-chemin entre le sol et ton plus haut.',
+    ],
+    steps: [
+      'Pousse le sol avec l\'avant du pied et le cadre avec la main : de plus en plus fort pendant 1 seconde, puis à fond pendant 3 secondes.',
+      'Relâche 3 secondes, sans reposer le talon.',
+      '4 poussées font une série ; 5 séries par jambe, 1 minute de pause.',
+    ],
+    breath: 'Souffle pendant la poussée ; ne bloque jamais.',
+    feel: 'Le mollet se tend comme une corde ; rien ne bouge.',
+    mistakes: [
+      'Monter sur la pointe pendant la poussée : on reste à mi-hauteur.',
+      'Bloquer la respiration : la tension monte, et le coude lance.',
+    ],
+    easier: 'Pousser à 70 %.',
+    harder: 'L\'avant du pied sur le step à 20 cm, le talon plus bas que l\'avant du pied.',
+    cast: 'Seule la main valide pousse ; si le coude plâtré lance pendant l\'effort, pousse moins fort.',
+  },
+  'pied-court': {
+    key: 'pied-court',
+    name: 'Pied court et orteils',
+    what: 'Assis, le pied à plat : tu creuses la voûte du pied sans plier les orteils, puis tu lèves le gros orteil seul, puis les quatre autres.',
+    where: ['maison'],
+    equipment: 'Une chaise',
+    why:
+      'Les petits muscles du pied tiennent la voûte à chaque appui : un programme de renforcement du pied a réduit ' +
+      'les blessures de course (Taddei 2020).',
+    setup: ['Assis sur une chaise, pieds nus à plat sous les genoux.'],
+    steps: [
+      'Pied court : rapproche l\'avant du pied du talon en creusant la voûte ; les orteils restent longs et à plat. Tiens 5 secondes, 10 fois.',
+      'Gros orteil seul : lève-le, les quatre autres restent au sol, 10 fois ; puis l\'inverse.',
+      'Quand c\'est facile assis : debout, puis debout sur un pied.',
+    ],
+    breath: 'Libre.',
+    feel: 'Sous la voûte, parfois une crampe légère au début : c\'est normal.',
+    mistakes: ['Plier les orteils pour tricher.', 'Soulever le talon.'],
+    easier: 'Regarde ton pied pendant que tu le fais.',
+    harder: 'Debout, puis debout sur un pied.',
+    cast: 'Rien à tenir.',
+  },
+  equilibre: {
+    key: 'equilibre',
+    name: 'Équilibre sur un pied, yeux fermés',
+    what: 'Debout sur un pied dans un angle de mur, tu fermes les yeux et tu tiens.',
+    where: ['maison'],
+    equipment: 'Un angle de mur ; le tapis plié pour plus difficile',
+    why:
+      'La cheville et la hanche corrigent sans les yeux : ce qu\'elles font dans un sentier technique, la nuit, ou ' +
+      'fatiguées. Un plâtre change l\'équilibre : on le réapprend.',
+    setup: [
+      'Dans un angle de mur, le mur à 20 cm de ta main valide.',
+      'Sur un pied, genou un peu fléchi, l\'autre pied levé de quelques centimètres.',
+    ],
+    steps: [
+      'Ferme les yeux et tiens 30 secondes.',
+      'Si tu perds l\'équilibre, la main valide touche le mur, puis tu reprends.',
+      '3 fois par jambe.',
+    ],
+    breath: 'Calme et lente.',
+    feel: 'La cheville et le pied corrigent sans arrêt.',
+    mistakes: ['S\'appuyer au mur en continu.', 'Le faire loin d\'un mur : le plâtre interdit la chute.'],
+    easier: 'Les yeux ouverts, le regard fixe.',
+    harder: 'Sur le tapis plié en quatre ; puis en tournant lentement la tête.',
+    cast: 'Toujours dans un angle de mur, du côté de la main valide. Jamais au milieu d\'une pièce.',
   },
 };
 
@@ -921,4 +1167,90 @@ export const EXERCISE_WORDS: { word: string; plain: string }[] = [
   { word: 'VO2max', plain: 'Le plus d\'oxygène que ton corps peut utiliser : la taille de ton moteur.' },
   { word: 'Seuil', plain: 'L\'effort le plus intense que tu tiens longtemps sans t\'emballer, autour d\'une heure en course.' },
   { word: 'PMA', plain: 'La puissance maximale aérobie : l\'effort où tu atteins ta VO2max, tenable cinq à six minutes.' },
+  { word: 'Zone 3, zone 4', plain: 'Plus haut : en zone 3, tu parles par bouts de phrase ; en zone 4, ton seuil, quelques mots seulement.' },
+  { word: 'Échec', plain: 'Le moment où tu ne peux plus faire une répétition propre. Debout sur une jambe, avec le plâtre, on ne va jamais jusque-là.' },
+  { word: 'Hypertrophie', plain: 'Le muscle qui grossit. Elle vient du nombre de séries dures, finies près de l\'échec, et des protéines qui suivent.' },
+  { word: 'Semaine allégée', plain: 'Moins de séries, la même technique : c\'est pendant elle que le travail des semaines dures devient de la force.' },
+  { word: 'Adducteurs', plain: 'Les muscles de l\'intérieur de la cuisse : ils ramènent la jambe vers l\'autre et tiennent le bassin dans les dévers.' },
+  { word: 'Step', plain: 'La marche sur laquelle tu montes : 20 ou 40 cm. Le tabouret de 40 cm fait le même travail, calé contre un mur.' },
+  { word: 'Imagerie', plain: 'Imaginer un mouvement de toutes ses forces, sans le faire : le cerveau s\'entraîne, et le muscle immobilisé perd moins.' },
+];
+
+/**
+ * Le bloc de force du 09/10 au 01/11, jour par jour.
+ *
+ * Le 09/10, Pierre : « je vais commencer le renforcement musculaire de façon
+ * quotidienne, bien énervée, pour revenir encore plus puissant, plus musclé, et
+ * combler des lacunes ». Tous les jours, mais jamais les mêmes muscles lourds
+ * deux jours de suite : trois séances de force à 48 h l'une de l'autre, et
+ * entre elles les tendons, le fractionné, la longue marche, la récupération.
+ * Les séances du plan (`blockDay`, `@cairn/coach`) commencent par ces titres.
+ */
+export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why: string }[] = [
+  {
+    day: 'Lundi',
+    title: 'Force 1 · genoux et freinage',
+    focus: 'Fente bulgare, descente lente du step, bascule arrière à genoux, flexion sur serviette, chaise, mollet sous le cadre ; pousser et tirer avec le bras valide.',
+    why: 'Les quadriceps qui freinent dans les descentes : ton aisance en descente, mesurée sur tes sorties, est à 0,68 de celle d\'un bon traileur — ta marge la plus nette.',
+  },
+  {
+    day: 'Mardi',
+    title: 'Tendons, pieds, gainage',
+    focus: '40 min de marche, puis le mollet sous le cadre, les mollets en descente lente, les relevés de pointe, le pied court, l\'équilibre, le gainage.',
+    why: 'Le tendon d\'Achille, le pied et la cheville encaissent chaque foulée : sans course, ce sont eux qui perdent le plus vite.',
+  },
+  {
+    day: 'Mercredi',
+    title: 'Force 2 · hanches et chaîne arrière',
+    focus: 'Bascule sur une jambe, pont sur le canapé, pas chassés, Copenhague, coussin, montée de genou, mollet sous le cadre ; le bras valide au maximum.',
+    why: 'Les fessiers et l\'arrière des cuisses te poussent en montée ; les adducteurs et le moyen fessier tiennent le bassin quand la fatigue arrive.',
+  },
+  {
+    day: 'Jeudi',
+    title: 'Fractionné en côte',
+    focus: 'Des montées rapides en marche dans les escaliers de Fourvière : 3 min, en zone 3 puis au seuil ; souplesse et gainage en rentrant.',
+    why: 'L\'intensité garde la VO2max quand le volume baisse (Hickson). Pas sur le step : il ne monte pas le cœur jusqu\'au seuil.',
+  },
+  {
+    day: 'Vendredi',
+    title: 'Force 3 · une jambe et montées',
+    focus: 'Montée explosive sur le step à 40 cm, chaise sur une jambe, bascule arrière, flexion sur serviette, Copenhague, mollet sous le cadre ; pousser et tirer ; montées continues.',
+    why: 'La puissance, la force qui tient sur un pied, et l\'endurance des côtes : ce qui manque après trois heures de trail.',
+  },
+  {
+    day: 'Samedi',
+    title: 'Longue marche en côte',
+    focus: 'Fourvière, la montée Saint-Barthélemy, la Sarra, les escaliers secs : de 1 h 30 à 2 h 15, jusqu\'à 650 m de dénivelé ; pied court et équilibre au retour.',
+    why: 'La sortie longue devient marche : du temps debout, des montées, le moteur des trails longs.',
+  },
+  {
+    day: 'Dimanche',
+    title: 'Récupération',
+    focus: 'Marche facile, souplesse longue, gainage léger.',
+    why: 'La semaine s\'assimile : le muscle se construit entre les séances. Ta souplesse, courte au test d\'effort, ne gagne qu\'avec la régularité.',
+  },
+];
+
+/** Les trois semaines du bloc, après les trois jours d'ouverture. */
+export const FORCE_BLOCK_WEEKS: { dates: string; name: string; what: string }[] = [
+  {
+    dates: '9 au 11 octobre',
+    name: 'Ouvrir',
+    what: 'Les tests le vendredi, une longue marche le samedi, la récupération le dimanche.',
+  },
+  {
+    dates: '12 au 18 octobre',
+    name: 'Construire',
+    what: '3 séries par jambe, 2 répétitions en réserve : apprendre les gestes, encaisser les courbatures.',
+  },
+  {
+    dates: '19 au 25 octobre',
+    name: 'Charger',
+    what: 'Une série de plus, 1 répétition en réserve, les versions plus dures : la semaine qui fait progresser.',
+  },
+  {
+    dates: '26 octobre au 1er novembre',
+    name: 'Alléger',
+    what: '2 séries, 3 en réserve, l\'intensité gardée : le travail devient de la force. Les tests le dimanche 1er novembre.',
+  },
 ];

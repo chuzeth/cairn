@@ -189,13 +189,20 @@ function PropView({ prop, box }: { prop: Prop; box: Box }) {
     case 'jamb':
       return <rect x={fmt(prop.x - 1.2)} y={fmt(-box.y1)} width="2.4" height={fmt(box.y1)} className="fg-furniture fg-pad" />;
     case 'door': {
-      const hook = doorHook(prop.x, prop.anchor);
+      // Le cylindre de l'autre côté de la porte, la sangle qui passe dessous, le crochet de notre côté.
+      const face = prop.face ?? -1;
+      const hook = doorHook(prop.x, prop.anchor, face);
+      const block = face === -1 ? prop.x + 2.4 : prop.x - 2.8;
+      const toward = face === -1 ? 1.2 : -1.2;
       return (
         <g className="fg-furniture">
           <rect x={fmt(prop.x)} y={fmt(-box.y1)} width="2.2" height={fmt(box.y1)} className="fg-pad" />
-          <rect x={fmt(prop.x + 2.4)} y={fmt(-prop.anchor - 1.8)} width="2.6" height="3.6" rx="1" className="fg-anchor-block" />
-          <line x1={fmt(prop.x + 2.4)} y1={fmt(-prop.anchor)} x2={fmt(hook[0] + 1.2)} y2={fmt(-prop.anchor)} className="fg-strap" />
-          <path d={`M${fmt(hook[0] + 1.2)} ${fmt(-prop.anchor - 1.2)} a 1.2 1.2 0 1 0 0 2.4`} className="fg-hook" />
+          <rect x={fmt(block)} y={fmt(-prop.anchor - 1.8)} width="2.6" height="3.6" rx="1" className="fg-anchor-block" />
+          <line x1={fmt(face === -1 ? block : block + 2.6)} y1={fmt(-prop.anchor)} x2={fmt(hook[0] + toward)} y2={fmt(-prop.anchor)} className="fg-strap" />
+          <path
+            d={`M${fmt(hook[0] + toward)} ${fmt(-prop.anchor - 1.2)} a 1.2 1.2 0 1 ${face === -1 ? 0 : 1} 0 2.4`}
+            className="fg-hook"
+          />
         </g>
       );
     }
@@ -345,7 +352,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     grow(box, add(st.at, [-3, -3]));
     grow(box, add(st.at, [3, 3]));
   }
-  const bands = (panel.bands ?? []).map((b) => ({ a: at(b.from), b: at(b.to), kind: b.kind }));
+  const bands = (panel.bands ?? []).map((b) => ({ a: at(b.from), b: at(b.to), kind: b.kind, behind: b.behind === true }));
   const ghostBands = ghost
     ? (panel.ghostBands ?? []).map((b) => ({ a: at(b.from, ghost.skeleton), b: at(b.to, ghost.skeleton), kind: b.kind }))
     : [];
@@ -385,6 +392,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
         {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r={ring} className="fg-weight-ghost" />}
         {ghost && <GhostView list={ghost.parts} />}
         {ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
+        {bands.filter((b) => b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `bb${i}`))}
         <BodyView list={list} muscles={muscles} uid={uid} />
         {held && (
           <g className={panel.hold === 'handle' ? 'fg-handle' : 'fg-disc'}>
@@ -392,7 +400,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
             <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r="1.1" />
           </g>
         )}
-        {bands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `b${i}`))}
+        {bands.filter((b) => !b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `b${i}`))}
         {guides.map((g, i) => line(g.a, g.b, 'fg-guide', `g${i}`))}
         {angles.map((a, i) => (
           <g key={`a${i}`} className="fg-angle">

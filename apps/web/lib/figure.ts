@@ -557,7 +557,7 @@ export function parts(p: Pose): { skeleton: Skeleton; parts: Part[] } {
 
 export type MuscleName =
   | 'quads' | 'hamstrings' | 'glutes' | 'gluteMed' | 'calves' | 'soleus' | 'tibialis' | 'hipFlexors'
-  | 'adductors' | 'abs' | 'obliques' | 'back' | 'biceps' | 'triceps' | 'forearm' | 'shoulder' | 'diaphragm';
+  | 'adductors' | 'abs' | 'obliques' | 'back' | 'chest' | 'biceps' | 'triceps' | 'forearm' | 'shoulder' | 'diaphragm';
 
 /** Un muscle qui travaille, du côté dit : la jambe de notre côté par défaut. */
 export interface Muscle {
@@ -594,10 +594,12 @@ export function muscleShape(m: Muscle, k: Skeleton, list: Part[]): { clip: strin
       case 'calves': return l ? { clip: `${side}.shank`, pts: segment(l.knee, l.ankle, 0.3, -2.1, 7, 2.5) } : null;
       case 'soleus': return l ? { clip: `${side}.shank`, pts: segment(l.knee, l.ankle, 0.58, -1.5, 6.5, 2) } : null;
       case 'tibialis': return l ? { clip: `${side}.shank`, pts: segment(l.knee, l.ankle, 0.38, 2, 8, 1.7) } : null;
+      case 'adductors': return l ? { clip: `${side}.thigh`, pts: segment(l.hip, l.knee, 0.42, -0.4, 8.5, 2.2) } : null;
       case 'glutes': return { clip: 'trunk', pts: trunkAt(-0.4, -5.2, 5.5, 3.6) };
       case 'abs': return { clip: 'trunk', pts: trunkAt(11, 4.6, 8, 2.4) };
       case 'obliques': return { clip: 'trunk', pts: trunkAt(11, 0.5, 6.5, 3.2) };
       case 'back': return { clip: 'trunk', pts: trunkAt(19.5, -4.6, 7.5, 2.6) };
+      case 'chest': return { clip: 'trunk', pts: trunkAt(21.5, 5.2, 5.5, 2.4) };
       case 'diaphragm': return { clip: 'trunk', pts: trunkAt(14.5, 3.2, 5.5, 3.4) };
       case 'biceps': return has('free.upper') ? { clip: 'free.upper', pts: segment(k.arms.free.shoulder, k.arms.free.elbow, 0.55, 1.6, 6.5, 1.9, -1) } : null;
       case 'triceps': return has('free.upper') ? { clip: 'free.upper', pts: segment(k.arms.free.shoulder, k.arms.free.elbow, 0.55, -1.6, 6.5, 1.9, -1) } : null;
@@ -644,7 +646,8 @@ export type Prop =
   | { kind: 'box'; x: number; h: number; depth: number; face: 1 | -1 }
   | { kind: 'stairs'; x: number; n: number; rail?: boolean }
   | { kind: 'jamb'; x: number }
-  | { kind: 'door'; x: number; anchor: number }
+  /** Une porte vue par la tranche, l'accroche à la hauteur `anchor` ; `face` : le côté où l'on se tient (−1 par défaut, à sa gauche). */
+  | { kind: 'door'; x: number; anchor: number; face?: 1 | -1 }
   | { kind: 'mat'; from: number; to: number }
   | { kind: 'towel'; x: number; w: number }
   | { kind: 'bench'; from: number; to: number; h: number }
@@ -721,7 +724,13 @@ export interface Guide { from: Ref; to: Ref }
  */
 export interface Motion { joint?: string; from?: Ref; to?: Ref; bend?: number; label?: string }
 /** Un élastique — long (accroché à une porte, sous un pied), mini-bande —, ou une sangle. */
-export interface Band { from: Ref; to: Ref; kind: 'long' | 'mini' | 'strap' }
+export interface Band {
+  from: Ref;
+  to: Ref;
+  kind: 'long' | 'mini' | 'strap';
+  /** L'élastique passe derrière le corps (dans le dos, sur le côté) : il se dessine avant lui. */
+  behind?: boolean;
+}
 /** Un appui à vérifier : le point, ou le bas d'une partie, à la hauteur dite. */
 export interface Contact { ref?: string; part?: string; y: number; tol?: number }
 
@@ -755,7 +764,8 @@ export interface FigureSpec {
  * (en `x`), la sangle passe dessous et son crochet pend de notre côté. C'est là
  * que s'accroche l'élastique.
  */
-export const doorHook = (doorX: number, anchor: number): Pt => [doorX - 3.4, anchor];
+export const doorHook = (doorX: number, anchor: number, face: 1 | -1 = -1): Pt =>
+  face === -1 ? [doorX - 3.4, anchor] : [doorX + 2.2 + 3.4, anchor];
 
 /** Un point nommé, lu sur un squelette. */
 export function resolve(ref: Ref, k: Skeleton): Pt {
