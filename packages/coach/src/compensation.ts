@@ -881,7 +881,8 @@ export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSide
     [
       blockWarmUp(model),
       ex('split-squat-maison', PART.legs, {
-        label: 'Fente bulgare lestée', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 90, reserve: d.reserve,
+        label: d.pack ? 'Fente bulgare lestée' : 'Fente bulgare', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 90,
+        reserve: d.reserve,
         setS: 55, tempo: '3 s pour descendre, 1 s en bas, 1 s pour monter',
         notes: d.pack ? withPack(d) : 'Sans sac aujourd\'hui : les tests d\'hier pèsent encore.',
       }),

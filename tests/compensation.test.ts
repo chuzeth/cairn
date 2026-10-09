@@ -218,6 +218,14 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     }
   });
 
+  it('ne dit « lesté » que d’un exercice qui se fait avec le sac', () => {
+    for (const s of block) {
+      for (const b of s.blocks.filter((x) => /lesté/.test(x.label))) {
+        expect(b.notes ?? '', `${s.title} — ${b.label}`).toMatch(/[Ll]e sac à dos de \d/);
+      }
+    }
+  });
+
   it('se concentre sur la force : plus de marche longue, cinq séances de force par semaine', () => {
     for (const s of block) {
       for (const b of s.blocks.filter((x) => x.exercise === 'marche' || x.exercise === 'marche-cote')) {
