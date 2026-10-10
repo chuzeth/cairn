@@ -205,10 +205,20 @@ export function partSummary(part: Part): string {
   return `${n} exercice${n > 1 ? 's' : ''} · ${partDuration(part)}`;
 }
 
-/** Ce que le sommaire dit d'une étape : « 4 × 8 par jambe, +1 à gauche ». */
+/**
+ * Ce que le sommaire dit d'une étape : « 4 × 8 par jambe, +1 à gauche ». Sur un
+ * téléphone, la ligne ne se coupe qu'après la virgule : jamais « +1 à » d'un côté
+ * et « gauche » de l'autre.
+ */
 export function stepRx(step: Step): string {
   if (step.measure) return `${step.main}${step.measure.perSide ? ', par jambe' : ''}`;
-  return step.block.sides ? `${step.main} ${perSide(step.block)}` : step.main;
+  const keep = (text: string) => text.replace(/ /g, '\u00a0');
+  const b = step.block;
+  if (!b.sides) return keep(step.main);
+  return [`${step.main} par ${b.sides}`, b.extra ? `+${b.extra.sets} à ${b.extra.side}` : '']
+    .filter(Boolean)
+    .map(keep)
+    .join(', ');
 }
 
 /** Ce que la case d'une série dit : « jambe gauche puis droite » pour un exercice d'une jambe. */

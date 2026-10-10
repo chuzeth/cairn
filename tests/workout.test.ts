@@ -59,9 +59,9 @@ describe('La séance à suivre', () => {
     expect([rdl.main, rdl.mainNote, rdl.base, rdl.sets]).toEqual(['4 × 8', 'par jambe, +1 à gauche', 4, 5]);
     expect(setLabel(rdl, 0)).toBe('Série 1 sur 4 · gauche, puis droite');
     expect(setLabel(rdl, 4)).toBe('Série en plus, jambe gauche seule');
-    // Le sommaire le dit aussi : c'est là que se prépare la séance.
-    expect(stepRx(rdl)).toBe('4 × 8 par jambe, +1 à gauche');
-    expect(stepRx(find(stepsOf(workoutOf(day(4))), 'Soulevé de terre sur une jambe, lesté'))).toBe('4 × 8 par jambe');
+    // Le sommaire le dit aussi, et sur un téléphone la ligne ne se coupe qu'après la virgule.
+    expect(stepRx(rdl)).toBe('4\u00a0×\u00a08\u00a0par\u00a0jambe, +1\u00a0à\u00a0gauche');
+    expect(stepRx(find(stepsOf(workoutOf(day(4))), 'Soulevé de terre sur une jambe, lesté'))).toBe('4\u00a0×\u00a08\u00a0par\u00a0jambe');
     const equilibre = find(stepsOf(workoutOf(day(5, weak))), 'Équilibre yeux fermés');
     expect([equilibre.main, equilibre.mainNote, equilibre.sets]).toEqual(['45 s', 'par jambe, +2 à gauche', 3]);
   });
