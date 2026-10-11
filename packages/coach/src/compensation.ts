@@ -715,6 +715,7 @@ const PART = {
   coolDown: 'Retour au calme',
   climbs: 'Endurance des montées',
   mobility: 'Souplesse',
+  moves: 'Mobilité',
   cast: 'Bras plâtré et respiration',
 } as const;
 
@@ -1098,8 +1099,43 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
     ]);
 }
 
-/** La récupération du dimanche : la semaine s'assimile, la souplesse se gagne. */
-export function blockRecup(model: PhysiologyModel, w: WeakSides): SessionTemplate {
+/**
+ * La récupération du dimanche : la semaine s'assimile, la souplesse se gagne.
+ * `walk` à faux : pas de marche, les hanches et les chevilles en mouvement à la place.
+ */
+export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true): SessionTemplate {
+  const ankleBalance = [
+    ankle(w, PART.ankleBalance),
+    balance(w, PART.ankleBalance),
+    ex('pied-court', PART.ankleBalance, {
+      label: 'Pied court', sets: 1, reps: 10, sides: 'jambe', pulse: { workS: 5, restS: 3 }, restS: 0, effort: 'Lent',
+    }),
+  ];
+  if (!walk) {
+    // Sans charge et sans essoufflement : de l'amplitude, du sang dans les muscles qui ont travaillé.
+    return template(model, 'bloc_recup_mobilite', 'cross_training', 'Récupération',
+      'La semaine s\'assimile : c\'est maintenant que le muscle se construit. Sans marche : les hanches et les ' +
+        'chevilles en mouvement, sans charge, l\'équilibre du côté faible, puis la souplesse.',
+      [
+        {
+          ...ex('balancier-jambe', PART.moves, {
+            label: 'Balancier de jambe', sets: 2, reps: 15, sides: 'jambe', restS: 0, setS: 35,
+            tempo: '1 s pour aller, 1 s pour revenir', effort: 'Ample, sans forcer',
+            notes: 'Une série d\'avant en arrière, une sur le côté.',
+          }),
+          zone: 'Z1',
+        },
+        {
+          ...ex('squat-profond', PART.moves, {
+            label: 'Squat profond, tenu', sets: 5, holdS: 45, restS: 15, effort: 'Relâché, les talons au sol',
+          }),
+          zone: 'Z1',
+        },
+        ...ankleBalance,
+        { ...souplesse(900), part: PART.mobility },
+        ...armCare(false),
+      ]);
+  }
   return template(model, 'bloc_recup', 'cross_training', 'Récupération',
     'La semaine s\'assimile : c\'est maintenant que le muscle se construit. La cheville et l\'équilibre du côté ' +
       'faible, la souplesse, une marche facile.',
@@ -1108,11 +1144,7 @@ export function blockRecup(model: PhysiologyModel, w: WeakSides): SessionTemplat
         exercise: 'marche', part: PART.walk, notes: 'Quais, parc de la Tête d\'Or : tu dois pouvoir parler tout du long.',
       }),
       { ...souplesse(900), part: PART.mobility },
-      ankle(w, PART.ankleBalance),
-      balance(w, PART.ankleBalance),
-      ex('pied-court', PART.ankleBalance, {
-        label: 'Pied court', sets: 1, reps: 10, sides: 'jambe', pulse: { workS: 5, restS: 3 }, restS: 0, effort: 'Lent',
-      }),
+      ...ankleBalance,
       ...armCare(false),
     ]);
 }
@@ -1127,7 +1159,8 @@ export function blockDay(model: PhysiologyModel, index: number, weak: WeakSides 
   if (index === 0) return blockTests(model, 'start');
   if (index === BLOCK_DAYS - 1) return blockTests(model, 'end');
   if (index === 1) return blockForceA(model, 0, weak);
-  if (index === 2) return blockRecup(model, weak);
+  // Le dimanche 11/10, Pierre : « remplace la marche par quelque chose, toujours dans l'idée récup ».
+  if (index === 2) return blockRecup(model, weak, false);
   const week = blockWeekOf(index);
   const dow = (index + 4) % 7;
   return [

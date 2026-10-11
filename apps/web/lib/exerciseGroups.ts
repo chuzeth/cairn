@@ -29,7 +29,7 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
     lead: 'Les fessiers et les ischio-jambiers, le moteur des montées ; les adducteurs et le moyen fessier, qui tiennent le bassin.',
     keys: [
       'souleve-une-jambe', 'hip-thrust', 'leg-curl-serviette', 'pont-une-jambe', 'pas-chasses', 'copenhague',
-      'adducteurs-coussin', 'montee-genou',
+      'adducteurs-coussin', 'montee-genou', 'balancier-jambe',
     ],
   },
   {
@@ -37,7 +37,7 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
     lead: 'Le tendon d’Achille et le pied, qui encaissent chaque foulée : ce qu’un arrêt de course déconditionne en premier.',
     keys: [
       'mollets-charges', 'soleaire-assis', 'mollets-iso', 'mollets-excentriques', 'mollets-sol', 'releves-pointe',
-      'cheville-mobilite', 'pied-court', 'equilibre',
+      'cheville-mobilite', 'squat-profond', 'pied-court', 'equilibre',
     ],
   },
   {

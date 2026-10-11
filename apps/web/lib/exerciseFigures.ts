@@ -979,6 +979,78 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  // La récupération du 11/10 : les hanches et les chevilles en mouvement, sans charge.
+  'balancier-jambe': {
+    panels: [
+      {
+        label: 'D’avant en arrière : 1 s pour aller, 1 s pour revenir',
+        ghostLabel: 'La jambe loin derrière',
+        props: [{ kind: 'floor' }, { kind: 'backdrop', from: -34, to: 40, top: 100 }],
+        ghost: {
+          view: 'side', hip: [0, 52.97], lean: 3,
+          near: { thigh: -28, shank: -38, sole: -38 }, far: { ankle: [0, A] },
+          free: { elbow: [3, 68], hand: [8, 75], fingers: 180 },
+        },
+        pose: {
+          view: 'side', hip: [0, 52.97], lean: -4,
+          near: { thigh: 68, shank: 60, sole: 60 }, far: { ankle: [0, A] },
+          free: { elbow: [3, 68], hand: [8, 75], fingers: 180 },
+        },
+        motions: [{ joint: 'near.ankle', bend: -14, label: '1 s' }],
+        notes: [{ text: 'le buste\nreste droit', at: 'head', dx: -16, dy: 2 }],
+        muscles: [{ muscle: 'hamstrings' }],
+        contacts: [{ ref: 'far.heel', y: 0 }, { ref: 'far.ball', y: 0 }],
+        ghostContacts: [{ ref: 'far.heel', y: 0 }, { ref: 'far.ball', y: 0 }],
+      },
+      {
+        label: 'Sur le côté, face au mur : en travers, puis vers l’extérieur',
+        ghostLabel: 'La jambe en travers, devant l’autre',
+        props: [{ kind: 'floor' }, { kind: 'backdrop', from: -36, to: 36, top: 100 }],
+        ghost: {
+          view: 'front', pelvis: [0, 52.6], back: true,
+          left: { ankle: [-5, A] }, right: { ankle: [-13, 11] },
+          free: { side: 'left', elbow: [-16, 68], hand: [-13, 79] },
+        },
+        pose: {
+          view: 'front', pelvis: [0, 52.6], back: true,
+          left: { ankle: [-5, A] }, right: { ankle: [24, 11] },
+          free: { side: 'left', elbow: [-16, 68], hand: [-13, 79] },
+        },
+        motions: [{ joint: 'right.ankle', bend: -8, label: '1 s' }],
+        notes: [{ text: 'le bassin\nne tourne pas', at: 'pelvis', dx: -24, dy: 2 }],
+        muscles: [{ muscle: 'gluteMed', side: 'left' }],
+        contacts: [{ ref: 'left.ankle', y: A }],
+      },
+    ],
+  },
+
+  'squat-profond': {
+    panels: [
+      {
+        label: 'Tout en bas, les talons au sol : 45 s',
+        ghostLabel: 'Debout, la main à l’encadrement',
+        props: [{ kind: 'floor' }, { kind: 'jamb', x: 30 }],
+        ghost: {
+          view: 'side', hip: [-1, 52.4], lean: 2,
+          near: { ankle: [0, A] }, far: { ankle: [-1, A] },
+          free: { hand: [28.5, 70], fingers: 180 },
+        },
+        pose: {
+          view: 'side', hip: [-7.9, 14.9], lean: 28,
+          near: { ankle: [0, A] }, far: { ankle: [-1, A] },
+          free: { hand: [28.5, 37], fingers: 180 },
+        },
+        motions: [{ joint: 'hip', bend: 6, label: '3 s' }],
+        notes: [{ text: 'talons au sol', at: 'near.heel', dx: -4, dy: -9 }],
+        muscles: [{ muscle: 'soleus' }],
+        contacts: [
+          { ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }, { ref: 'far.heel', y: 0 }, { ref: 'far.ball', y: 0 },
+        ],
+        ghostContacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }],
+      },
+    ],
+  },
+
   'port-valise': {
     panels: [
       {

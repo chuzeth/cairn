@@ -226,6 +226,19 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
     }
   });
 
+  it('récupère le dimanche 11/10 sans marcher : les hanches et les chevilles en mouvement, sans charge', () => {
+    // « Pour la séance du jour, remplace la marche par quelque chose, toujours dans l'idée récup. »
+    const dimanche = block[2]!;
+    expect(dimanche.blocks.some((b) => b.exercise === 'marche')).toBe(false);
+    expect(dimanche.intent).not.toMatch(/marche facile/);
+    const moves = dimanche.blocks.filter((b) => b.part === 'Mobilité');
+    expect(moves.map((b) => b.exercise)).toEqual(['balancier-jambe', 'squat-profond']);
+    for (const b of moves) expect([b.zone, b.reserve], b.label).toEqual(['Z1', undefined]);
+    // L'équilibre et la cheville du côté faible restent ; les dimanches suivants gardent leur marche.
+    expect(dimanche.blocks.find((b) => b.exercise === 'equilibre')!.extra).toEqual({ side: 'gauche', sets: 2 });
+    expect(block[9]!.blocks.some((b) => b.exercise === 'marche')).toBe(true);
+  });
+
   it('se concentre sur la force : plus de marche longue, cinq séances de force par semaine', () => {
     for (const s of block) {
       for (const b of s.blocks.filter((x) => x.exercise === 'marche' || x.exercise === 'marche-cote')) {
@@ -256,7 +269,7 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
       expect(parts.every(Boolean), s.title).toBe(true);
       const opened = parts.filter((p, i) => i === 0 || parts[i - 1] !== p);
       expect(new Set(opened).size, `${s.title} : ${opened.join(' / ')}`).toBe(opened.length);
-      expect(parts[0], s.title).toMatch(/^(Échauffement|Marche)$/);
+      expect(parts[0], s.title).toMatch(/^(Échauffement|Marche|Mobilité)$/);
       expect(parts.at(-1), s.title).toBe('Bras plâtré et respiration');
     }
   });

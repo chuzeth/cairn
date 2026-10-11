@@ -26,6 +26,8 @@ export const EXERCISE_KEYS = [
   'mollets-iso', 'pied-court', 'equilibre', 'imagerie', 'chaise-une-jambe',
   // Le 09/10 au soir : la force spécifique trail, chargée, réglée sur les tests.
   'squat-une-jambe', 'soleaire-assis', 'mollets-charges', 'port-valise', 'fente-arriere', 'cheville-mobilite',
+  // Le 11/10, la récupération sans marche : les hanches et les chevilles en mouvement.
+  'balancier-jambe', 'squat-profond',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
@@ -1300,6 +1302,76 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     feel: 'Un étirement au mollet et au tendon, jamais une douleur devant la cheville.',
     mistakes: ['Laisser le talon décoller.', 'Laisser le genou partir vers l\'intérieur.'],
     cast: 'La main valide au mur.',
+  },
+  'balancier-jambe': {
+    key: 'balancier-jambe',
+    name: 'Balancier de jambe',
+    what: 'Debout sur une jambe, la main valide au mur, tu balances l\'autre jambe d\'avant en arrière, puis sur le côté, de plus en plus ample.',
+    cues: [
+      'Debout sur une jambe, la main valide au mur, le buste droit.',
+      'D\'avant en arrière : la jambe libre balance loin devant, loin derrière, de plus en plus haut.',
+      'Puis face au mur : en travers devant toi, et vers l\'extérieur.',
+    ],
+    where: ['maison', 'salle', 'dehors'],
+    equipment: 'Un mur',
+    why:
+      'La hanche s\'ouvre en mouvement, sans charge : d\'avant en arrière, l\'amplitude de la foulée et des grands ' +
+      'pas en montée ; sur le côté, celle des appuis en descente. Un jour de récupération, elle remet du sang dans ' +
+      'les muscles qui ont travaillé, sans les fatiguer.',
+    setup: [
+      'D\'avant en arrière : de profil au mur, à un bras de distance, la main valide dessus.',
+      'Sur le côté : face au mur, la main valide dessus à hauteur d\'épaule.',
+    ],
+    steps: [
+      'D\'avant en arrière : balance la jambe libre loin devant, puis loin derrière, 15 fois, un peu plus haut à chaque fois.',
+      'Sur le côté : balance-la en travers devant la jambe d\'appui, puis vers l\'extérieur, 15 fois.',
+      'Le buste reste droit, le pied d\'appui à plat ; puis l\'autre jambe.',
+    ],
+    breath: 'Respire tranquillement, par le nez.',
+    feel: 'La hanche qui se délie, l\'arrière puis l\'avant de la cuisse qui s\'allongent ; jamais une douleur.',
+    mistakes: [
+      'Lancer la jambe plus loin que ce qui vient seul.',
+      'Pencher le buste pour monter plus haut.',
+      'Décoller le talon d\'appui.',
+    ],
+    easier: 'Moins ample, plus lent.',
+    cast: 'Le bras plâtré reste en écharpe ; la main valide au mur.',
+  },
+  'squat-profond': {
+    key: 'squat-profond',
+    name: 'Squat profond, tenu',
+    what: 'Tu descends tout en bas d\'un squat, les talons au sol, et tu y restes, le buste droit, la main valide à l\'encadrement d\'une porte.',
+    cues: [
+      'Face à l\'encadrement d\'une porte, la main valide dessus, les pieds un peu plus écartés que les hanches.',
+      'Descends tout en bas en 3 s, les talons au sol, les genoux dans l\'axe des pieds.',
+      'Restes-y, le buste droit, en balançant doucement d\'un pied sur l\'autre.',
+    ],
+    where: ['maison', 'salle'],
+    equipment: 'L\'encadrement d\'une porte ; un livre si les talons décollent',
+    why:
+      'Tout en bas d\'un squat, la cheville, la hanche et l\'aine s\'ouvrent ensemble, sous le seul poids du corps. ' +
+      'Au test, une de tes chevilles plie moins que l\'autre : tenir cette position talons au sol lui rend de ' +
+      'l\'amplitude, sans rien fatiguer.',
+    setup: [
+      'Face à l\'encadrement, à une demi-longueur de bras, la main valide dessus.',
+      'Les pieds un peu plus écartés que les hanches, les pointes légèrement ouvertes.',
+    ],
+    steps: [
+      'Descends lentement, les fesses vers les talons, la main à l\'encadrement.',
+      'Tout en bas, garde les talons au sol et le buste droit : la main équilibre, elle ne tire pas.',
+      'Balance doucement le poids d\'un pied sur l\'autre, en respirant.',
+      'Remonte en poussant dans les talons, la main toujours à l\'encadrement.',
+    ],
+    breath: 'Expire longuement en bas : la position se relâche à chaque expiration.',
+    feel: 'L\'aine, les mollets et le devant de la cheville qui s\'ouvrent ; jamais une douleur dans le genou.',
+    mistakes: [
+      'Laisser les talons décoller.',
+      'Laisser les genoux rentrer vers l\'intérieur.',
+      'S\'arrondir pour descendre plus bas.',
+    ],
+    easier: 'Un livre sous les talons, ou un peu moins bas.',
+    harder: 'Sans le livre ; puis lâche l\'encadrement quelques secondes.',
+    cast: 'La main valide à l\'encadrement, le bras plâtré en écharpe. Si l\'équilibre part en arrière, assieds-toi sur les fesses : c\'est tout près.',
   },
   imagerie: {
     key: 'imagerie',

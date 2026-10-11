@@ -173,6 +173,29 @@ describe('Les consignes, mesurées sur le dessin', () => {
     expect(j['right.knee']![1] - 3.1).toBeCloseTo(FURNITURE.stool.seat, 0);
   });
 
+  it('squat profond : tout en bas, les talons au sol, le tibia penché comme une cheville qui plie', () => {
+    const j = joints(figure('squat-profond').pose);
+    expect(j['near.knee']![1] - j.hip![1]).toBeGreaterThan(5);
+    expect(j['near.heel']![1]).toBeCloseTo(0, 0);
+    // Talons au sol tout en bas : la cheville plie de 35 à 40°, celle du test du genou au mur.
+    const shin = angleAt([j['near.ankle']![0], j['near.ankle']![1] + 10], j['near.ankle']!, j['near.knee']!);
+    expect(shin).toBeGreaterThan(33);
+    expect(shin).toBeLessThan(42);
+  });
+
+  it('balancier : la jambe d’appui tendue, la jambe libre loin devant puis loin derrière', () => {
+    const p = figure('balancier-jambe');
+    for (const pose of [p.pose, p.ghost!]) {
+      const j = joints(pose);
+      expect(angleAt(j['far.hip']!, j['far.knee']!, j['far.ankle']!)).toBeGreaterThan(175);
+    }
+    const devant = joints(p.pose);
+    const derriere = joints(p.ghost!);
+    const down = (j: ReturnType<typeof joints>) => [j.hip![0], j.hip![1] - 10] as const;
+    expect(angleAt(down(devant), devant.hip!, devant['near.knee']!)).toBeGreaterThan(60);
+    expect(angleAt(down(derriere), derriere.hip!, derriere['near.knee']!)).toBeGreaterThan(20);
+  });
+
   it('test de la cheville : le genou au mur, le talon au sol, le gros orteil à 10 cm du mur', () => {
     const j = joints(figure('test-cheville').pose);
     expect(30 - j['near.toe']![0]).toBeCloseTo(10 / 1.8, 0);
