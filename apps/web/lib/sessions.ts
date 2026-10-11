@@ -77,10 +77,12 @@ export function planName(session: Pick<SessionRow, 'type' | 'title'>): string {
  * Les séries d'un exercice — des répétitions comptées, ou les maintiens d'une
  * séance de force — ne sont pas une structure : une séance de plusieurs
  * exercices se dit par son nom. Le 06/10, la Force A s'annonçait « 3 tours de
- * 45″ » : les trois séries de presse.
+ * 45″ » : les trois séries de presse ; le 11/10, la récupération « 5 × 45″ » :
+ * les maintiens du squat profond. Hors d'une séance de force, seul ce qui se
+ * règle au cœur — le fractionné dans les escaliers — fait une structure.
  */
 const isSets = (session: SessionRow, b: SessionRow['blocks'][number]) =>
-  b.reps != null || (session.type === 'strength' && b.exercise != null);
+  b.reps != null || (b.exercise != null && (session.type === 'strength' || !b.hrRange));
 
 /** Le fractionné qui ne se court pas se dit par son intensité, comme celui qui se court. */
 const ZONE_SHAPE: Record<string, string> = { Z3: 'tempo', Z4: 'threshold', Z5: 'vo2max' };

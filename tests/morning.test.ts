@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compensationDay } from '@cairn/coach';
+import { blockDay, compensationDay } from '@cairn/coach';
 import { blockTargets, planName, sessionHeadline } from '../apps/web/lib/sessions';
 import type { SessionRow } from '../apps/web/lib/api';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
@@ -37,6 +37,23 @@ describe('Le titre du matin', () => {
       ],
     });
     expect(sessionHeadline(allure)).toBe('3 × 6′ à l\'allure course');
+  });
+});
+
+describe('Le bloc de force, du 09/10 au 01/11', () => {
+  const day = (i: number) => {
+    const t = blockDay(PIERRE_MODEL, i);
+    return row({ type: t.type, title: t.title, blocks: t.blocks as SessionRow['blocks'] });
+  };
+
+  it('nomme une récupération par son nom, pas par les maintiens de ses exercices', () => {
+    // Le 11/10, l'écran du matin titrait « 5 × 45″ » : les cinq maintiens du squat profond.
+    expect(sessionHeadline(day(2))).toBe('Récupération');
+    expect(sessionHeadline(day(9))).toBe('Récupération');
+  });
+
+  it('garde la structure du fractionné dans les escaliers', () => {
+    expect(sessionHeadline(day(5))).toMatch(/^5 × 3′/);
   });
 });
 
