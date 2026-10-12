@@ -936,7 +936,7 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
         tempo: '1 s pour plier ou tendre, 3 s pour revenir',
         notes: 'Un tour : 12 flexions (accroche en bas de porte), 12 extensions (accroche en haut), 10 serrages de 5 s.',
       }),
-      ex('bras-elastique', PART.arm, {
+      ex('max-table', PART.arm, {
         label: 'Le maximum, sous la table', sets: 2, reps: 3, pulse: { workS: 5, restS: 10 }, restS: 30,
         effort: 'De toutes tes forces',
         notes: 'Assis à une table, coude à angle droit : une série paume sous le plateau, pousse vers le haut ; une série paume dessus, pousse vers le bas.',

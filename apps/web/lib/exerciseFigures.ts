@@ -1036,6 +1036,35 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  'max-table': {
+    panels: [
+      {
+        label: 'Paume sous le plateau : pousse vers le haut, 5 s',
+        props: [{ kind: 'floor' }, { kind: 'chair', x: -2, face: 1 }, { kind: 'shape', pts: [[2, 39.2], [42, 39.2], [42, 41.4], [2, 41.4]], closed: true, tone: 'pad' }, { kind: 'shape', pts: [[39, 39.2], [39, 0]], tone: 'metal' }],
+        pose: {
+          view: 'side', hip: [-11, 31.6], lean: 2,
+          near: { ankle: [12, A] }, far: { ankle: [10, A] },
+          free: { elbow: [-8, 41.9], hand: [5, 37.6], fingers: 90 }, cast: 'across',
+        },
+        notes: [{ text: 'pousse vers le haut,\nrien ne bouge', at: 'free.tip', dx: 10, dy: -12 }],
+        muscles: [{ muscle: 'biceps' }],
+        contacts: [{ ref: 'near.heel', y: 0 }, { part: 'trunk', y: FURNITURE.chair.seat, tol: 1.2 }],
+      },
+      {
+        label: 'Paume sur le plateau : pousse vers le bas, 5 s',
+        props: [{ kind: 'floor' }, { kind: 'chair', x: -2, face: 1 }, { kind: 'shape', pts: [[2, 39.2], [42, 39.2], [42, 41.4], [2, 41.4]], closed: true, tone: 'pad' }, { kind: 'shape', pts: [[39, 39.2], [39, 0]], tone: 'metal' }],
+        pose: {
+          view: 'side', hip: [-11, 31.6], lean: 2,
+          near: { ankle: [12, A] }, far: { ankle: [10, A] },
+          free: { elbow: [-7, 43.6], hand: [6, 43.4], fingers: 90 }, cast: 'across',
+        },
+        notes: [{ text: 'pousse vers le bas', at: 'free.tip', dx: 10, dy: 10 }],
+        muscles: [{ muscle: 'triceps' }],
+        contacts: [{ ref: 'near.heel', y: 0 }, { part: 'trunk', y: FURNITURE.chair.seat, tol: 1.2 }],
+      },
+    ],
+  },
+
   // La récupération du 11/10 : les hanches et les chevilles en mouvement, sans charge.
   'balancier-jambe': {
     panels: [

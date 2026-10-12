@@ -29,7 +29,7 @@ export const EXERCISE_KEYS = [
   // Le 11/10, la récupération sans marche : les hanches et les chevilles en mouvement.
   'balancier-jambe', 'squat-profond',
   // Le 12/10, le bras valide sans l'accroche de porte : le plan de travail, l'élastique sous le pied.
-  'pompe-inclinee', 'tirage-sous-pied',
+  'pompe-inclinee', 'tirage-sous-pied', 'max-table',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
@@ -832,7 +832,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     cues: [
       'Plier : l\'accroche en bas de la porte, le coude collé au flanc.',
       'Tendre : l\'accroche en haut, pousse la main vers la cuisse.',
-      'Serrer : l\'anneau à fond 5 s, relâche 5 s. Puis le maximum sous la table.',
+      'Serrer : l\'anneau à fond 5 s, relâche 5 s.',
     ],
     where: ['maison'],
     equipment: 'Le kit d\'élastiques (un élastique, une poignée, l\'accroche de porte), l\'anneau de serrage',
@@ -851,7 +851,6 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Tendre (le triceps) : le coude collé au flanc, plié à angle droit ; pousse la main vers la cuisse en 1 seconde, remonte en 3. C\'est le triceps, l\'arrière du bras.',
       'Serrer : serre l\'anneau à fond 5 secondes, relâche 5 secondes, 10 fois.',
       'Enchaîne les trois, deux tours ; change l\'accroche de hauteur entre les deux premiers.',
-      'Le maximum, sans élastique : assis à une table, la paume sous le plateau, coude à angle droit ; pousse vers le haut de toutes tes forces 5 secondes, 3 fois. Puis la paume sur le plateau, pousse vers le bas, 3 fois.',
     ],
     breath: 'Souffle à l\'effort, jamais en apnée.',
     feel: 'Le devant du bras quand tu plies, l\'arrière quand tu tends, l\'avant-bras quand tu serres.',
@@ -1441,6 +1440,31 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     harder: 'Un élastique plus dur (6 ou 7 kg), ou deux élastiques à la poignée.',
     cast: 'Le bras plâtré reste en écharpe, contre toi ; le dos droit fait le travail que l\'autre main ferait, posée sur un genou.',
   },
+  'max-table': {
+    key: 'max-table',
+    name: 'Le maximum, sous la table',
+    what: 'Assis à une table, le coude plié à angle droit : la paume sous le plateau, tu pousses vers le haut de toutes tes forces ; puis la paume dessus, tu pousses vers le bas. Rien ne bouge.',
+    cues: [
+      'Assis face à une table lourde, le coude à angle droit, collé au flanc.',
+      'Paume sous le plateau : pousse vers le haut à fond 5 s, relâche 10 s.',
+      'Puis paume sur le plateau : pousse vers le bas, de même.',
+    ],
+    where: ['maison'],
+    equipment: 'Une table lourde',
+    why:
+      'Le maximum de force du bras valide, sans matériel : les muscles qui plient le coude, puis ceux qui le ' +
+      'tendent. C\'est l\'intensité qui passe d\'un bras à l\'autre : le bras entraîné entretient le bras plâtré ' +
+      '(Magnus 2013).',
+    steps: [
+      'Assis face à la table, le coude collé au flanc, plié à angle droit.',
+      'Paume vers le haut, sous le plateau : pousse vers le haut de toutes tes forces 5 secondes, relâche 10 secondes ; 3 fois.',
+      'Paume sur le plateau : pousse vers le bas de toutes tes forces 5 secondes, relâche 10 secondes ; 3 fois.',
+    ],
+    breath: 'Souffle pendant la poussée, jamais en apnée.',
+    feel: 'Le devant du bras quand tu pousses vers le haut, l\'arrière quand tu pousses vers le bas.',
+    mistakes: ['Retenir son souffle.', 'Soulever la table : pousse moins fort si elle bouge.'],
+    cast: 'Le bras plâtré reste en écharpe, posé contre toi.',
+  },
   imagerie: {
     key: 'imagerie',
     name: 'Imagerie du bras plâtré',
@@ -1894,7 +1918,7 @@ export const DOOR_KIT = {
     'cylindre se coince derrière une porte fermée ; l\'élastique s\'accroche à la boucle, de ton côté. Deux ' +
     'minutes, d\'une seule main.',
   steps: [
-    'Choisis une porte pleine qui s\'ouvre de l\'autre côté : en tirant vers toi, tu la plaques contre son cadre. Une porte qui s\'ouvre vers toi ne tient que par sa serrure — pas celle-là. Ferme-la à clé si quelqu\'un peut l\'ouvrir.',
+    'Choisis une porte pleine qui s\'ouvre de l\'autre côté : en tirant vers toi, tu la plaques contre son cadre. Une porte qui s\'ouvre vers toi ne tient que par sa serrure — pas celle\u2011là. Ferme-la à clé si quelqu\'un peut l\'ouvrir.',
     'Ouvre-la et passe le cylindre de l\'autre côté, côté charnières, à la hauteur voulue : la sangle passe dans la fente entre la porte et le cadre, la boucle reste de ton côté.',
     'Referme la porte, puis tire d\'un coup sec sur la boucle : le cylindre doit bloquer, rien ne doit glisser.',
     'Relie un élastique : un bout à la boucle de la sangle, l\'autre à la poignée — les mousquetons s\'ouvrent d\'une pression du pouce. D\'une main : pose la poignée au sol et bloque-la sous le pied. Deux élastiques côte à côte, c\'est plus dur.',
