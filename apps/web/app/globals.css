@@ -1313,6 +1313,8 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .w-main-big { font-size: 60px; }
 .w-main-note { font-stretch: 100%; font-size: 15px; font-weight: 500; color: var(--text-dim); }
 .w-main-big .w-main-note { font-size: 18px; }
+.w-what { margin: 0 0 14px; font-size: 16.5px; line-height: 1.45; color: var(--text); }
+.w-what-label { display: block; margin-bottom: 3px; font-size: 12px; font-weight: 640; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
 .w-details { margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 15px; line-height: 1.4; }
 .w-details div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
 .w-details dt { color: var(--text-faint); }
@@ -1364,7 +1366,6 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .w-more h4 { margin: 14px 0 4px; font-size: 13px; font-weight: 640; color: var(--text); }
 .w-more p, .w-more li { font-size: 14px; line-height: 1.5; color: var(--text-dim); }
 .w-more ul, .w-more ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
-.w-more-what { color: var(--text) !important; }
 .w-cast { padding: 8px 12px; border-left: 3px solid var(--ochre); background: var(--bg-inset); border-radius: 0 6px 6px 0; }
 .w-why h2 { margin: 0 0 6px; font-size: 15px; font-weight: 640; }
 .w-why p { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--text-dim); }

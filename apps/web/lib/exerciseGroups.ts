@@ -48,7 +48,7 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   {
     title: 'Le bras valide',
     lead: 'Le kit d’élastiques à la porte, l’anneau, une table : le bras qui travaille entretient celui qui est plâtré.',
-    keys: ['tirage-elastique', 'pousse-elastique', 'bras-elastique'],
+    keys: ['tirage-elastique', 'pousse-elastique', 'bras-elastique', 'tirage-sous-pied', 'pompe-inclinee'],
   },
   {
     title: 'Marcher et monter',

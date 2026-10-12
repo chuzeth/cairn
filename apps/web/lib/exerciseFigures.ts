@@ -979,6 +979,63 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  // Le 12/10, le bras valide sans l'accroche de porte.
+  'pompe-inclinee': {
+    panels: [
+      {
+        label: 'La poitrine vers la main : 2 s pour descendre',
+        ghostLabel: 'Le bras tendu, le corps droit',
+        props: [{ kind: 'floor' }, { kind: 'box', x: 30, h: 50, depth: 20, face: -1 }],
+        ghost: {
+          view: 'side', hip: [-10.9, 49.3], lean: 36,
+          near: { ankle: ankleFromToe([-33, 0], -40), sole: -40 }, far: { ankle: ankleFromToe([-32, 0], -40), sole: -40 },
+          free: { hand: [30, 51.5], fingers: 90 }, cast: 'across',
+        },
+        pose: {
+          view: 'side', hip: [-2.2, 41.2], lean: 50,
+          near: { ankle: ankleFromToe([-33, 0], -40), sole: -40 }, far: { ankle: ankleFromToe([-32, 0], -40), sole: -40 },
+          free: { hand: [30, 51.5], fingers: 90 }, cast: 'across',
+        },
+        motions: [{ joint: 'shoulder', bend: 5, label: '2 s' }],
+        notes: [{ text: 'plan de\ntravail', at: [40, 50], dx: 0, dy: -18 }],
+        muscles: [{ muscle: 'chest' }, { muscle: 'triceps' }],
+        contacts: [{ ref: 'near.toe', y: 0 }],
+        ghostContacts: [{ ref: 'near.toe', y: 0 }],
+      },
+    ],
+  },
+
+  'tirage-sous-pied': {
+    panels: [
+      {
+        label: 'Le coude tiré le long des côtes, 1 s tenue',
+        ghostLabel: 'Le bras pendu, l’élastique déjà tendu',
+        props: [{ kind: 'floor' }],
+        hold: 'handle',
+        ghost: {
+          view: 'side', hip: [-5, 43], lean: 45,
+          near: { ankle: [12, A] }, far: { ankle: ankleFromToe([-20, 0], -45), sole: -45 },
+          free: { hand: [15.8, 31] }, cast: 'across',
+        },
+        pose: {
+          view: 'side', hip: [-5, 43], lean: 45,
+          near: { ankle: [12, A] }, far: { ankle: ankleFromToe([-20, 0], -45), sole: -45 },
+          free: { hand: [6, 46] }, cast: 'across',
+        },
+        bands: [{ from: [13, 0.4], to: 'free.wrist', kind: 'long' }],
+        ghostBands: [{ from: [13, 0.4], to: 'free.wrist', kind: 'long' }],
+        motions: [{ from: [15.8, 31], to: 'free.wrist', bend: -6, label: '1 s' }],
+        notes: [
+          { text: 'l’élastique en boucle\nsous le pied avant', at: [16, 0.4], dx: 12, dy: 8 },
+          { text: 'le dos droit', at: 'shoulder', dx: -14, dy: 12 },
+        ],
+        muscles: [{ muscle: 'back' }, { muscle: 'biceps' }],
+        contacts: [{ ref: 'near.heel', y: 0 }, { ref: 'near.ball', y: 0 }, { ref: 'far.toe', y: 0 }],
+        ghostContacts: [{ ref: 'near.heel', y: 0 }, { ref: 'far.toe', y: 0 }],
+      },
+    ],
+  },
+
   // La récupération du 11/10 : les hanches et les chevilles en mouvement, sans charge.
   'balancier-jambe': {
     panels: [

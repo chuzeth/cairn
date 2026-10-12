@@ -28,6 +28,8 @@ export const EXERCISE_KEYS = [
   'squat-une-jambe', 'soleaire-assis', 'mollets-charges', 'port-valise', 'fente-arriere', 'cheville-mobilite',
   // Le 11/10, la récupération sans marche : les hanches et les chevilles en mouvement.
   'balancier-jambe', 'squat-profond',
+  // Le 12/10, le bras valide sans l'accroche de porte : le plan de travail, l'élastique sous le pied.
+  'pompe-inclinee', 'tirage-sous-pied',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
@@ -270,7 +272,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'anti-rotation': {
     key: 'anti-rotation',
     name: 'Gainage anti-rotation à l\'élastique',
-    what: 'De profil à la porte, tu tends le bras devant toi en tenant l\'élastique : il tire ton buste vers la porte, et tu l\'empêches de tourner.',
+    what: 'De profil à la porte, la poignée de l\'élastique contre la poitrine : tu tends le bras droit devant toi ; l\'élastique tire ton buste vers la porte, et tu l\'empêches de tourner.',
     cues: [
       'De profil à la porte, la poignée contre la poitrine, l\'élastique déjà tendu.',
       'Tends le bras devant toi en 2 s, tiens 3 s, reviens en 2 s.',
@@ -470,7 +472,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'dead-bug': {
     key: 'dead-bug',
     name: 'Gainage sur le dos, jambes alternées (dead bug)',
-    what: 'Allongé sur le dos, hanches et genoux pliés en l\'air, tu descends un talon vers le sol en gardant le bas du dos plaqué.',
+    what: 'Allongé sur le dos, les jambes en l\'air pliées à angle droit : tu descends lentement un talon vers le sol sans que le bas du dos décolle, tu le remontes, puis l\'autre jambe.',
     cues: [
       'Sur le dos, les hanches et les genoux à angle droit.',
       'Plaque le bas du dos au sol : il ne décolle jamais.',
@@ -683,7 +685,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'echauffement-maison': {
     key: 'echauffement-maison',
     name: 'Échauffement à la maison',
-    what: 'Six minutes de mouvements faciles pour chauffer les jambes avant de forcer.',
+    what: 'Six minutes faciles pour chauffer les jambes : marcher sur place, s\'asseoir et se relever, des ponts, des montées sur la pointe, des fentes arrière.',
     cues: [
       '1 min de marche sur place, genoux hauts.',
       '10 assis-debout sans les mains, puis 10 ponts fessiers.',
@@ -717,7 +719,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'split-squat-maison': {
     key: 'split-squat-maison',
     name: 'Fente bulgare, pied arrière sur le step',
-    what: 'Une fente sur une seule jambe : le dessus du pied arrière posé sur le step, tu descends le genou arrière vers le sol en pliant la jambe avant, puis tu remontes.',
+    what: 'Le dessus du pied arrière posé sur le step derrière toi, le pied avant à un grand pas devant : tu descends le genou arrière vers le sol en pliant la jambe avant, puis tu remontes en poussant dans le talon avant.',
     cues: [
       'Le dessus du pied arrière sur le step, calé contre un mur.',
       'La main valide sur l\'encadrement de porte.',
@@ -757,7 +759,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'leg-curl-serviette': {
     key: 'leg-curl-serviette',
     name: 'Flexion des jambes, talons sur une serviette (leg curl)',
-    what: 'Allongé sur le dos, le bassin levé, tu fais glisser les talons loin de toi : l\'arrière des cuisses freine le mouvement.',
+    what: 'Allongé sur le dos, les talons sur une serviette et le bassin levé : tu laisses glisser les talons loin de toi en freinant avec l\'arrière des cuisses, jusqu\'aux jambes tendues.',
     cues: [
       'Sur le dos, les talons sur une serviette posée sur le parquet.',
       'Le bassin haut, fais glisser les talons loin de toi en 4 s.',
@@ -861,7 +863,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'descente-marche': {
     key: 'descente-marche',
     name: 'Descente lente du step',
-    what: 'Debout sur le step, tu plies lentement la jambe d\'appui jusqu\'à ce que le talon de l\'autre pied effleure le sol devant.',
+    what: 'Debout sur une jambe au bord du step, l\'autre jambe en l\'air devant : tu plies lentement la jambe d\'appui jusqu\'à ce que le talon libre effleure le sol, puis tu remontes.',
     cues: [
       'Debout sur le step, la main valide au mur ou à l\'encadrement.',
       'Plie la jambe d\'appui en 4 s : le talon libre effleure le sol devant.',
@@ -897,7 +899,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'souleve-une-jambe': {
     key: 'souleve-une-jambe',
     name: 'Bascule sur une jambe (soulevé de terre)',
-    what: 'Debout sur un pied, tu penches le buste en avant pendant que l\'autre jambe part en arrière, le dos droit, puis tu te redresses.',
+    what: 'Debout sur une jambe : tu penches le buste en avant pendant que l\'autre jambe part en arrière, d\'un seul bloc, jusqu\'à l\'horizontale, puis tu te redresses.',
     cues: [
       'Sur une jambe, la main valide sur l\'encadrement, le genou souple.',
       'Bascule le buste en 3 s, la jambe libre part en arrière : une seule ligne.',
@@ -965,7 +967,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'montee-genou': {
     key: 'montee-genou',
     name: 'Montée de genou sur le dos, contre la mini-bande',
-    what: 'Allongé sur le dos, les deux pieds reliés par une mini-bande, tu ramènes un genou vers la poitrine contre la bande.',
+    what: 'Allongé sur le dos, les pieds reliés par la mini-bande, les jambes tendues juste au-dessus du sol : tu ramènes un genou vers la poitrine en tirant contre la bande, puis tu le tends de nouveau.',
     cues: [
       'Sur le dos, la mini-bande autour des deux pieds.',
       'Le bas du dos plaqué, les jambes tendues à 20 cm du sol.',
@@ -1100,7 +1102,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'chaise-une-jambe': {
     key: 'chaise-une-jambe',
     name: 'Chaise sur une jambe',
-    what: 'La chaise contre le mur, mais un pied levé de quelques centimètres : une seule cuisse tient tout le poids.',
+    what: 'Assis contre le mur sur une chaise invisible, les cuisses à plat : tu lèves un pied de quelques centimètres, et l\'autre cuisse tient seule tout ton poids.',
     cues: [
       'Dos au mur, les cuisses parallèles au sol, comme pour la chaise.',
       'Lève un pied de 5 cm : la jambe d\'appui tient seule.',
@@ -1373,6 +1375,72 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     harder: 'Sans le livre ; puis lâche l\'encadrement quelques secondes.',
     cast: 'La main valide à l\'encadrement, le bras plâtré en écharpe. Si l\'équilibre part en arrière, assieds-toi sur les fesses : c\'est tout près.',
   },
+  'pompe-inclinee': {
+    key: 'pompe-inclinee',
+    name: 'Pompe inclinée, à une main',
+    what: 'Penché en avant, la main valide posée au bord du plan de travail et le corps droit comme une planche, tu descends la poitrine vers ta main en pliant le coude, puis tu repousses.',
+    cues: [
+      'La main valide à plat au bord du plan de travail ; recule les pieds et écarte-les.',
+      'Le corps droit des talons à la tête : descends la poitrine vers la main en 2 s.',
+      'Repousse en 1 s jusqu\'au bras tendu, sans tourner le buste.',
+    ],
+    where: ['maison'],
+    equipment: 'Un plan de travail, ou une table lourde qui ne bouge pas',
+    why:
+      'La poitrine, l\'avant de l\'épaule et le triceps du bras valide, sous le poids du corps — et le ventre qui ' +
+      'empêche le corps de tourner : un gainage en même temps. Rien à installer. Et le bras entraîné entretient ' +
+      'l\'autre.',
+    setup: [
+      'Face au plan de travail, la main valide à plat sur le bord, les doigts vers l\'avant, sous l\'épaule.',
+      'Recule les pieds jusqu\'à ce que le corps fasse une ligne penchée, et écarte-les plus que les hanches : c\'est ce qui t\'empêche de tourner.',
+    ],
+    steps: [
+      'Le ventre serré, plie le coude et descends la poitrine vers la main en 2 secondes, le coude près du corps.',
+      'La poitrine à un poing du bord, repousse en 1 seconde jusqu\'au bras tendu.',
+      'Le bassin ne s\'affaisse pas, le buste ne tourne pas.',
+    ],
+    breath: 'Inspire en descendant, souffle en poussant.',
+    feel: 'La poitrine, l\'avant de l\'épaule et l\'arrière du bras ; le ventre qui tient.',
+    mistakes: [
+      'Laisser le bassin s\'affaisser.',
+      'Tourner le buste vers le bras qui pousse.',
+      'Écarter le coude à angle droit du corps.',
+    ],
+    easier: 'La main contre un mur, ou les pieds plus près.',
+    harder: 'Une surface plus basse : une table, puis le dossier d\'un canapé ; ou 3 s pour descendre.',
+    cast: 'Le bras plâtré reste en écharpe, contre toi. Une surface sèche, une main sèche : si la main glisse, c\'est le plâtre qui tombe le premier.',
+  },
+  'tirage-sous-pied': {
+    key: 'tirage-sous-pied',
+    name: 'Tirage à un bras, élastique sous le pied',
+    what: 'Un grand pas en avant, le pied posé sur l\'élastique et le buste penché, tu tires la poignée vers ta hanche, comme un coup de rame, puis tu la laisses redescendre lentement.',
+    cues: [
+      'L\'élastique en boucle : ses deux bouts au crochet de la poignée, le pied avant au milieu.',
+      'Le buste penché à 45°, le dos droit, le bras pendu sous l\'épaule.',
+      'Tire le coude le long des côtes en 1 s, tiens 1 s, rends en 2 s.',
+    ],
+    where: ['maison', 'dehors'],
+    equipment: 'Le kit d\'élastiques : un élastique et une poignée — sans l\'accroche de porte',
+    why:
+      'Le dos et l\'arrière de l\'épaule du bras valide, comme le tirage à la porte, sans rien à installer : ton ' +
+      'pied fait l\'accroche. Et le bras entraîné entretient l\'autre.',
+    setup: [
+      'Passe le crochet de la poignée dans les deux boucles d\'un élastique de 5 kg : il fait une boucle.',
+      'Pose la boucle au sol, fais un grand pas en avant avec le pied du côté du bras valide, et pose-le au milieu.',
+      'Plie le genou avant, penche le buste à 45°, le dos droit : la main pend sous l\'épaule, l\'élastique déjà un peu tendu.',
+    ],
+    steps: [
+      'Tire le coude vers le haut et l\'arrière, le long des côtes, en 1 seconde, l\'omoplate serrée vers la colonne.',
+      'Tiens 1 seconde, la main contre la hanche.',
+      'Rends en 2 secondes, jusqu\'au bras tendu.',
+    ],
+    breath: 'Souffle en tirant.',
+    feel: 'Entre l\'omoplate et la colonne, et l\'arrière de l\'épaule.',
+    mistakes: ['Redresser le buste pour tirer.', 'Tourner les épaules.', 'Laisser l\'élastique repartir d\'un coup.'],
+    easier: 'Un élastique plus doux (4 kg).',
+    harder: 'Un élastique plus dur (6 ou 7 kg), ou deux élastiques à la poignée.',
+    cast: 'Le bras plâtré reste en écharpe, contre toi ; le dos droit fait le travail que l\'autre main ferait, posée sur un genou.',
+  },
   imagerie: {
     key: 'imagerie',
     name: 'Imagerie du bras plâtré',
@@ -1565,7 +1633,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'reverse-nordic': {
     key: 'reverse-nordic',
     name: 'Bascule arrière à genoux',
-    what: 'À genoux, le corps droit des genoux à la tête, tu te penches lentement en arrière, puis tu reviens : le devant des cuisses freine.',
+    what: 'À genoux, le corps droit des genoux à la tête comme une planche : tu te penches lentement en arrière, d\'un bloc, puis tu reviens droit. C\'est le devant des cuisses qui retient la chute.',
     cues: [
       'À genoux sur le tapis plié, le dessus des pieds au sol.',
       'Le corps droit des genoux à la tête, les fesses serrées.',
@@ -1631,7 +1699,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'hip-thrust': {
     key: 'hip-thrust',
     name: 'Pont sur le canapé, sur une jambe (hip thrust)',
-    what: 'Le haut du dos appuyé au bord du canapé, un pied au sol, tu montes le bassin jusqu\'à aligner les épaules, les hanches et le genou.',
+    what: 'Le haut du dos appuyé au bord du canapé, un pied au sol : tu montes le bassin jusqu\'à ce que l\'épaule, la hanche et le genou fassent une ligne, puis tu redescends sans poser.',
     cues: [
       'Les omoplates sur le bord du canapé, un pied à plat au sol.',
       'Monte le bassin en 1 s : le buste à plat, le genou à angle droit.',
@@ -1665,7 +1733,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   copenhague: {
     key: 'copenhague',
     name: 'Gainage des adducteurs (Copenhague)',
-    what: 'Sur le côté, sur le coude valide, le genou du dessus posé sur le step : tu soulèves le bassin en serrant l\'intérieur de la cuisse.',
+    what: 'Allongé sur le côté, sur le coude valide, le genou du dessus posé sur le step : tu décolles le bassin du sol en serrant l\'intérieur de la cuisse du dessus, puis tu redescends.',
     cues: [
       'Sur le coude valide, le genou du dessus posé sur le step à 40 cm.',
       'Monte le bassin en 1 s : la tête, le bassin et le genou alignés.',
@@ -1718,7 +1786,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'mollets-iso': {
     key: 'mollets-iso',
     name: 'Mollet sous le cadre de porte (isométrie lourde)',
-    what: 'Sur la pointe d\'un pied, la main valide à plat sous le haut d\'un cadre de porte : tu pousses le cadre vers le haut et le sol avec l\'avant du pied, aussi fort que tu peux, sans bouger.',
+    what: 'Debout sur un pied sous le haut d\'un cadre de porte, monté à mi-hauteur sur la pointe, la main valide à plat contre le haut du cadre : tu pousses le sol avec l\'avant du pied et le cadre avec la main, de toutes tes forces, sans que rien ne bouge.',
     cues: [
       'Sur un pied, à mi-hauteur sur la pointe, juste en retrait du cadre de porte.',
       'La main valide à plat sous le haut du cadre.',
@@ -1752,7 +1820,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
   'pied-court': {
     key: 'pied-court',
     name: 'Pied court et orteils',
-    what: 'Assis, le pied à plat : tu creuses la voûte du pied sans plier les orteils, puis tu lèves le gros orteil seul, puis les quatre autres.',
+    what: 'Assis, pieds nus à plat : tu raccourcis le pied en creusant la voûte, sans recroqueviller les orteils, puis tu lèves le gros orteil seul, puis les quatre autres.',
     cues: [
       'Assis, pieds nus à plat.',
       'Creuse la voûte : l\'avant du pied recule vers le talon, les orteils restent à plat. Tiens 5 s.',

@@ -335,10 +335,22 @@ function Main({ step, big = false }: { step: Step; big?: boolean }) {
   );
 }
 
-/** Le détail nommé — tempo, repos, effort, cœur —, la consigne du jour, puis les deux à quatre consignes de l'exercice. */
+/**
+ * Le geste en une phrase — ce que fait le personnage du schéma —, le détail
+ * nommé (tempo, repos, effort, cœur), la consigne du jour, puis les deux à
+ * quatre consignes de l'exercice. Le 12/10, Pierre : « expliquer très
+ * facilement ce que fait le mec, le geste » ; la phrase était repliée sous
+ * « Tout sur l'exercice ».
+ */
 function Details({ step }: { step: Step }) {
   return (
     <>
+      {step.sheet && (
+        <p className="w-what">
+          <span className="w-what-label">Le geste</span>
+          {nbsp(step.sheet.what)}
+        </p>
+      )}
       {step.details.length > 0 && (
         <dl className="w-details">
           {step.details.map((d, i) => (
@@ -387,7 +399,6 @@ function StepCard({ step, done, onDone, ...tests }: { step: Step; done: number; 
           {x && (
             <details className="w-more">
               <summary>Tout sur l’exercice</summary>
-              <p className="w-more-what">{nbsp(x.what)}</p>
               <p className="w-more-why">{nbsp(x.why)}</p>
               {x.setup && (
                 <>
