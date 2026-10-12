@@ -1,4 +1,4 @@
-import { EXERCISES, EXERCISE_WORDS, FORCE_BLOCK_DAYS, FORCE_BLOCK_WEEKS } from '@cairn/core/exercises';
+import { DOOR_KIT, EXERCISES, EXERCISE_WORDS, FORCE_BLOCK_DAYS, FORCE_BLOCK_WEEKS } from '@cairn/core/exercises';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
 import { nbsp } from '@/lib/api';
 import { EXERCISE_GROUPS } from '@/lib/exerciseGroups';
@@ -81,6 +81,24 @@ export default function ExercisesPage() {
             La créatine, si tu veux : 3 à 5 g de monohydrate par jour, le complément le mieux étayé pour la force. Un
             kilo d&apos;eau en plus, qui repart quand tu arrêtes.
           </li>
+        </ul>
+      </section>
+
+      <section className="xs-rules" id="kit-porte">
+        <h2>Installer le kit à la porte</h2>
+        <p>{nbsp(DOOR_KIT.intro)}</p>
+        <ol>
+          {DOOR_KIT.steps.map((x, i) => <li key={i}>{nbsp(x)}</li>)}
+        </ol>
+        <h3>La hauteur de l&apos;accroche</h3>
+        <ul>
+          {DOOR_KIT.heights.map((h) => (
+            <li key={h.where}><strong>{h.where}</strong> : {nbsp(h.what)}.</li>
+          ))}
+        </ul>
+        <h3>Sans risque</h3>
+        <ul>
+          {DOOR_KIT.safety.map((x, i) => <li key={i}>{nbsp(x)}</li>)}
         </ul>
       </section>
 

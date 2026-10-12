@@ -1415,17 +1415,17 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     name: 'Tirage à un bras, élastique sous le pied',
     what: 'Un grand pas en avant, le pied posé sur l\'élastique et le buste penché, tu tires la poignée vers ta hanche, comme un coup de rame, puis tu la laisses redescendre lentement.',
     cues: [
-      'L\'élastique en boucle : ses deux bouts au crochet de la poignée, le pied avant au milieu.',
+      'L\'élastique en boucle : ses deux bouts accrochés à la même poignée, le pied avant au milieu.',
       'Le buste penché à 45°, le dos droit, le bras pendu sous l\'épaule.',
       'Tire le coude le long des côtes en 1 s, tiens 1 s, rends en 2 s.',
     ],
     where: ['maison', 'dehors'],
-    equipment: 'Le kit d\'élastiques : un élastique et une poignée — sans l\'accroche de porte',
+    equipment: 'Le kit d\'élastiques : un élastique et une poignée ; rien à fixer à la porte',
     why:
       'Le dos et l\'arrière de l\'épaule du bras valide, comme le tirage à la porte, sans rien à installer : ton ' +
       'pied fait l\'accroche. Et le bras entraîné entretient l\'autre.',
     setup: [
-      'Passe le crochet de la poignée dans les deux boucles d\'un élastique de 5 kg : il fait une boucle.',
+      'Accroche les deux bouts d\'un élastique de 5 kg à la même poignée : il fait une boucle.',
       'Pose la boucle au sol, fais un grand pas en avant avec le pied du côté du bras valide, et pose-le au milieu.',
       'Plie le genou avant, penche le buste à 45°, le dos droit : la main pend sous l\'épaule, l\'élastique déjà un peu tendu.',
     ],
@@ -1880,6 +1880,41 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
  * Les mots du programme, dits simplement. La page Exercices les explique avant
  * les fiches : rien ne doit être pris pour acquis (Pierre, le 05/10).
  */
+/**
+ * Installer le kit à la porte : le guide des exercices qui s'y accrochent.
+ *
+ * Le 12/10, Pierre n'arrive pas à installer « le setup où je fixe à la porte
+ * les bandes » et demande « comment on installe, qu'est-ce qu'on installe ».
+ * Le kit : cinq élastiques de 3 à 7 kg, deux poignées, l'accroche de porte,
+ * deux sangles de cheville.
+ */
+export const DOOR_KIT = {
+  intro:
+    'L\'accroche de porte, c\'est la sangle du kit : un cylindre en mousse à un bout, une boucle à l\'autre. Le ' +
+    'cylindre se coince derrière une porte fermée ; l\'élastique s\'accroche à la boucle, de ton côté. Deux ' +
+    'minutes, d\'une seule main.',
+  steps: [
+    'Choisis une porte pleine qui s\'ouvre de l\'autre côté : en tirant vers toi, tu la plaques contre son cadre. Une porte qui s\'ouvre vers toi ne tient que par sa serrure — pas celle-là. Ferme-la à clé si quelqu\'un peut l\'ouvrir.',
+    'Ouvre-la et passe le cylindre de l\'autre côté, côté charnières, à la hauteur voulue : la sangle passe dans la fente entre la porte et le cadre, la boucle reste de ton côté.',
+    'Referme la porte, puis tire d\'un coup sec sur la boucle : le cylindre doit bloquer, rien ne doit glisser.',
+    'Relie un élastique : un bout à la boucle de la sangle, l\'autre à la poignée — les mousquetons s\'ouvrent d\'une pression du pouce. D\'une main : pose la poignée au sol et bloque-la sous le pied. Deux élastiques côte à côte, c\'est plus dur.',
+    'Recule jusqu\'à ce que l\'élastique soit déjà un peu tendu au départ du mouvement : c\'est la distance que donne la fiche.',
+  ],
+  heights: [
+    { where: 'En bas, une main au-dessus du sol', what: 'plier le bras (le curl)' },
+    { where: 'À hauteur de poitrine', what: 'pousser, tirer, l\'anti-rotation' },
+    { where: 'En haut, au-dessus de la tête', what: 'tendre le bras (le triceps)' },
+  ],
+  safety: [
+    'Avant chaque séance, regarde l\'élastique : une fissure, un endroit blanchi, et tu le changes.',
+    'Ne lâche jamais la poignée élastique tendu : reviens d\'abord.',
+    'Sans porte : la pompe inclinée à une main et le tirage, élastique sous le pied, font le même travail.',
+  ],
+} as const;
+
+/** Un exercice qui s'accroche à la porte : sa fiche renvoie au guide d'installation. */
+export const usesDoorKit = (sheet: Pick<ExerciseSheet, 'equipment'>): boolean => /accroche de porte/.test(sheet.equipment);
+
 export const EXERCISE_WORDS: { word: string; plain: string }[] = [
   { word: 'Répétition', plain: 'Un mouvement complet, aller et retour.' },
   { word: 'Série', plain: 'Des répétitions enchaînées sans pause. « 3 séries de 10 » : 10 mouvements, une pause, 10, une pause, 10.' },

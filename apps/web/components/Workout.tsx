@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import type { StrengthTestResult } from '@cairn/core';
+import { usesDoorKit } from '@cairn/core/exercises';
 import { blockDuration, clock, frDate, nbsp, type SessionRow } from '@/lib/api';
 import { sendOrQueue } from '@/lib/offline';
 import { planName } from '@/lib/sessions';
@@ -366,6 +367,9 @@ function Details({ step }: { step: Step }) {
         <ul className="w-cues">
           {step.sheet.cues.map((c, i) => <li key={i}>{nbsp(c)}</li>)}
         </ul>
+      )}
+      {step.sheet && usesDoorKit(step.sheet) && (
+        <Link href="/exercices#kit-porte" className="w-kit">Installer l’accroche de porte →</Link>
       )}
     </>
   );

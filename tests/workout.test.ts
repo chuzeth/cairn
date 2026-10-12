@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blockDay, weakSides } from '@cairn/coach';
 import type { StrengthTestResult } from '@cairn/core';
+import { DOOR_KIT, EXERCISES, usesDoorKit } from '@cairn/core/exercises';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 import {
   isWorkout, measureText, parseMeasure, setLabel, stepRx, stepsOf, workoutOf, workoutSummary, type Step,
@@ -100,6 +101,22 @@ describe('La séance à suivre', () => {
     expect(workoutSummary(workoutOf(d), d.plannedDurationS)).toMatch(/^6 parties · 12 exercices · 1 h \d\d$/);
     expect(isWorkout(d)).toBe(true);
     expect(isWorkout({ blocks: [{ label: 'Footing', zone: 'Z2', durationS: 2400 }] })).toBe(false);
+  });
+
+  it('renvoie chaque exercice accroché à la porte vers le guide qui l’installe, et pas les autres', () => {
+    // Le 12/10, Pierre : « comment on installe, qu'est-ce qu'on installe ».
+    const door = Object.values(EXERCISES).filter(usesDoorKit).map((x) => x.key).sort();
+    expect(door).toEqual(expect.arrayContaining(['anti-rotation', 'bras-elastique', 'pousse-elastique', 'tirage-elastique']));
+    expect(door).not.toContain('tirage-sous-pied');
+    expect(door).not.toContain('pompe-inclinee');
+    expect(DOOR_KIT.heights.map((h) => h.what).join(' ')).toMatch(/curl.*pousser.*triceps/);
+  });
+
+  it('dit le geste de chaque exercice en une phrase, d’où l’on part à ce qu’on fait', () => {
+    for (const x of Object.values(EXERCISES)) {
+      expect(x.what.length, x.key).toBeGreaterThan(30);
+      expect(x.what.length, x.key).toBeLessThan(260);
+    }
   });
 
   it('lit un résultat écrit à la française, et le redit avec son unité', () => {
