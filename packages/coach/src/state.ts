@@ -1,10 +1,11 @@
 import type {
   Activity, ActivityAnalysis, AthleteProfile, DailyCheckIn, DeclaredAbsence, PhysiologyModel,
-  PlannedSession, PmcSeries, RaceGoal, ReadinessScore, TrainingPlan, TrainingWeek,
+  PlannedSession, PmcSeries, RaceGoal, ReadinessScore, SessionCompliance, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
   EASY_SPEED_WINDOW_DAYS, aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
+  complianceFromSummary,
   computeReadiness, decayedEnvelopeWithCompanion, estimateHrMax, fitCriticalSpeed, gpsQualityOf, hrHistogramOf,
   interpretAcwr, interpretTsb, maximalEffortSupport, measuresGroundSpeed, modelFromLabOnly, monotonize,
   movingIndices, projectFrom, projectLoadRatios, ratioExceedances, type DailyLoad, type EasyRun, type FieldEvidence,
@@ -785,13 +786,24 @@ export async function analyzeAndStore(
 ): Promise<ActivityAnalysis | null> {
   const activity = await db.getActivity(activityId);
   if (!activity) return null;
-  const stored = await db.getStreams(activityId);
-  if (!stored) return null;
 
   const day = activity.startDateLocal.slice(0, 10);
   // Le rattachement choisit parmi les séances du jour, de la veille et du
   // lendemain, ou n'en choisit aucune.
   const planned = await db.listPlannedSessions(athleteId, addDays(day, -1), addDays(day, 1));
+
+  const stored = await db.getStreams(activityId);
+  if (!stored) {
+    // Saisie à la main : ni flux ni analyse, mais un sport, un jour et une durée,
+    // de quoi reconnaître une séance hors course.
+    const compliance = complianceFromSummary(activity, planned, model);
+    if (!compliance) return null;
+    const target = planned.find((p) => p.id === compliance.plannedSessionId);
+    const status = compliance.outcome === 'fulfilled' ? 'completed' : 'replaced';
+    if (opts.onlyIfRejudged && target?.status === status) return null;
+    await recordAttachment(activity, compliance, target, status);
+    return null;
+  }
 
   const analysis = analyzeActivity(activity, stored.streams, model, {
     sex: 'M',
@@ -807,53 +819,66 @@ export async function analyzeAndStore(
   const status = compliance?.outcome === 'fulfilled' ? 'completed' : 'replaced';
   if (opts.onlyIfRejudged && target?.status === status) return null;
   await db.saveAnalysis(athleteId, activity.startDateLocal, analysis);
+  if (compliance) await recordAttachment(activity, compliance, target, status);
+  return analysis;
+}
 
-  if (compliance) {
-    const dayMonth = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
-    const at = new Date().toISOString();
-    // Une séance déjà jugée que le jugement d'aujourd'hui contredit : ce qu'on
-    // lui avait fait dire est faux, et l'athlète l'a lu.
-    const before = target ? JUDGED_FR[target.status] : undefined;
-    const rejudged = before != null && target?.status !== status;
-    let history = target?.history;
-    // Réalisée la veille ou le lendemain, la séance prend sa date réelle et
-    // garde celle du plan. Tout ce qui lit une séance par sa date — le
-    // lendemain d'un test maximal, les 48 h entre deux séances exigeantes, la
-    // charge de la semaine, ce que porte la montre — la lit alors au jour où
-    // elle a eu lieu.
-    const moved = target != null && target.date !== day;
-    if (moved) {
-      history = withHistory(history, {
-        at,
-        by: 'rules',
-        text:
-          `Prévue le ${dayMonth(target.date)}, réalisée le ${dayMonth(day)} : « ${activity.name} » ` +
-          `en porte le contenu. La séance prend sa date réelle.`,
-      });
-    }
-    if (rejudged) {
-      history = withHistory(history, {
-        at,
-        by: 'rules',
-        text: `Rejugée : ${JUDGED_FR[status]}, et non plus ${before}. ${compliance.detail}`,
-      });
-    }
-    // Le statut est recalculé à chaque analyse, sans garde sur l'état précédent :
-    // une séance passée en « manquée » par les règles doit pouvoir être reprise
-    // par l'activité qui arrive après elles.
-    await db.updateSession(compliance.plannedSessionId, {
-      status,
-      completedActivityId: activityId,
-      // La justification du planificateur reste en place tant qu'elle dit vrai.
-      // Elle est remplacée quand ce qui s'est passé la dément : une séance
-      // remplacée, une « non réalisée » que l'activité vient contredire, ou un
-      // jugement que le jugement d'aujourd'hui contredit.
-      ...(status === 'replaced' || target?.status === 'missed' || rejudged ? { rationale: compliance.detail } : {}),
-      ...(moved ? { date: day, weekStart: mondayOf(day), plannedDate: target.plannedDate ?? target.date } : {}),
-      ...(history !== target?.history ? { history } : {}),
+/**
+ * Le rattachement écrit dans le plan : le statut que le jugement donne, l'activité
+ * qui tient la séance, la date réelle quand elle a été faite la veille ou le
+ * lendemain, et ce que l'historique en retient.
+ */
+async function recordAttachment(
+  activity: Activity,
+  compliance: SessionCompliance,
+  target: PlannedSession | undefined,
+  status: 'completed' | 'replaced',
+): Promise<void> {
+  const activityId = activity.id;
+  const day = activity.startDateLocal.slice(0, 10);
+  const dayMonth = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  const at = new Date().toISOString();
+  // Une séance déjà jugée que le jugement d'aujourd'hui contredit : ce qu'on
+  // lui avait fait dire est faux, et l'athlète l'a lu.
+  const before = target ? JUDGED_FR[target.status] : undefined;
+  const rejudged = before != null && target?.status !== status;
+  let history = target?.history;
+  // Réalisée la veille ou le lendemain, la séance prend sa date réelle et
+  // garde celle du plan. Tout ce qui lit une séance par sa date — le
+  // lendemain d'un test maximal, les 48 h entre deux séances exigeantes, la
+  // charge de la semaine, ce que porte la montre — la lit alors au jour où
+  // elle a eu lieu.
+  const moved = target != null && target.date !== day;
+  if (moved) {
+    history = withHistory(history, {
+      at,
+      by: 'rules',
+      text:
+        `Prévue le ${dayMonth(target.date)}, réalisée le ${dayMonth(day)} : « ${activity.name} » ` +
+        `en porte le contenu. La séance prend sa date réelle.`,
     });
   }
-  return analysis;
+  if (rejudged) {
+    history = withHistory(history, {
+      at,
+      by: 'rules',
+      text: `Rejugée : ${JUDGED_FR[status]}, et non plus ${before}. ${compliance.detail}`,
+    });
+  }
+  // Le statut est recalculé à chaque analyse, sans garde sur l'état précédent :
+  // une séance passée en « manquée » par les règles doit pouvoir être reprise
+  // par l'activité qui arrive après elles.
+  await db.updateSession(compliance.plannedSessionId, {
+    status,
+    completedActivityId: activityId,
+    // La justification du planificateur reste en place tant qu'elle dit vrai.
+    // Elle est remplacée quand ce qui s'est passé la dément : une séance
+    // remplacée, une « non réalisée » que l'activité vient contredire, ou un
+    // jugement que le jugement d'aujourd'hui contredit.
+    ...(status === 'replaced' || target?.status === 'missed' || rejudged ? { rationale: compliance.detail } : {}),
+    ...(moved ? { date: day, weekStart: mondayOf(day), plannedDate: target.plannedDate ?? target.date } : {}),
+    ...(history !== target?.history ? { history } : {}),
+  });
 }
 
 /**
@@ -880,17 +905,23 @@ export async function rematchRecent(
 ): Promise<{ activityId: string; sessionId: string }[]> {
   const from = addDays(today, -days);
   const activities = await db.listActivities(athleteId, { from, to: today });
-  const held = new Set(
-    (await db.listPlannedSessions(athleteId, addDays(from, -1), addDays(today, 1)))
-      .map((s) => s.completedActivityId)
-      .filter((id): id is string => id != null),
-  );
+  const holders = async () =>
+    new Map(
+      (await db.listPlannedSessions(athleteId, addDays(from, -1), addDays(today, 1)))
+        .filter((s) => s.completedActivityId != null)
+        .map((s) => [s.completedActivityId as string, s.id]),
+    );
+  const held = await holders();
   const matched: { activityId: string; sessionId: string }[] = [];
   for (const a of [...activities].sort((x, y) => x.startDateLocal.localeCompare(y.startDateLocal))) {
     const analysis = await analyzeAndStore(
       athleteId, a.id, model, held.has(a.id) ? { onlyIfRejudged: true } : { onlyIfMatched: true },
     );
     if (analysis?.compliance) matched.push({ activityId: a.id, sessionId: analysis.compliance.plannedSessionId });
+  }
+  // Une activité sans flux se rattache sans analyse : elle se lit dans les séances qui la tiennent désormais.
+  for (const [activityId, sessionId] of await holders()) {
+    if (!held.has(activityId) && !matched.some((m) => m.activityId === activityId)) matched.push({ activityId, sessionId });
   }
   return matched;
 }

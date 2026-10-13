@@ -18,7 +18,7 @@ import { wPrimeBalance } from './criticalSpeed.js';
 import { movingHrHistogram, type CeilingCheck } from './easy.js';
 import {
   MATERIAL_DEVIATION_PCT, ceilingCheckOf, deviationsFrom, hrCeilingOf, matchPlannedSession, maximalEffortIndex,
-  isRunFree, maximalTestProof, outcomeOf, runDurationOf, type RealizedEffort,
+  isRunFree, maximalTestProof, outcomeOf, referenceDurationOf, runDurationOf, type RealizedEffort,
 } from './sessionMatch.js';
 import { formatDuration, mean, movingAverage } from './units.js';
 
@@ -384,6 +384,32 @@ function buildFlags(
   return flags;
 }
 
+/**
+ * Le rattachement d'une activité sans flux — une séance saisie à la main dans
+ * Strava : un sport, un jour, une durée, rien d'autre.
+ *
+ * Une séance hors course se juge sur sa durée (`outcomeOf`) : elle se reconnaît
+ * ainsi. Une course sans flux ne dit ni son allure ni son cœur, elle ne juge
+ * aucune séance de course. Le 13/10, quatre séances de force saisies après coup
+ * ne rattachaient rien, et les règles avaient passé trois d'entre elles en
+ * « manquées ».
+ */
+export function complianceFromSummary(
+  activity: Pick<Activity, 'id' | 'sportType' | 'startDateLocal' | 'movingTimeS' | 'elapsedTimeS'>,
+  planned: readonly PlannedSession[],
+  model: PhysiologyModel,
+): SessionCompliance | null {
+  const realized: RealizedEffort = {
+    activityId: activity.id,
+    sportType: activity.sportType,
+    date: activity.startDateLocal.slice(0, 10),
+    durationS: activity.movingTimeS > 0 ? activity.movingTimeS : activity.elapsedTimeS,
+    load: 0,
+  };
+  const match = matchPlannedSession(planned.filter((s) => isRunFree(s.type)), realized, model);
+  return match ? assessCompliance(match, realized, model, false) : null;
+}
+
 /** Compare l'exécution à la prescription. `groundSpeed` : l'activité mesure-t-elle sa vitesse au sol ? */
 function assessCompliance(
   planned: PlannedSession,
@@ -407,7 +433,7 @@ function assessCompliance(
     // se juge sur sa durée, et le dit (`outcomeOf`).
     verdict = Math.abs(durDev) <= 20 ? 'on_target' : durDev < 0 ? 'under' : 'over';
     detail =
-      `${formatDuration(realized.durationS)} pour ${formatDuration(runDurationOf(planned))} prévues` +
+      `${formatDuration(realized.durationS)} pour ${formatDuration(referenceDurationOf(planned, realized.durationS))} prévues` +
       (verdict === 'on_target' ? ' : séance faite.' : verdict === 'under' ? ' : séance écourtée.' : ' : séance allongée.');
   } else if (ceiling) {
     // Une séance facile se juge sur ce qu'elle prescrit — sa durée et son

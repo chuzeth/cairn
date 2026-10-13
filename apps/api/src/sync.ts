@@ -134,7 +134,8 @@ export async function ingestActivity(
     model = await rebuildPhysiologyModel(athleteId);
   }
 
-  const analysis = streams ? await analyzeAndStore(athleteId, activity.id, model) : null;
+  // Sans flux — une saisie à la main —, l'analyse n'a rien à lire, mais le rattachement se fait.
+  const analysis = await analyzeAndStore(athleteId, activity.id, model);
 
   // ── Ajustement automatique du plan ────────────────────────────────────────
   // Les séances décidées se comptent avec le modèle que cette sortie vient de

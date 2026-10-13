@@ -148,13 +148,33 @@ export function runDurationOf(session: Pick<PlannedSession, 'blocks' | 'plannedD
 }
 
 /**
+ * La durée à laquelle comparer une activité.
+ *
+ * Une course se compare à ce qui s'y court (`runDurationOf`). Hors course, la
+ * séance se fait souvent d'un seul tenant, annexe comprise — le renforcement
+ * suivi sur l'écran, puis les soins du bras et la respiration —, ou sans elle :
+ * la plus proche des deux fait foi. Le 13/10, une séance de force de 85 min
+ * saisie entière se comparait à ses seules 56 min de force, et passait pour
+ * remplacée.
+ */
+export function referenceDurationOf(
+  session: Pick<PlannedSession, 'type' | 'blocks' | 'plannedDurationS'>,
+  realizedS: number,
+): number {
+  const run = runDurationOf(session);
+  const total = session.plannedDurationS;
+  if (!NON_RUNNING_SESSIONS.has(session.type) || total <= run || realizedS <= 0 || run <= 0) return run;
+  return Math.abs(Math.log(realizedS / run)) <= Math.abs(Math.log(realizedS / total)) ? run : total;
+}
+
+/**
  * Distance entre l'effort réalisé et la prescription, en écarts logarithmiques
  * de durée et de charge : un facteur deux pèse autant dans un sens que dans
  * l'autre, et aucune des deux grandeurs n'écrase l'autre.
  */
 function divergence(session: PlannedSession, realized: RealizedEffort): number {
   return (
-    logGap(realized.durationS, runDurationOf(session)) +
+    logGap(realized.durationS, referenceDurationOf(session, realized.durationS)) +
     logGap(realized.load, session.plannedLoad)
   );
 }
@@ -269,7 +289,7 @@ export function deviationsFrom(session: PlannedSession, realized: RealizedEffort
   }
   return {
     loadPct: pct(realized.load, session.plannedLoad),
-    durationPct: pct(realized.durationS, runDurationOf(session)),
+    durationPct: pct(realized.durationS, referenceDurationOf(session, realized.durationS)),
     intensityPct,
   };
 }

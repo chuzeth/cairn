@@ -263,6 +263,55 @@ describe('La passe de rattachement des sept derniers jours', () => {
   });
 });
 
+// ── Une séance saisie à la main, sans flux ────────────────────────────────────
+
+/**
+ * Le 13/10 : quatre séances du bloc de force saisies après coup dans Strava, sans
+ * montre. Sans flux, rien ne les analysait : aucune ne rattachait sa séance, et
+ * les règles avaient passé celles du 10, du 11 et du 12/10 en « manquées ».
+ */
+const FORCE_1210: PlannedSession = {
+  ...TEST, id: 'ses_force', date: '2026-10-12', type: 'strength', priority: 'key', status: 'missed',
+  title: 'Force A : genoux et descentes 56 min + souplesse et respiration 29 min', plannedLoad: 37,
+  plannedDurationS: 5100,
+  blocks: [
+    block({ label: 'Jambes, mollets, bras valide, tronc', zone: 'Z3', durationS: 3360 }),
+    block({ label: 'Bras plâtré et respiration', kind: 'respiratory', zone: 'Z1', durationS: 1740 }),
+  ],
+};
+
+const manual = (id: string, day: string, sportType: Activity['sportType'], minutes: number): Activity => ({
+  id, athleteId: 'pierre', name: 'Renfo · Force A', sportType, startDate: `${day}T14:45:00Z`,
+  startDateLocal: `${day}T16:45:00Z`, distanceM: 0, movingTimeS: minutes * 60, elapsedTimeS: minutes * 60,
+  totalElevationGainM: 0, totalElevationLossM: 0, averageSpeedMs: 0, manual: true,
+} as Activity);
+
+describe('Une séance saisie à la main dans Strava, sans flux', () => {
+  it('rattache sa séance par sa durée, annexe comprise, et reprend une « manquée »', async () => {
+    store.sessions = [{ ...FORCE_1210 }];
+    store.activities = [manual('strava-force', '2026-10-12', 'WeightTraining', 85)];
+    store.streams = new Map();
+    expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-10-13')).toEqual([
+      { activityId: 'strava-force', sessionId: 'ses_force' },
+    ]);
+    expect(store.sessions[0]).toMatchObject({ status: 'completed', completedActivityId: 'strava-force' });
+  });
+
+  it('se reconnaît aussi sans son annexe, et ne rattache jamais une course sans flux', async () => {
+    store.sessions = [{ ...FORCE_1210 }];
+    store.activities = [manual('strava-force', '2026-10-12', 'WeightTraining', 56)];
+    store.streams = new Map();
+    await rematchRecent('pierre', PIERRE_MODEL, '2026-10-13');
+    expect(store.sessions[0]).toMatchObject({ status: 'completed', completedActivityId: 'strava-force' });
+
+    // Une course saisie à la main ne dit ni son allure ni son cœur : elle ne juge aucune séance de course.
+    store.sessions = [endurance({ id: 'ses_footing_1210', date: '2026-10-12' })];
+    store.activities = [manual('strava-run', '2026-10-12', 'Run', 60)];
+    expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-10-13')).toEqual([]);
+    expect(store.sessions[0]!.completedActivityId).toBeUndefined();
+  });
+});
+
 // ── Les voisines d'une séance clef réalisée un autre jour ────────────────────
 
 /**
