@@ -337,11 +337,12 @@ function Main({ step, big = false }: { step: Step; big?: boolean }) {
 }
 
 /**
- * Le geste en une phrase — ce que fait le personnage du schéma —, le détail
- * nommé (tempo, repos, effort, cœur), la consigne du jour, puis les deux à
- * quatre consignes de l'exercice. Le 12/10, Pierre : « expliquer très
- * facilement ce que fait le mec, le geste » ; la phrase était repliée sous
- * « Tout sur l'exercice ».
+ * Le geste en une phrase — ce que fait le personnage du schéma —, ses deux à
+ * quatre repères (l'installation, le point de forme, le piège), le détail
+ * nommé (tempo, repos, effort, cœur), puis ce que la séance du jour y ajoute.
+ * Chacun dit une chose, une fois. Le 12/10, Pierre voulait voir « très
+ * facilement ce que fait le mec » ; le 14/10, il trouvait le texte et les
+ * puces « un peu répétitifs ».
  */
 function Details({ step }: { step: Step }) {
   return (
@@ -351,6 +352,14 @@ function Details({ step }: { step: Step }) {
           <span className="w-what-label">Le geste</span>
           {nbsp(step.sheet.what)}
         </p>
+      )}
+      {step.sheet && step.sheet.cues.length > 0 && (
+        <div className="w-cues-box">
+          <span className="w-what-label">Les repères</span>
+          <ul className="w-cues">
+            {step.sheet.cues.map((c, i) => <li key={i}>{nbsp(c)}</li>)}
+          </ul>
+        </div>
       )}
       {step.details.length > 0 && (
         <dl className="w-details">
@@ -363,11 +372,6 @@ function Details({ step }: { step: Step }) {
         </dl>
       )}
       {step.block.notes && <p className="w-today">{nbsp(step.block.notes)}</p>}
-      {step.sheet && step.sheet.cues.length > 0 && (
-        <ul className="w-cues">
-          {step.sheet.cues.map((c, i) => <li key={i}>{nbsp(c)}</li>)}
-        </ul>
-      )}
       {step.sheet && usesDoorKit(step.sheet) && (
         <Link href="/exercices#kit-porte" className="w-kit">Installer l’accroche de porte →</Link>
       )}

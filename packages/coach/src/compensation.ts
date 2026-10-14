@@ -145,13 +145,10 @@ function daily(): SessionBlock[] {
   return [
     {
       label: 'Soins du bras plâtré', kind: 'mobility', zone: 'Z1', durationS: 300, exercise: 'soins-bras',
-      notes: 'Doigts, pouce, épaule : 3 à 4 fois dans la journée, pas seulement ici.',
+      notes: 'À refaire 3 à 4 fois dans la journée, pas seulement ici.',
     },
     {
       label: 'Respiration', kind: 'respiratory', zone: 'Z1', durationS: 600, exercise: 'respiration',
-      notes:
-        'Avec l\'appareil : 30 inspirations le matin, 30 le soir. Sans : 5 min à 4 s / 6 s puis 5 min à 4 s / 8 s, ' +
-        'allongé.',
     },
   ];
 }
@@ -159,7 +156,6 @@ function daily(): SessionBlock[] {
 function souplesse(durationS = 600): SessionBlock {
   return {
     label: 'Souplesse chaîne postérieure', kind: 'mobility', zone: 'Z1', durationS, exercise: 'souplesse',
-    notes: 'Ischio-jambiers à la sangle, mollets au mur, avant de la hanche : 45 s, deux fois.',
   };
 }
 
@@ -791,7 +787,6 @@ function armCare(weekday: boolean): SessionBlock[] {
       ? [{
           label: 'Imagerie du bras plâtré', kind: 'mobility' as const, part: PART.cast, zone: 'Z1' as const,
           durationS: 130, repeat: 4, reps: 13, pulse: { workS: 5, restS: 5 }, exercise: 'imagerie',
-          notes: 'Une série sur deux, imagine que tu tends le coude.',
           recovery: { durationS: 60, zone: 'Z1' as const, active: false, betweenReps: true },
         }]
       : []),
@@ -890,7 +885,7 @@ export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('descente-marche', PART.legs, {
         label: 'Descente lente du step', sets: d.second, reps: 6, sides: 'jambe', restS: 60, reserve: d.reserve,
         setS: 45, tempo: '5 s pour descendre, 1 s pour remonter',
-        notes: withPack(d, 'Le step à 20 cm, la main valide au mur.'),
+        notes: withPack(d),
       }),
       ex('reverse-nordic', PART.legs, {
         label: 'Bascule arrière à genoux', sets: d.second, reps: d.harder ? 8 : 6, restS: 75, reserve: d.reserve,
@@ -918,7 +913,7 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('souleve-une-jambe', PART.posterior, {
         label: 'Soulevé de terre sur une jambe, lesté', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 75,
         reserve: d.reserve, setS: 50, tempo: '3 s pour descendre, 1 s pour remonter',
-        notes: withPack(d, 'La main valide sur l\'encadrement.'), weak: { side: w.hips, sets: 1 },
+        notes: withPack(d), weak: { side: w.hips, sets: 1 },
       }),
       ex('hip-thrust', PART.posterior, {
         label: 'Pont sur le canapé', sets: d.second, reps: 12, sides: 'jambe', restS: 45, reserve: d.reserve, setS: 45,
@@ -939,7 +934,6 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('max-table', PART.arm, {
         label: 'Le maximum, sous la table', sets: 2, reps: 3, pulse: { workS: 5, restS: 10 }, restS: 30,
         effort: 'De toutes tes forces',
-        notes: 'Assis à une table, coude à angle droit : une série paume sous le plateau, pousse vers le haut ; une série paume dessus, pousse vers le bas.',
       }),
       ...armCare(true),
     ]);
@@ -966,10 +960,7 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSide
           exercise: 'marche-cote',
           part: PART.intervals,
           elevationGainM: vert,
-          notes:
-            'Effort 7 sur 10, phrases courtes : monte vite, en marche, une marche à la fois, la main valide près de ' +
-            'la rampe. Escaliers de Fourvière ou montée de la Grande-Côte, secs ; s\'il pleut, ceux de ton immeuble. ' +
-            'Entre deux, redescends lentement à la rampe : c\'est la récupération.',
+          notes: 'Effort 7 sur 10, des phrases courtes. Entre deux montées, la redescente lente est la récupération.',
         }),
         repeat: reps,
         recovery: { durationS: 180, zone: 'Z1', active: true, betweenReps: true, elevationLossM: vert },
@@ -980,7 +971,7 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('mollets-charges', PART.calvesFeet, {
         label: 'Mollet lesté, sur un pied', sets: d.second + 1, reps: d.harder ? 6 : 8, sides: 'jambe', restS: 60,
         reserve: d.reserve, setS: 60, tempo: '3 s pour monter, 1 s en haut, 3 s pour redescendre',
-        notes: withPack(d, 'Le step à 20 cm contre un mur.'), weak: { side: w.calves, sets: 1 },
+        notes: withPack(d), weak: { side: w.calves, sets: 1 },
       }),
       ex('soleaire-assis', PART.calvesFeet, {
         label: 'Soléaire assis, sac sur les genoux', sets: d.second, reps: d.harder ? 10 : 12, restS: 45,
@@ -1012,7 +1003,7 @@ export function blockForceC(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('montee-tabouret', PART.legs, {
         label: 'Montée explosive sur le step', sets: d.main, reps: 5, sides: 'jambe', restS: 75, reserve: d.reserve,
         setS: 40, tempo: 'Monte le plus vite possible sans sauter, redescends en 3 s',
-        notes: 'Le step à 40 cm calé contre un mur.' + (d.harder ? ' Cette semaine, le sac de 5 kg.' : ''),
+        notes: d.harder ? 'Cette semaine, le sac de 5 kg.' : undefined,
       }),
       ex('squat-une-jambe', PART.legs, {
         label: 'Squat sur une jambe, jusqu\'au step', sets: d.second, reps: d.harder ? 8 : 6, sides: 'jambe',
@@ -1041,7 +1032,7 @@ export function blockHanches(model: PhysiologyModel, week: BlockWeek, w: WeakSid
       blockWarmUp(model),
       ex('pas-chasses', PART.hips, {
         label: 'Pas chassés à la mini-bande', sets: d.acc, reps: 15, sides: 'côté', restS: 30, setS: 35,
-        effort: 'Jusqu\'à la brûlure', notes: 'La mini-bande la plus dure, aux chevilles ; la bande toujours tendue.',
+        effort: 'Jusqu\'à la brûlure', notes: 'La mini-bande la plus dure.',
       }),
       ex('montee-genou', PART.hips, {
         label: 'Montée de genou sur le dos', sets: d.acc, reps: 10, sides: 'jambe', restS: 20, setS: 30,
@@ -1054,7 +1045,7 @@ export function blockHanches(model: PhysiologyModel, week: BlockWeek, w: WeakSid
       ...adductors(d),
       ex('port-valise', PART.core, {
         label: 'Port de valise, à une main', sets: 4, holdS: d.harder ? 60 : 40, restS: 45,
-        notes: withPack(d, 'Le sac dans la main valide, sans pencher.'),
+        notes: withPack(d),
       }),
       ex('gainage-lateral', PART.core, { label: 'Gainage sur le côté', sets: 3, holdS: d.holdS, restS: 45 }),
       ex('anti-rotation', PART.core, {
@@ -1079,9 +1070,7 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
         ...heart(model, 'Montées continues lestées', 'Z2', d.me.min * 60, {
           exercise: 'montee-tabouret',
           part: PART.climbs,
-          notes: withPack(d,
-            'Le step à 40 cm : une montée toutes les 2 s, change de jambe toutes les 30 s, la main au mur. Arrête si ' +
-              'la jambe tremble.'),
+          notes: withPack(d, 'Une montée toutes les 2 s, change de jambe toutes les 30 s. Arrête si la jambe tremble.'),
         }),
         repeat: d.me.sets,
         recovery: { durationS: 120, zone: 'Z1', active: true, betweenReps: true },
@@ -1121,7 +1110,6 @@ export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true): S
           ...ex('balancier-jambe', PART.moves, {
             label: 'Balancier de jambe', sets: 2, reps: 15, sides: 'jambe', restS: 0, setS: 35,
             tempo: '1 s pour aller, 1 s pour revenir', effort: 'Ample, sans forcer',
-            notes: 'Une série d\'avant en arrière, une sur le côté.',
           }),
           zone: 'Z1',
         },
@@ -1141,7 +1129,7 @@ export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true): S
       'faible, la souplesse, une marche facile.',
     [
       heart(model, 'Marche facile, à plat', 'Z1', 30 * 60, {
-        exercise: 'marche', part: PART.walk, notes: 'Quais, parc de la Tête d\'Or : tu dois pouvoir parler tout du long.',
+        exercise: 'marche', part: PART.walk, notes: 'Quais, parc de la Tête d\'Or.',
       }),
       { ...souplesse(900), part: PART.mobility },
       ...ankleBalance,

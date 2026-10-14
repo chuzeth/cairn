@@ -119,6 +119,33 @@ describe('La séance à suivre', () => {
     }
   });
 
+  it('ne se répète pas : le geste, les repères, la note du jour et le tempo disent chacun une chose, une fois', () => {
+    // Le 14/10, Pierre : « pas mal de répétitions dans l'explication des exercices […] des phrases en texte plein
+    // et ensuite des bullet points souvent un peu répétitifs ». 38 fiches sur 47 redisaient une même formule.
+    const words = (t: string) =>
+      t.toLowerCase().replace(/[’']/g, ' ').replace(/[^\p{L}\d ]+/gu, ' ').split(/\s+/).filter(Boolean);
+    const grams = (t: string, n: number) => {
+      const w = words(t);
+      return new Set(w.slice(0, Math.max(0, w.length - n + 1)).map((_, i) => w.slice(i, i + n).join(' ')));
+    };
+    const shared = (a: string, b: string, n = 4) => [...grams(a, n)].filter((g) => grams(b, n).has(g));
+    for (let i = 0; i < 24; i++) {
+      for (const b of blockDay(PIERRE_MODEL, i, weak).blocks) {
+        const x = b.exercise ? EXERCISES[b.exercise as keyof typeof EXERCISES] : undefined;
+        if (!x) continue;
+        const at = `${x.key} (${b.label})`;
+        const timing = `${b.tempo ?? ''} ${b.pulse ? `${b.pulse.workS} s ${b.pulse.restS} s` : ''}`;
+        for (const cue of x.cues) {
+          expect(shared(x.what, cue), `${at} : le geste et un repère`).toEqual([]);
+          if (b.notes) expect(shared(b.notes, cue), `${at} : la note du jour et un repère`).toEqual([]);
+          if (b.tempo) expect(shared(b.tempo, cue, 3), `${at} : le tempo et un repère`).toEqual([]);
+          for (const d of cue.match(/\d+ s\b/g) ?? []) expect(timing, `${at} : « ${d} » redit le tempo`).not.toContain(d);
+        }
+        if (b.notes) expect(shared(b.notes, x.what), `${at} : la note du jour et le geste`).toEqual([]);
+      }
+    }
+  });
+
   it('lit un résultat écrit à la française, et le redit avec son unité', () => {
     expect(parseMeasure('1,5')).toBe(1.5);
     expect(parseMeasure('−3')).toBe(-3);
