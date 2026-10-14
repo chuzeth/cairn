@@ -19,8 +19,13 @@
 export const GRACE_MS = 60_000;
 /** L'app ouverte le dit à la porte : sa session reste ouverte tant qu'elle sert. */
 export const HEARTBEAT_MS = 30_000;
-/** Ce que l'app attend la porte avant de se tenir pour hors réseau. */
-export const GATE_WAIT_MS = 3_000;
+/**
+ * Ce que l'app attend la porte avant de se tenir pour hors réseau. Trois
+ * secondes ne suffisaient pas toujours à un téléphone en 4G pour joindre Funnel
+ * à froid : l'app se croyait Mac éteint, s'ouvrait sur sa dernière lecture, puis
+ * chaque lecture refusée redemandait Face ID.
+ */
+export const GATE_WAIT_MS = 5_000;
 
 /** Ce que la porte dit de la session (`GET /connexion/etat`). */
 export interface GateState {

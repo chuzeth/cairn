@@ -52,7 +52,7 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
     <>
       <div className="page-head">
         <div>
-          <Link href="/activities" className="tiny faint">← Toutes les séances</Link>
+          <Link href="/activities" className="tiny faint" transitionTypes={['nav-back']}>← Toutes les séances</Link>
           <h1 className="page-title" style={{ marginTop: 4 }}>{a.name}</h1>
           <p className="page-sub">
             {frDate(a.startDateLocal, { weekday: true, year: true, long: true })} · {a.sportType}

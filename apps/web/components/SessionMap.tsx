@@ -97,15 +97,17 @@ export function SessionMap({ blocks, route }: { blocks: readonly Block[]; route?
         attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(map);
 
-      const ochre = token('--ochre', '#d6a15c');
-      const stone = token('--text', '#ece8df');
-      const dim = token('--text-dim', '#98a09c');
-      const slate = token('--bg', '#0e1316');
+      // Les couleurs de la page (Altitude) : le vermillon pour ce qui monte, le glacier pour les répétitions.
+      const climb = token('--climb', '#C2461F');
+      const ink = token('--text', '#15181B');
+      const glacier = token('--accent', '#2C5D7C');
+      const dim = token('--text-dim', '#4A5056');
+      const paper = token('--bg', '#F4F2EE');
       const style: Record<Line['tone'], PolylineOptions> = {
         walk: { color: dim, weight: 3, opacity: 0.9 },
         detour: { color: dim, weight: 3, opacity: 0.9, dashArray: '5 7' },
-        climb: { color: ochre, weight: 5, opacity: 0.85 },
-        reps: { color: stone, weight: 4, opacity: 0.95 },
+        climb: { color: climb, weight: 5, opacity: 0.85 },
+        reps: { color: glacier, weight: 4, opacity: 0.95 },
       };
       const all: [number, number][] = [];
       for (const t of tracks) {
@@ -114,7 +116,7 @@ export function SessionMap({ blocks, route }: { blocks: readonly Block[]; route?
       }
       points.forEach((p, i) => {
         const first = i === 0 && !home;
-        L.circleMarker(p.at, { radius: 6, weight: 2, color: slate, fillColor: first ? stone : ochre, fillOpacity: 1 })
+        L.circleMarker(p.at, { radius: 6, weight: 2, color: paper, fillColor: first ? ink : climb, fillOpacity: 1 })
           .bindTooltip(first ? `${ROLE[p.role]} · départ` : ROLE[p.role], {
             // Sur l'itinéraire entier, le haut et le pied tiennent dans quelques
             // pixels : l'un au-dessus, l'autre en dessous. Sinon, du côté où il y
@@ -127,7 +129,7 @@ export function SessionMap({ blocks, route }: { blocks: readonly Block[]; route?
         all.push(p.at);
       });
       if (home) {
-        L.circleMarker(home, { radius: 6, weight: 2, color: slate, fillColor: stone, fillOpacity: 1 })
+        L.circleMarker(home, { radius: 6, weight: 2, color: paper, fillColor: ink, fillOpacity: 1 })
           // Au-dessus : le pied, souvent à quelques centaines de mètres, a son étiquette en dessous.
           .bindTooltip('Chez toi', { permanent: true, direction: 'top', className: 'm-map-tip' })
           .addTo(map);

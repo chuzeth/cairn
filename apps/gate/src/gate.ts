@@ -81,16 +81,58 @@ const PUBLIC_ROUTES = new Set([
   'GET /connexion', 'GET /connexion/webauthn.js', 'GET /connexion/etat',
   'POST /connexion/options', 'POST /connexion/verifier',
   'POST /connexion/enregistrement/options', 'POST /connexion/enregistrement/verifier',
+  'POST /connexion/journal',
 ]);
 
 /** En-têtes d'un seul saut : ils décrivent la connexion, pas le message. */
 const HOP_BY_HOP = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade'];
 
+/**
+ * L'appareil, tel que son navigateur le dit — rien de plus n'est gardé. Un iPad
+ * récent se dit Mac : le journal ne le distingue pas, et n'en a pas besoin.
+ */
+export function deviceOf(userAgent: string | undefined): string {
+  const ua = userAgent ?? '';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Macintosh/.test(ua)) return 'Mac';
+  if (/Android/.test(ua)) return 'Android';
+  return ua ? 'autre' : 'inconnu';
+}
+
+/**
+ * Ce qui, refusé, mérite une ligne : les écrans de l'app et ce qu'ils lisent.
+ * Une adresse est publique dès qu'elle a un certificat ; les robots qui
+ * essaient `/wp-login.php` n'ont rien à faire dans le journal.
+ */
+const APP_SCREENS = new Set(['/', '/point', '/coach', '/plan', '/activities', '/exercices', '/seance', '/physiology', '/races']);
+const watched = (path: string): boolean =>
+  APP_SCREENS.has(path) || path.startsWith('/activities/') || path === '/health' || path.startsWith('/api/') || path === '/sw.js';
+
+/** Un champ du journal d'un appareil : du texte, sur une ligne, borné. */
+const field = (v: unknown, max: number): string =>
+  typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max) : '';
+
 export function createGate(opts: GateOptions): Server {
   const now = opts.now ?? Date.now;
   const limiter = new Limiter(opts.limit?.max ?? 30, opts.limit?.windowMs ?? 10 * 60_000);
+  // Le journal des appareils a sa propre fenêtre : il ne prend jamais la place d'une connexion.
+  const journal = new Limiter(60, 10 * 60_000);
   const ceremonies = new Map<string, Ceremony>();
   const log = opts.log ?? (() => {});
+  /**
+   * Le 14/10, aucune connexion réussie depuis le 02/10, et rien dans le journal
+   * pour dire pourquoi : la porte ne notait que ses succès. Chaque refus a
+   * maintenant sa ligne — une fois par minute pour la même chose, au plus.
+   */
+  const lastSaid = new Map<string, number>();
+  const say = (key: string, line: string) => {
+    const t = now();
+    if ((lastSaid.get(key) ?? -Infinity) > t - 60_000) return;
+    if (lastSaid.size > 200) lastSaid.clear();
+    lastSaid.set(key, t);
+    log(line);
+  };
 
   const server = createServer((req, res) => {
     handle(req, res).catch((e: unknown) => {
@@ -122,6 +164,11 @@ export function createGate(opts: GateOptions): Server {
   function refuse(req: IncomingMessage, res: ServerResponse, url: URL): void {
     const navigation = req.headers['sec-fetch-mode'] === 'navigate'
       || (req.method === 'GET' && (req.headers.accept ?? '').includes('text/html'));
+    if (watched(url.pathname)) {
+      const device = deviceOf(req.headers['user-agent']);
+      const what = navigation ? `page ${url.pathname}` : `${req.method} ${url.pathname}`;
+      say(`refus ${device} ${what}`, `sans session : ${what} refusée (${device})`);
+    }
     if (navigation) return page(res, 401, url.pathname + url.search);
     json(res, 401, { error: 'Connexion requise.' });
   }
@@ -161,6 +208,22 @@ export function createGate(opts: GateOptions): Server {
       }
     }
 
+    const device = deviceOf(req.headers['user-agent']);
+
+    // Ce qu'un appareil dit de son ouverture : Face ID annulé, porte muette,
+    // erreur d'affichage. Sans session par nature — c'est quand il n'en a pas
+    // que le journal compte —, il ne fait qu'écrire une ligne, bornée.
+    if (route === 'POST /connexion/journal') {
+      if (!journal.take(now()).ok) return send(res, 204, 'text/plain; charset=utf-8', '');
+      const entry = (await readJson(req)) as { evenement?: unknown; detail?: unknown } | undefined;
+      const what = field(entry?.evenement, 60);
+      if (what) {
+        const detail = field(entry?.detail, 240);
+        log(`${device} : ${what}${detail ? ` — ${detail}` : ''}`);
+      }
+      return send(res, 204, 'text/plain; charset=utf-8', '');
+    }
+
     // Toute écriture sur /connexion est une tentative.
     const slot = limiter.take(now());
     if (!slot.ok) {
@@ -168,29 +231,45 @@ export function createGate(opts: GateOptions): Server {
       return json(res, 429, { error: 'Trop de tentatives. Réessaie dans quelques minutes.' }, { 'Retry-After': String(slot.retryAfterS) });
     }
     const origin = opts.origin();
-    if (!origin) return json(res, 503, { error: 'Adresse publique inconnue : la connexion est indisponible.' });
+    if (!origin) {
+      log(`connexion impossible : adresse publique inconnue (${device})`);
+      return json(res, 503, { error: 'Adresse publique inconnue : la connexion est indisponible.' });
+    }
     const rpID = new URL(origin).hostname;
     const body = await readJson(req);
-    if (body === undefined) return json(res, 400, { error: 'Requête illisible.' });
+    if (body === undefined) {
+      log(`connexion refusée : requête illisible (${device})`);
+      return json(res, 400, { error: 'Requête illisible.' });
+    }
 
     switch (route) {
       case 'POST /connexion/options': {
         const passkeys = opts.store.passkeys();
-        if (passkeys.length === 0) return json(res, 409, { error: 'Aucune clé d\'accès enregistrée : commence par « Nouvel appareil ».' });
+        if (passkeys.length === 0) {
+          log(`connexion impossible : aucune clé d'accès enregistrée (${device})`);
+          return json(res, 409, { error: 'Aucune clé d\'accès enregistrée : commence par « Nouvel appareil ».' });
+        }
         const options = await generateAuthenticationOptions({
           rpID,
           userVerification: 'required',
           allowCredentials: passkeys.map((p) => ({ id: p.id, transports: p.transports })),
         });
+        log(`connexion : Face ID demandé (${device})`);
         return json(res, 200, options, { 'Set-Cookie': begin({ kind: 'login', challenge: options.challenge }) });
       }
 
       case 'POST /connexion/verifier': {
         const ceremony = end(req, 'login');
-        if (!ceremony) return json(res, 400, { error: 'Cérémonie expirée : recommence.' });
+        if (!ceremony) {
+          log(`connexion refusée : cérémonie absente ou expirée (${device})`);
+          return json(res, 400, { error: 'Cérémonie expirée : recommence.' });
+        }
         const response = body as AuthenticationResponseJSON;
         const passkey = typeof response?.id === 'string' ? opts.store.passkey(response.id) : null;
-        if (!passkey) return json(res, 401, { error: 'Clé d\'accès inconnue.' });
+        if (!passkey) {
+          log(`connexion refusée : clé d'accès inconnue (${device})`);
+          return json(res, 401, { error: 'Clé d\'accès inconnue.' });
+        }
         const result = await verifyAuthenticationResponse({
           response,
           expectedChallenge: ceremony.challenge,
@@ -198,10 +277,14 @@ export function createGate(opts: GateOptions): Server {
           expectedRPID: rpID,
           credential: { ...passkey, transports: passkey.transports as WebAuthnCredential['transports'] },
           requireUserVerification: true,
-        }).catch((e: unknown) => { log(`connexion refusée : ${e instanceof Error ? e.message : String(e)}`); return null; });
-        if (!result?.verified) return json(res, 401, { error: 'Signature refusée.' });
+        }).catch((e: unknown) => { log(`connexion refusée : ${e instanceof Error ? e.message : String(e)} (${device})`); return null; });
+        if (!result) return json(res, 401, { error: 'Signature refusée.' });
+        if (!result.verified) {
+          log(`connexion refusée : signature (${device})`);
+          return json(res, 401, { error: 'Signature refusée.' });
+        }
         opts.store.setCounter(passkey.id, result.authenticationInfo.newCounter);
-        log('connexion : session ouverte');
+        log(`connexion : session ouverte (${device})`);
         return json(res, 200, { ok: true }, { 'Set-Cookie': [openSession(passkey.id), clearCeremony()] });
       }
 

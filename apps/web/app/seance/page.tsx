@@ -65,7 +65,7 @@ function Seance() {
   if (!session) {
     return (
       <div className="w">
-        <nav className="w-crumbs"><Link href={back.href}>← {back.label}</Link></nav>
+        <nav className="w-crumbs"><Link href={back.href} transitionTypes={['nav-back']}>← {back.label}</Link></nav>
         <header className="w-head">
           <div className="w-date">{frDate(date, { weekday: true, long: true })}</div>
           <h1 className="w-title">Rien au programme</h1>

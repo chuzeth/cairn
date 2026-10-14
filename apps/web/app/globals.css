@@ -1,59 +1,63 @@
 /*
- * Système visuel de Cairn — direction « Profil ».
+ * Système visuel de Cairn — direction « Altitude », choisie par Pierre le 14/10.
  *
- * Registre : la carte d'état-major et le dossard. Fond ardoise, blanc pierre,
- * deux gris de sentier, un filet ; l'ocre des courbes de niveau pour ce qui
- * monte. Aucune carte bordée, aucune pastille, aucune micro-étiquette en
- * capitales : ce qui structure, c'est l'échelle typographique et le blanc.
+ * Registre : la carte IGN et le carnet de terrain. Le papier, l'encre, un
+ * filet ; le bleu glacier de l'encre de carte pour ce qu'on touche et ce qui se
+ * lit en premier, le vermillon pour ce qui coûte — le seuil, les montées,
+ * l'alerte. Les titres et les grands nombres en Instrument Serif, le reste en
+ * Instrument Sans : une page de revue plutôt qu'un tableau de bord.
  *
- * Les seules couleurs qui s'ajoutent portent du sens sur les vues de bureau —
- * filière métabolique, filière mécanique, état — et elles sont tirées de la même
- * terre que l'ocre, pour que l'instrument et l'écran du matin restent un seul
- * produit. Sur l'écran du matin, l'ocre ne dit qu'une chose : ça monte.
+ * Aucune couleur n'est décorative. Glacier : l'action, le mouvement, l'aérobie.
+ * Vermillon : l'effort et les montées. Ambre : la vigilance. Vert : le fait.
  */
 
 :root {
-  /* Fonds */
-  --bg: #0e1316;
-  --bg-elev: #131a1d;
-  --bg-elev-2: #1a2225;
-  --bg-inset: #0b1012;
+  /* Fonds : le papier, une carte un ton plus clair, un retrait un ton plus sombre. */
+  --bg: #F4F2EE;
+  --bg-elev: #FAF9F6;
+  --bg-elev-2: #ECE8E1;
+  --bg-inset: #EDEAE4;
 
   /* Traits */
-  --border: #232a2d;
-  --border-strong: #343d40;
+  --border: #DCD7CF;
+  --border-strong: #C9C3B8;
 
-  /* Texte */
-  --text: #ece8df;
-  --text-dim: #98a09c;
-  --text-faint: #5d6663;
+  /* Texte : l'encre, le corps de texte, les légendes. */
+  --text: #15181B;
+  --text-dim: #4A5056;
+  --text-faint: #6B7177;
 
-  /* L'ocre des courbes de niveau. Sur l'écran du matin : les montées, rien d'autre. */
-  --ochre: #d6a15c;
+  /* Les couleurs qui portent du sens. */
+  --accent: #2C5D7C;
+  --accent-pale: #DCE6EC;
+  /* Ce qui monte, ce qui coûte. */
+  --climb: #C2461F;
+  /* Le plâtre : ni le corps, ni un muscle. */
+  --cast: #E6D7B5;
+  --cast-ink: #A4813F;
 
-  /* Les schémas d'exercices : le corps, et son côté opposé. */
-  --fig-near: #ddd8cd;
-  --fig-far: #7b827e;
+  /* Les schémas d'exercices : le corps à l'encre, son côté opposé en gris. */
+  --fig-near: #2E3A44;
+  --fig-far: #A3ACB4;
 
   /* Sémantique */
-  --metabolic: #6f9ba6;
-  --metabolic-dim: #2c4850;
-  --mechanical: #d6a15c;
-  --mechanical-dim: #5d4527;
-  --good: #93a97e;
-  --watch: #d6a15c;
-  --warn: #c2705d;
-  --accent: #d6a15c;
+  --metabolic: #4F7F9C;
+  --metabolic-dim: #C9D9E3;
+  --mechanical: #B5652B;
+  --mechanical-dim: #F0DCCB;
+  --good: #4E7A4F;
+  --watch: #B07A1E;
+  --warn: #C2461F;
 
-  /* Zones d'entraînement */
-  --z1: #5d6663;
-  --z2: #6f9ba6;
-  --z3: #93a97e;
-  --z4: #d6a15c;
-  --z5: #c2705d;
+  /* Zones d'entraînement : le glacier pour l'aérobie, le vermillon au seuil et au-delà. */
+  --z1: #CFDDE6;
+  --z2: #9DBBCD;
+  --z3: #5F8CA8;
+  --z4: #D9502E;
+  --z5: #8E2B14;
 
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 14px;
+  --radius-sm: 10px;
 
   /* La barre d'onglets, bordure comprise, et la réserve que toute zone
      défilante lui garde en bas : sa hauteur plus la zone sûre du téléphone.
@@ -70,13 +74,19 @@
      chaque écran s'y tient, centré. Assez large pour une séance et sa carte,
      assez étroite pour qu'une ligne se lise d'un seul mouvement d'yeux. */
   --column: 640px;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow: 0 1px 2px rgba(21, 24, 27, 0.06), 0 10px 30px rgba(21, 24, 27, 0.10);
 
-  /* Archivo, chargée par next/font : rien ne part vers Google à l'ouverture. */
-  --font: var(--font-archivo), "Arial Narrow", system-ui, -apple-system, sans-serif;
+  /* Les mouvements : une sortie brève, une entrée plus douce. */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-exit: 140ms;
+  --t-enter: 260ms;
+
+  /* Instrument Sans et Instrument Serif, chargées par next/font : rien ne part vers Google à l'ouverture. */
+  --font: var(--font-instrument-sans), system-ui, -apple-system, sans-serif;
+  --serif: var(--font-instrument-serif), ui-serif, "New York", Georgia, serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -113,7 +123,7 @@ textarea { text-wrap: wrap; }
 
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; font-size: inherit; }
-:focus-visible { outline: 1px solid var(--ochre); outline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 /* ── Structure ────────────────────────────────────────────────────────────── */
 
@@ -146,7 +156,7 @@ button { font-family: inherit; font-size: inherit; }
 
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 20px; }
 .brand-mark { width: 26px; height: 26px; flex: none; }
-.brand-name { font-weight: 650; letter-spacing: -0.02em; font-size: 16px; }
+.brand-name { font-family: var(--serif); font-weight: 400; letter-spacing: -0.01em; font-size: 22px; line-height: 1; }
 .brand-sub { font-size: 11px; color: var(--text-faint); letter-spacing: 0.04em; text-transform: uppercase; }
 
 .nav-link {
@@ -165,7 +175,7 @@ button { font-family: inherit; font-size: inherit; }
 .main { min-width: 0; padding: 28px 32px 64px; max-width: 1400px; container: page / inline-size; }
 
 .page-head { margin-bottom: 24px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.page-title { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
+.page-title { font-family: var(--serif); font-size: 34px; font-weight: 400; line-height: 1.05; letter-spacing: -0.01em; margin: 0; }
 .page-sub { color: var(--text-dim); font-size: 13px; margin: 4px 0 0; }
 
 /* ── Cartes ───────────────────────────────────────────────────────────────── */
@@ -183,7 +193,7 @@ button { font-family: inherit; font-size: inherit; }
    plutôt que de se tasser à côté d'un bouton. */
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .card-head > div:first-child { flex: 1 1 14em; min-width: 0; }
-.card-title { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--text); }
+.card-title { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; margin: 0; color: var(--text-faint); }
 .card-hint { font-size: 11.5px; color: var(--text-faint); }
 
 /*
@@ -231,16 +241,16 @@ button { font-family: inherit; font-size: inherit; }
    les montées, et la barre est sous le profil en permanence. */
 .tab[data-active="true"], .tab[data-active="true"] .nav-icon { color: var(--text); }
 
-.sheet-veil { display: none; position: fixed; inset: 0; z-index: 50; background: rgba(4, 5, 8, 0.62); }
+.sheet-veil { display: none; position: fixed; inset: 0; z-index: 50; background: rgba(21, 24, 27, 0.28); }
 .sheet {
   position: absolute; left: 0; right: 0; bottom: 0;
   max-width: calc(var(--column) + 24px); margin-inline: auto;
   background: var(--bg-elev); border-top: 1px solid var(--border-strong);
   border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
   padding: 6px 12px calc(var(--bars) + 10px);
-  animation: sheet-in 160ms ease-out;
+  animation: sheet-in 260ms var(--ease-out);
 }
-@keyframes sheet-in { from { transform: translateY(18px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@keyframes sheet-in { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
 .sheet-grip { width: 34px; height: 4px; border-radius: 2px; background: var(--border-strong); margin: 6px auto 10px; }
 .sheet-link {
   display: flex; align-items: center; gap: 12px;
@@ -321,7 +331,7 @@ button { font-family: inherit; font-size: inherit; }
    plus rien. » */
 .plan-name, .plan-figures, .plan-status, .plan-done-link { white-space: nowrap; }
 .plan-name { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
-.plan-figures { font-size: 12px; color: var(--text-faint); font-family: var(--mono); }
+.plan-figures { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .plan-status { font-size: 12px; }
 .plan-status[data-tone="done"] { color: var(--good); }
 .plan-status[data-tone="off"] { color: var(--warn); }
@@ -441,7 +451,7 @@ button { font-family: inherit; font-size: inherit; }
 
 .metric { display: flex; flex-direction: column; gap: 2px; }
 .metric-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 600; }
-.metric-value { font-size: 27px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.15; }
+.metric-value { font-family: var(--serif); font-size: 32px; font-weight: 400; letter-spacing: -0.01em; line-height: 1.1; }
 .metric-unit { font-size: 13px; color: var(--text-dim); font-weight: 500; margin-left: 3px; }
 .metric-note { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
 
@@ -534,16 +544,19 @@ td.right, th.right { text-align: right; }
    la place manque ; au bouton de rester entier. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 8px 14px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong); background: var(--bg-elev-2); color: var(--text);
-  font-size: 13.5px; font-weight: 550; line-height: 1.45; cursor: pointer;
-  white-space: nowrap; min-height: 38px;
-  transition: background 120ms, border-color 120ms, opacity 120ms;
+  padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+  font-size: 14px; font-weight: 500; line-height: 1.45; cursor: pointer;
+  white-space: nowrap; min-height: 40px;
+  transition: background 160ms, border-color 160ms, opacity 160ms, transform 160ms var(--ease-out);
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
-.btn:hover:not(:disabled) { background: #1a1f2a; border-color: #37404f; }
+.btn:hover:not(:disabled) { background: var(--bg-elev-2); border-color: var(--text-faint); }
+.btn:active:not(:disabled) { transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn[data-variant="primary"] { background: var(--accent); border-color: var(--accent); color: #06120c; font-weight: 650; }
-.btn[data-variant="primary"]:hover:not(:disabled) { background: #93e0b4; border-color: #93e0b4; }
+/* L'action du moment : la pilule d'encre, une seule par écran. */
+.btn[data-variant="primary"] { background: var(--text); border-color: var(--text); color: var(--bg); font-weight: 500; }
+.btn[data-variant="primary"]:hover:not(:disabled) { background: #2A2F34; border-color: #2A2F34; }
 .btn[data-variant="ghost"] { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn[data-variant="ghost"]:hover:not(:disabled) { background: var(--bg-elev-2); color: var(--text); }
 /* Détruire n'est pas une action courante, et ne doit pas se cliquer comme
@@ -606,7 +619,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .msg-content ul, .msg-content ol { margin: 0 0 10px; padding-left: 20px; }
 .msg-content li { margin-bottom: 3px; }
 .msg-content code { background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 0.88em; }
-.msg-content strong { font-weight: 650; color: #fff; }
+.msg-content strong { font-weight: 650; color: var(--text); }
 .msg-content table { margin: 10px 0; }
 
 .tool-trace { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
@@ -728,7 +741,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   user-select: none; -webkit-user-select: none;
   touch-action: manipulation;
 }
-.q-option:hover { border-color: #37404f; color: var(--text); }
+.q-option:hover { border-color: var(--text-faint); color: var(--text); }
 .q-option[data-on="true"] {
   background: color-mix(in srgb, var(--accent) 16%, var(--bg-inset));
   border-color: var(--accent); color: var(--text);
@@ -802,15 +815,20 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
    s'y allonge sans grossir (`Trace`), le texte garde sa taille. */
 .morning { min-height: 100%; padding-bottom: 10px; display: flex; flex-direction: column; gap: 22px; }
 
-.m-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; color: var(--text-dim); }
-.m-goal { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
+/* La date et l'échéance, en petites capitales comme une légende de carte ; trop
+   longues pour une ligne, l'échéance passe dessous plutôt que de couper la date. */
+.m-top {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 14px;
+  font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
+}
+.m-top > span { white-space: nowrap; }
+.m-goal { color: var(--accent); font-variant-numeric: tabular-nums; }
 
 .m-head { display: flex; flex-direction: column; gap: 8px; }
-/* Archivo étroite : à 54 px, la largeur 70 % fait tenir « 8 côtes de 90″ » sur
-   une ligne là où la largeur normale en prendrait deux. */
+/* Instrument Serif, étroite de nature : à 52 px, « 8 côtes de 90″ » tient sur une ligne. */
 .m-title {
-  margin: 0; font-stretch: 70%; font-weight: 640; font-size: 54px; line-height: 0.92;
-  letter-spacing: -0.005em; color: var(--text); overflow-wrap: break-word; text-wrap: balance;
+  margin: 0; font-family: var(--serif); font-weight: 400; font-size: 52px; line-height: 0.98;
+  letter-spacing: -0.01em; color: var(--text); overflow-wrap: break-word; text-wrap: balance;
 }
 .m-sub { margin: 0; font-size: 15px; line-height: 1.4; color: var(--text-dim); }
 .m-inline { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
@@ -844,22 +862,27 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-trace { display: block; width: 100%; height: auto; overflow: visible; }
 .m-trace[data-muted="true"] { opacity: 0.45; }
 .m-trace-ground { fill: none; stroke: var(--border); stroke-width: 1; }
-.m-trace-line { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.m-trace-line[data-tone="climb"] { stroke: var(--ochre); }
-.m-trace-line[data-tone="work"] { stroke: var(--text); }
+.m-trace-line {
+  fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; animation: trace-draw 900ms var(--ease-out) forwards;
+}
+@keyframes trace-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) { .m-trace-line { animation: none; stroke-dashoffset: 0; } }
+.m-trace-line[data-tone="climb"] { stroke: var(--climb); }
+.m-trace-line[data-tone="work"] { stroke: var(--accent); }
 .m-trace-line[data-tone="ease"] { stroke: var(--text-faint); }
 .m-trace-caption { font-size: 11px; fill: var(--text-faint); }
-.m-trace-caption[data-climb="true"] { fill: var(--ochre); }
+.m-trace-caption[data-climb="true"] { fill: var(--climb); }
 .m-trace-mark { font-size: 11px; fill: var(--text-faint); font-variant-numeric: tabular-nums; }
 
 .m-blocks { display: flex; flex-direction: column; gap: 12px; }
 .m-block { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: baseline; }
 .m-block-time {
-  font-stretch: 70%; font-size: 20px; font-weight: 560; line-height: 1.1;
+  font-family: var(--serif); font-size: 23px; font-weight: 400; line-height: 1.05;
   color: var(--text); font-variant-numeric: tabular-nums;
 }
-/* L'ocre ne dit qu'une chose, ici comme sur le tracé : ça monte. */
-.m-block-time[data-climb="true"] { color: var(--ochre); }
+/* Le vermillon ne dit qu'une chose, ici comme sur le tracé : ça monte. */
+.m-block-time[data-climb="true"] { color: var(--climb); }
 .m-block-body { font-size: 14px; line-height: 1.4; color: var(--text); }
 .m-block-note { display: block; color: var(--text-faint); }
 /* Les mots du coach, sous leur bloc et non sous la séance : une consigne
@@ -888,7 +911,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-avail-grid { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: baseline; }
 .m-gauge { display: flex; flex-direction: column; gap: 9px; }
 .m-score {
-  font-stretch: 70%; font-size: 44px; font-weight: 600; line-height: 0.9;
+  font-family: var(--serif); font-size: 50px; font-weight: 400; line-height: 0.9;
   color: var(--text); font-variant-numeric: tabular-nums;
 }
 .m-bars { display: block; width: 44px; height: 5px; }
@@ -914,7 +937,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-basis .basis-src { text-transform: none; letter-spacing: 0; font-size: 12px; }
 .m-figures { display: flex; flex-direction: column; gap: 10px; }
 .m-figure { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; font-size: 13px; color: var(--text-dim); }
-.m-figure-value { font-stretch: 70%; font-size: 19px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.m-figure-value { font-family: var(--serif); font-size: 23px; font-weight: 400; color: var(--text); font-variant-numeric: tabular-nums; }
 .m-figure .m-faint { grid-column: 1 / -1; font-size: 11.5px; }
 .m-adjust { padding-left: 12px; border-left: 1px solid var(--border-strong); font-size: 13px; color: var(--text-dim); }
 .m-adjust .msg-content p:last-child { margin-bottom: 0; }
@@ -996,7 +1019,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: #3a4453; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 
 /* ── Historique d'une séance ─────────────────────────────────────────────
    Le raisonnement long, à un geste de distance du « pourquoi » : il se lit
@@ -1059,7 +1082,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   isolation: isolate;
 }
 .m-map.leaflet-container { background: var(--bg-inset); font: inherit; }
-.m-map .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(0.82) contrast(0.92); }
+.m-map .leaflet-tile-pane { filter: grayscale(1) sepia(0.12) contrast(0.92) brightness(1.03); }
 .m-map .leaflet-control-attribution {
   background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text-faint); font-size: 10px;
 }
@@ -1086,7 +1109,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .route-legs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
 .route-leg-head { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 10px; align-items: baseline; }
 .route-leg-time { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.route-leg-time[data-climb="true"] { color: var(--ochre); }
+.route-leg-time[data-climb="true"] { color: var(--climb); }
 .route-leg-label { font-size: 14px; line-height: 1.4; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
 .route-steps {
   list-style: none; margin: 6px 0 0 86px; padding: 0 0 0 10px; border-left: 1px solid var(--border-strong);
@@ -1118,34 +1141,50 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   .route-steps { margin-left: 0; }
 }
 
-/* ── Face ID à chaque ouverture (`components/Lock.tsx`) ───────────────────── */
-/* L'écran qui précède l'app, et le voile qui la couvre en arrière-plan. */
+/* ── L'écran d'ouverture et Face ID (`components/Lock.tsx`) ───────────────── */
+/* Le 14/10, Pierre : « une petite page de chargement et un petit Face ID ». Le
+   papier, les courbes de niveau, le nom ; Face ID se lance seul, le bouton ne
+   vient qu'après un échec. Le même écran couvre l'app en arrière-plan. */
 .lock {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: calc(env(safe-area-inset-top) + 24px) 20px calc(env(safe-area-inset-bottom) + 24px);
-  background: var(--bg);
+  position: fixed; inset: 0; z-index: 1000;
+  display: grid; place-items: center;
+  padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px);
+  background: var(--bg); overflow: hidden;
 }
-.lock-body { width: 100%; max-width: 360px; }
-.lock-title { margin: 0 0 10px; font-size: 34px; line-height: 1.05; font-weight: 640; font-stretch: 80%; }
-.lock-sub { margin: 0 0 28px; color: var(--text-dim); font-size: 15px; line-height: 1.5; }
+.lock-topo { position: absolute; left: -10%; right: -10%; bottom: -6%; width: 120%; height: 62%; pointer-events: none; }
+.lock-topo path { fill: none; stroke: #D9D3C8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lock-topo g { animation: lock-drift 26s ease-in-out infinite alternate; transform-origin: 50% 50%; }
+@keyframes lock-drift { from { transform: translate3d(-2%, 0, 0); } to { transform: translate3d(2%, -1.5%, 0); } }
+.lock-body { position: relative; width: 100%; max-width: 360px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.lock-title {
+  margin: 0; font-family: var(--serif); font-weight: 400; font-size: 64px; line-height: 1; letter-spacing: -0.02em;
+  animation: lock-rise 900ms var(--ease-out) both;
+}
+.lock-sub {
+  margin: 10px 0 0; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint);
+  animation: lock-rise 900ms 120ms var(--ease-out) both;
+}
+@keyframes lock-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.lock-face { margin-top: 56px; min-height: 92px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.lock-glyph { width: 40px; height: 40px; color: var(--accent); animation: lock-breathe 1.6s ease-in-out infinite; }
+@keyframes lock-breathe { 50% { opacity: 0.35; transform: scale(0.92); } }
+.lock-status { min-height: 1.5em; font-size: 14px; color: var(--text-faint); }
 .lock-button {
-  display: block;
-  width: 100%;
-  padding: 15px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--text);
-  color: var(--bg);
-  font-weight: 600;
-  font-size: 16px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; height: 54px; border: 0; border-radius: 999px;
+  background: var(--text); color: var(--bg); font-size: 16px; font-weight: 500; cursor: pointer;
+  animation: lock-rise 420ms var(--ease-out) both;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
+.lock-button:active { transform: scale(0.98); }
 .lock-button:disabled { opacity: 0.5; }
-.lock-message { min-height: 1.5em; margin: 16px 0 0; color: var(--accent); font-size: 14px; line-height: 1.45; }
-.lock-link { display: inline-block; margin-top: 24px; color: var(--text-faint); font-size: 13px; }
+.lock-button-glyph { width: 20px; height: 20px; }
+.lock-message { min-height: 1.5em; margin: 14px 0 0; color: var(--climb); font-size: 14px; line-height: 1.45; }
+.lock-offline { margin: 6px 0 0; color: var(--text-faint); font-size: 13px; line-height: 1.45; }
+/* Face ID passé : l'écran s'efface, l'app est déjà dessous. */
+.lock-leave { animation: lock-leave 420ms var(--ease-out) both; pointer-events: none; }
+@keyframes lock-leave { to { opacity: 0; transform: scale(1.04); } }
+.lock-veil .lock-title { animation: none; }
 
 /* « comment faire » : la fiche de l'exercice, à côté de son nom (`/exercices`). */
 .m-howto {
@@ -1160,17 +1199,17 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 
 /* ── Fiches d'exercices (`/exercices`, `components/ExerciseFigure.tsx`) ───── */
 .xs { display: flex; flex-direction: column; gap: 18px; padding-bottom: 32px; }
-.xs h2 { margin: 0 0 10px; font-size: 17px; font-weight: 640; }
+.xs h2 { margin: 0 0 10px; font-family: var(--serif); font-size: 26px; font-weight: 400; line-height: 1.1; }
 .xs h4 { margin: 14px 0 4px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
 .xs p, .xs li { font-size: 14.5px; line-height: 1.55; color: var(--text); }
 .xs-rules { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev); }
 .xs-rules ol, .xs-rules ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
 .xs-group { display: flex; flex-direction: column; gap: 12px; }
-.xs-group-title { margin: 12px 0 0 !important; font-size: 22px !important; }
+.xs-group-title { margin: 12px 0 0 !important; font-size: 32px !important; }
 .xs-group-lead { margin: 0; color: var(--text-dim) !important; }
 .xs-card { padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-elev); scroll-margin-top: 16px; }
 .xs-card:target { border-color: var(--accent); }
-.xs-name { margin: 6px 0 2px; font-size: 19px; font-weight: 640; }
+.xs-name { margin: 6px 0 2px; font-family: var(--serif); font-size: 27px; font-weight: 400; line-height: 1.1; }
 .xs-meta { margin: 0 0 10px; font-size: 13px !important; color: var(--text-dim) !important; }
 .xs-why { margin: 0; color: var(--text-dim) !important; }
 .xs-what { margin: 0 0 8px; font-size: 15.5px !important; line-height: 1.5; color: var(--text) !important; }
@@ -1188,7 +1227,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xs-variants { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 14px; }
 @media (min-width: 560px) { .xs-variants { grid-template-columns: 1fr 1fr; } }
 .xs-variants p { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--bg-inset); font-size: 14px !important; }
-.xs-cast { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--ochre); background: var(--bg-inset); border-radius: 0 8px 8px 0; }
+.xs-cast { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--cast-ink); background: var(--bg-inset); border-radius: 0 8px 8px 0; }
 .xs-sources ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .xs h3 { margin: 18px 0 8px; font-size: 15px; font-weight: 640; }
 .xs-block-lead { margin: 0 0 12px; color: var(--text-dim) !important; }
@@ -1200,41 +1239,42 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xs-sources li { font-size: 13px !important; color: var(--text-dim) !important; }
 
 /*
- * Les schémas d'exercices (lib/figure, components/ExerciseFigure). Le corps en
- * blanc pierre, le côté opposé en gris, le plâtre en ocre, les muscles qui
- * travaillent en terre cuite, l'élastique en vert, le mouvement en bleu ; la
- * position de départ en silhouette sombre bordée d'un pointillé.
+ * Les schémas d'exercices (lib/figure, components/ExerciseFigure). Le corps à
+ * l'encre, le côté opposé en gris clair, le plâtre couleur plâtre, les muscles
+ * qui travaillent en vermillon, l'élastique en vert, le mouvement en glacier ;
+ * la position de départ en pointillé. Sur le papier, une silhouette d'encre se
+ * lit de loin : c'est ce qu'on regarde entre deux séries.
  */
 .xf-panels { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 0 0 8px; }
 @media (min-width: 720px) { .xf-panels[data-count="2"] { grid-template-columns: 1fr 1fr; } }
-.xf-panel { margin: 0; padding: 10px 8px 8px; border-radius: 10px; background: var(--bg-inset); }
+.xf-panel { position: relative; margin: 0; padding: 12px 10px 10px; border-radius: var(--radius); background: var(--bg-elev); border: 1px solid var(--border); }
 .xf { display: block; width: 100%; height: auto; max-height: 380px; margin: 0 auto; }
 .xf-caption { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin-top: 6px; font-size: 12.5px; line-height: 1.35; color: var(--text-dim); text-align: center; }
 .xf-key { display: inline-flex; align-items: center; gap: 6px; }
 .xf-key::before { content: ''; flex: none; width: 14px; height: 0; border-top: 2px solid var(--fig-near); }
-.xf-key-ghost::before { border-top: 2px dashed var(--text-dim); }
-.xf .fg-part { stroke: var(--bg-inset); stroke-width: 0.7; stroke-linejoin: round; }
+.xf-key-ghost::before { border-top: 2px dashed var(--text-faint); }
+.xf .fg-part { stroke: var(--bg-elev); stroke-width: 0.7; stroke-linejoin: round; }
 .xf .fg-near { fill: var(--fig-near); }
 .xf .fg-far { fill: var(--fig-far); }
-.xf .fg-cast { fill: var(--ochre); }
-.xf .fg-cast-far { fill: #a27a46; }
-.xf .fg-sling { fill: #6e5534; }
-.xf .fg-muscle { fill: var(--warn); opacity: 0.9; stroke: none; }
-.xf .fg-ghost-edge { fill: none; stroke: var(--text-dim); stroke-width: 1.3; stroke-dasharray: 1.6 1.4; }
-.xf .fg-ghost-fill { fill: #1d2629; stroke: none; }
+.xf .fg-cast { fill: var(--cast); stroke: var(--cast-ink); stroke-width: 0.5; }
+.xf .fg-cast-far { fill: #EFE4CB; stroke: var(--cast-ink); stroke-width: 0.4; }
+.xf .fg-sling { fill: #B9AE98; }
+.xf .fg-muscle { fill: #E0603A; opacity: 0.95; stroke: none; }
+.xf .fg-ghost-edge { fill: none; stroke: var(--text-faint); stroke-width: 1.1; stroke-dasharray: 1.6 1.4; }
+.xf .fg-ghost-fill { fill: var(--bg-elev); stroke: none; }
 .xf .fg-ground line { stroke: var(--border-strong); stroke-width: 0.6; }
 .xf .fg-ground .fg-ground-line { stroke: var(--text-faint); stroke-width: 0.9; }
-.xf .fg-backdrop { fill: color-mix(in srgb, var(--text) 5%, transparent); }
+.xf .fg-backdrop { fill: color-mix(in srgb, var(--text) 4%, transparent); }
 .xf .fg-furniture, .xf .fg-furniture line, .xf .fg-furniture path, .xf .fg-furniture circle, .xf .fg-furniture rect {
   stroke: var(--text-faint); stroke-width: 0.9; fill: none; stroke-linejoin: round; stroke-linecap: round;
 }
 .xf .fg-furniture.fg-pad, .xf .fg-furniture .fg-pad { fill: var(--bg-elev-2); }
 .xf .fg-furniture .fg-rail { stroke-width: 1.5; }
 .xf .fg-furniture .fg-anchor { stroke: var(--good); stroke-width: 1.3; }
-.xf .fg-mat { fill: #2a3533; }
-.xf .fg-towel { fill: #4a5a63; }
-/* Le sac chargé : la seule charge que porte le corps, sombre et bordé pour se détacher de lui. */
-.xf .fg-carry { fill: #56626a; stroke: var(--bg-inset); stroke-width: 0.8; }
+.xf .fg-mat { fill: #E3DED5; }
+.xf .fg-towel { fill: #C9D6DE; }
+/* Le sac chargé : la seule charge que porte le corps, d'un brun de toile, bordé pour se détacher de lui. */
+.xf .fg-carry { fill: #8C7B63; stroke: var(--bg-elev); stroke-width: 0.8; }
 .xf .fg-weight line { stroke: var(--text-dim); stroke-width: 1.2; stroke-linecap: round; }
 .xf .fg-weight .fg-plate { stroke-width: 2.4; }
 .xf .fg-band { stroke: var(--good); stroke-linecap: round; }
@@ -1248,14 +1288,14 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xf .fg-furniture .fg-anchor-block { fill: var(--good); stroke: none; }
 .xf .fg-furniture .fg-strap { stroke: var(--good); stroke-width: 1.2; }
 .xf .fg-furniture .fg-hook { stroke: var(--good); stroke-width: 1; fill: none; }
-.xf .fg-step circle { fill: var(--bg-inset); stroke: var(--metabolic); stroke-width: 0.8; }
-.xf .fg-step text { fill: var(--metabolic); font-size: 3.8px; font-weight: 700; }
-.xf .fg-guide { stroke: var(--text-dim); stroke-width: 0.55; stroke-dasharray: 1.4 1.4; }
+.xf .fg-step circle { fill: var(--bg-elev); stroke: var(--accent); stroke-width: 0.8; }
+.xf .fg-step text { fill: var(--accent); font-size: 3.8px; font-weight: 700; }
+.xf .fg-guide { stroke: var(--text-faint); stroke-width: 0.55; stroke-dasharray: 1.4 1.4; }
 .xf .fg-angle path { fill: none; stroke: var(--text); stroke-width: 0.7; }
-.xf .fg-angle text { fill: var(--text); font-size: 5.2px; font-weight: 650; }
-.xf .fg-motion path { fill: none; stroke: var(--metabolic); stroke-width: 1.1; stroke-linecap: round; }
-.xf .fg-motion text { fill: var(--metabolic); font-size: 5.2px; font-weight: 650; }
-.xf .fg-arrow-head { fill: var(--metabolic); stroke: none; }
+.xf .fg-angle text { fill: var(--text); font-size: 5.2px; font-weight: 600; }
+.xf .fg-motion path { fill: none; stroke: var(--accent); stroke-width: 1.1; stroke-linecap: round; }
+.xf .fg-motion text { fill: var(--accent); font-size: 5.2px; font-weight: 600; }
+.xf .fg-arrow-head { fill: var(--accent); stroke: none; }
 .xf .fg-note line { stroke: var(--text-faint); stroke-width: 0.5; }
 .xf .fg-note text { fill: var(--text-dim); font-size: 5.2px; }
 
@@ -1272,7 +1312,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .w-days { display: flex; gap: 18px; }
 .w-head { display: flex; flex-direction: column; gap: 8px; }
 .w-date { font-size: 14px; color: var(--text-dim); }
-.w-title { margin: 0; font-stretch: 70%; font-weight: 640; font-size: 50px; line-height: 0.95; letter-spacing: -0.005em; text-wrap: balance; }
+.w-title { margin: 0; font-family: var(--serif); font-weight: 400; font-size: 52px; line-height: 0.98; letter-spacing: -0.01em; text-wrap: balance; }
 .w-summary { margin: 0; font-size: 15px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .w-done { margin: 0; font-size: 15px; color: var(--good); }
 .w-start { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 12px; }
@@ -1294,7 +1334,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 
 /* Les parties, et leurs exercices. */
 .w-part-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border-strong); }
-.w-part-head h2 { margin: 0; font-stretch: 70%; font-size: 32px; font-weight: 640; line-height: 1; }
+.w-part-head h2 { margin: 0; font-family: var(--serif); font-size: 34px; font-weight: 400; line-height: 1; }
 .w-part-head span { font-size: 13px; color: var(--text-faint); white-space: nowrap; }
 .w-step { display: flex; flex-direction: column; gap: 14px; padding: 24px 0; border-bottom: 1px solid var(--border); scroll-margin-top: 20px; }
 .w-step-head { display: flex; flex-direction: column; gap: 4px; }
@@ -1302,24 +1342,24 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .w-step-head .w-main { padding-left: calc(1.3 * 22px + 12px); }
 .w-step-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 @container workout (width >= 760px) { .w-step-grid { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 32px; align-items: start; } }
-.w-step:target .w-step-name { color: var(--ochre); }
+.w-step:target .w-step-name { color: var(--accent); }
 .w-step[data-done="true"] .w-step-fig { opacity: 0.55; }
 .w-step-fig .xf-panels { margin: 0; }
-.w-step-name { display: flex; align-items: baseline; gap: 12px; margin: 0; font-size: 22px; font-weight: 640; line-height: 1.2; }
-.w-step-n { min-width: 1.3em; color: var(--text-faint); font-weight: 560; font-variant-numeric: tabular-nums; }
+.w-step-name { display: flex; align-items: baseline; gap: 12px; margin: 0; font-family: var(--serif); font-size: 28px; font-weight: 400; line-height: 1.12; }
+.w-step-n { min-width: 1.3em; color: var(--text-faint); font-family: var(--font); font-size: 0.62em; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* Ce qu'il y a à faire : le chiffre qu'on lit de loin, puis ce qui le précise. */
-.w-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-stretch: 70%; font-size: 36px; font-weight: 640; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.w-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-family: var(--serif); font-size: 40px; font-weight: 400; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .w-main-big { font-size: 60px; }
-.w-main-note { font-stretch: 100%; font-size: 15px; font-weight: 500; color: var(--text-dim); }
+.w-main-note { font-family: var(--font); font-size: 15px; font-weight: 500; color: var(--text-dim); }
 .w-main-big .w-main-note { font-size: 18px; }
 .w-what { margin: 0 0 14px; font-size: 16.5px; line-height: 1.45; color: var(--text); }
-.w-what-label { display: block; margin-bottom: 3px; font-size: 12px; font-weight: 640; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
+.w-what-label { display: block; margin-bottom: 4px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); }
 .w-details { margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: 15px; line-height: 1.4; }
 .w-details div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
 .w-details dt { color: var(--text-faint); }
 .w-details dd { margin: 0; color: var(--text); }
-.w-today { margin: 12px 0 0; padding: 8px 12px; border-left: 3px solid var(--border-strong); background: var(--bg-inset); border-radius: 0 6px 6px 0; font-size: 14.5px; color: var(--text); }
+.w-today { margin: 12px 0 0; padding: 9px 13px; border-left: 3px solid var(--accent); background: var(--accent-pale); border-radius: 0 10px 10px 0; font-size: 14.5px; color: var(--text); }
 .w-kit { display: inline-block; margin-top: 12px; font-size: 14.5px; color: var(--accent, var(--text)); text-decoration: underline; text-underline-offset: 3px; }
 .w-cues-box { margin: 0 0 14px; }
 .w-cues { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; font-size: 16px; line-height: 1.45; color: var(--text); }
@@ -1351,7 +1391,7 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   width: 88px; height: 46px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong);
   background: var(--bg-inset); color: var(--text); font: inherit; font-size: 21px; text-align: center; font-variant-numeric: tabular-nums;
 }
-.w-test-field input:focus { outline: none; border-color: var(--ochre); }
+.w-test-field input:focus { outline: none; border-color: var(--accent); }
 .w-test-field em { font-style: normal; font-size: 13px; color: var(--text-faint); text-transform: none; letter-spacing: normal; }
 .w-test-note { margin: 0; font-size: 13.5px; line-height: 1.45; color: var(--text-dim); }
 .w-test-error { color: var(--warn); }
@@ -1368,8 +1408,8 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .w-more h4 { margin: 14px 0 4px; font-size: 13px; font-weight: 640; color: var(--text); }
 .w-more p, .w-more li { font-size: 14px; line-height: 1.5; color: var(--text-dim); }
 .w-more ul, .w-more ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
-.w-cast { padding: 8px 12px; border-left: 3px solid var(--ochre); background: var(--bg-inset); border-radius: 0 6px 6px 0; }
-.w-why h2 { margin: 0 0 6px; font-size: 15px; font-weight: 640; }
+.w-cast { padding: 8px 12px; border-left: 3px solid var(--cast-ink); background: var(--bg-inset); border-radius: 0 10px 10px 0; }
+.w-why h2 { margin: 0 0 6px; font-family: var(--serif); font-size: 22px; font-weight: 400; }
 .w-why p { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--text-dim); }
 
 /* Pas à pas : tout l'écran, un exercice à la fois. */
@@ -1378,14 +1418,14 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   padding-top: var(--safe-top); padding-bottom: env(safe-area-inset-bottom); background: var(--bg); outline: none;
 }
 .w-p-top { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--border); }
-.w-p-close { width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--bg-elev-2); color: var(--text-dim); font-size: 17px; cursor: pointer; }
+.w-p-close { width: 40px; height: 40px; border: 1px solid var(--border); border-radius: 50%; background: var(--bg-elev); color: var(--text-dim); font-size: 17px; cursor: pointer; }
 .w-p-close:hover { color: var(--text); }
 .w-p-where { display: flex; flex-direction: column; min-width: 0; }
 .w-p-title { overflow: hidden; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; text-overflow: ellipsis; }
-.w-p-part { font-size: 16px; font-weight: 640; }
+.w-p-part { font-family: var(--serif); font-size: 20px; font-weight: 400; line-height: 1.1; }
 .w-p-count { font-size: 15px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .w-p-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; }
-.w-p-bar span { display: block; height: 100%; background: var(--good); transition: width 200ms; }
+.w-p-bar span { display: block; height: 100%; background: var(--accent); transition: width 420ms var(--ease-out); }
 .w-p-main { width: 100%; max-width: 1320px; margin: 0 auto; padding: 18px 20px 24px; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
 @media (min-width: 900px) {
   .w-p-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 44px; padding: 28px 40px; align-items: start; }
@@ -1397,25 +1437,25 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 @media (width < 900px) {
   .w-p-action {
     position: sticky; bottom: 0; z-index: 1; margin-top: 14px; padding: 12px 0 6px;
-    background: var(--bg); box-shadow: 0 -14px 18px -14px rgba(0, 0, 0, 0.75);
+    background: var(--bg); box-shadow: 0 -18px 18px -16px rgba(21, 24, 27, 0.18);
   }
   .w-p-primary { width: 100%; }
   .w-clock-value { font-size: 64px; }
 }
 .w-p-kicker { font-size: 13px; color: var(--text-faint); }
-.w-p-name { margin: 2px 0 10px; font-size: 34px; font-weight: 640; line-height: 1.1; text-wrap: balance; }
+.w-p-name { margin: 2px 0 10px; font-family: var(--serif); font-size: 40px; font-weight: 400; line-height: 1.04; text-wrap: balance; }
 .w-p-action { margin-top: 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
 .w-p-primary { min-height: 58px; padding: 12px 26px; font-size: 18px; }
 .w-p-switch { margin: 0; font-size: 17px; color: var(--text); }
 .w-clock { display: flex; align-items: baseline; gap: 16px; }
 .w-clock-label { font-size: 16px; color: var(--text-dim); }
-.w-clock-value { font-stretch: 70%; font-size: 92px; font-weight: 640; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.w-clock-value { font-size: 92px; font-weight: 500; line-height: 0.9; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .w-clock[data-tone="rest"] .w-clock-value { color: var(--metabolic); }
 .w-p-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid var(--border); }
 .w-p-keys { font-size: 12.5px; color: var(--text-faint); text-align: center; }
 @media (width < 700px) { .w-p-keys { display: none; } }
 .w-p-end { width: 100%; max-width: 640px; margin: 0 auto; padding: 48px 24px; display: flex; flex-direction: column; gap: 12px; }
-.w-p-end h2 { margin: 0; font-stretch: 70%; font-size: 52px; font-weight: 640; line-height: 1; }
+.w-p-end h2 { margin: 0; font-family: var(--serif); font-size: 56px; font-weight: 400; line-height: 1; }
 .w-p-end p { margin: 0; font-size: 16px; color: var(--text-dim); }
 .w-p-end-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
 
@@ -1423,6 +1463,44 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-open { align-self: flex-start; min-height: 50px; padding: 10px 22px; font-size: 16px; }
 .m-toc { display: flex; flex-direction: column; gap: 10px; }
 .m-toc-part { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; }
-.m-toc-part strong { font-size: 15px; font-weight: 640; }
+.m-toc-part strong { font-family: var(--serif); font-size: 21px; font-weight: 400; }
 .m-toc-part span { font-size: 13px; color: var(--text-faint); white-space: nowrap; }
 .m-toc-part p { grid-column: 1 / -1; margin: 0; font-size: 13.5px; line-height: 1.4; color: var(--text-dim); }
+
+/* ── Le passage d'un écran à l'autre (`app/template.tsx`) ───────────────────
+ * L'écran qui part s'efface en 140 ms, celui qui arrive monte de dix pixels en
+ * 260 : la sortie ne dispute pas l'attention à l'entrée. Ouvrir la séance glisse
+ * vers la gauche, en revenir vers la droite. Les barres de navigation restent
+ * en place : c'est le contenu qui change, pas l'app.
+ */
+::view-transition { pointer-events: none; }
+::view-transition-old(.page-exit) { animation: var(--t-exit) ease-in both vt-fade-out; }
+::view-transition-new(.page-enter) { animation: var(--t-enter) var(--ease-out) 60ms both vt-rise; }
+::view-transition-old(.slide-forward) { --vt-offset: -48px; animation: 160ms ease-in both vt-fade-out, 360ms var(--ease-out) both vt-slide-out; }
+::view-transition-new(.slide-forward) { --vt-offset: 48px; animation: 260ms var(--ease-out) 80ms both vt-fade-in, 360ms var(--ease-out) both vt-slide-in; }
+::view-transition-old(.slide-back) { --vt-offset: 48px; animation: 160ms ease-in both vt-fade-out, 360ms var(--ease-out) both vt-slide-out; }
+::view-transition-new(.slide-back) { --vt-offset: -48px; animation: 260ms var(--ease-out) 80ms both vt-fade-in, 360ms var(--ease-out) both vt-slide-in; }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-fade-in { from { opacity: 0; } }
+@keyframes vt-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes vt-slide-out { to { translate: var(--vt-offset) 0; } }
+@keyframes vt-slide-in { from { translate: var(--vt-offset) 0; } to { translate: 0 0; } }
+.tabbar { view-transition-name: tabbar; }
+.sidebar { view-transition-name: sidebar; }
+::view-transition-group(tabbar), ::view-transition-group(sidebar) { animation: none; z-index: 100; }
+::view-transition-old(tabbar), ::view-transition-old(sidebar) { display: none; }
+::view-transition-new(tabbar), ::view-transition-new(sidebar) { animation: none; }
+
+/* Un contenu qui arrive après sa lecture monte, comme un écran : les chiffres
+   ne surgissent pas d'un coup sous le doigt. */
+.reveal { animation: vt-rise 420ms var(--ease-out) both; }
+.reveal-2 { animation-delay: 70ms; }
+.reveal-3 { animation-delay: 140ms; }
+.reveal-4 { animation-delay: 210ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*), ::view-transition-new(*), ::view-transition-group(*) {
+    animation-duration: 0s !important; animation-delay: 0s !important;
+  }
+  .reveal, .lock-title, .lock-sub, .lock-button, .lock-leave, .lock-topo g, .lock-glyph { animation: none !important; }
+}

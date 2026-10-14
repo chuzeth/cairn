@@ -248,6 +248,30 @@ async function check(): Promise<void> {
 }
 
 /**
+ * Juste après Face ID, avant que l'app ne se montre : si le Mac sert une
+ * version plus récente, la ranger et recharger — l'app s'ouvre directement sur
+ * elle, Face ID tout juste passé ne se redemande pas. `updating` dit à l'écran
+ * qu'une mise à jour commence. Vrai si la page va se recharger.
+ *
+ * Le 14/10, le téléphone tournait encore sur la version du 02/10 : la porte
+ * refusait chaque comparaison faute de session, et l'app se croyait hors ligne.
+ * Ici la session vient de s'ouvrir, et le geste qui l'a ouverte n'est pas une
+ * saisie : seul ce qui reste écrit dans un champ retient la recharge.
+ */
+export async function updateAtUnlock(updating: () => void = () => {}): Promise<boolean> {
+  if (!BUILD) return false;
+  const { served, offline } = await askMac();
+  const verdict = decide({
+    build: BUILD, served: served?.commit ?? null, offline, reloadedFor: reloadedFor(), typing: typing(), touched: false,
+  });
+  if (verdict !== 'reload' || !served) return false;
+  updating();
+  if (!(await prepare(served.commit)) || typing() || !markReload(served.commit)) return false;
+  location.reload();
+  return true;
+}
+
+/**
  * Fait ranger la coquille neuve avant de recharger : sans cela, le service
  * worker resservirait l'ancienne et la recharge ne changerait rien.
  *

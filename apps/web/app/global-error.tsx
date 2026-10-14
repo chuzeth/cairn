@@ -13,13 +13,13 @@ export default function LayoutError({ error }: { error: Error & { digest?: strin
     <html lang="fr">
       <body
         style={{
-          margin: 0, minHeight: '100vh', background: '#0e1316', color: '#ece8df',
+          margin: 0, minHeight: '100vh', background: '#F4F2EE', color: '#15181B',
           font: '17px/1.5 -apple-system, system-ui, sans-serif',
           padding: 'calc(env(safe-area-inset-top) + 48px) 20px',
         }}
       >
         <p style={{ margin: 0 }}>Cairn n&apos;a pas pu s&apos;afficher.</p>
-        <p style={{ margin: '8px 0 0', fontSize: 13, color: '#5d6663', fontFamily: 'ui-monospace, monospace' }}>
+        <p style={{ margin: '8px 0 0', fontSize: 13, color: '#6B7177', fontFamily: 'ui-monospace, monospace' }}>
           version {BUILD ?? 'de développement'}
         </p>
       </body>

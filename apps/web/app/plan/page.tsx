@@ -215,7 +215,7 @@ export default function PlanPage() {
                           // Une séance de renforcement s'ouvre en entier, exercice par exercice
                           // (`/seance`) ; une course se déplie ici, sous la semaine.
                           return isWorkout(s) && s.status !== 'withdrawn' && s.status !== 'cancelled' ? (
-                            <Link key={s.id} href={`/seance?d=${s.date}`} className="plan-slot">{card}</Link>
+                            <Link key={s.id} href={`/seance?d=${s.date}`} className="plan-slot" transitionTypes={['nav-forward']}>{card}</Link>
                           ) : (
                             <button key={s.id} className="plan-slot" onClick={() => setOpen(open === s.id ? null : s.id)}>
                               {card}
@@ -223,7 +223,7 @@ export default function PlanPage() {
                           );
                         })}
                         {completed && !daily.some((s) => s.completedActivityId === completed.id) && (
-                          <Link href={`/activities/${completed.id}`} className="plan-done-link">
+                          <Link href={`/activities/${completed.id}`} className="plan-done-link" transitionTypes={['nav-forward']}>
                             ↗ séance faite
                           </Link>
                         )}

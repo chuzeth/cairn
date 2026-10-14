@@ -413,18 +413,18 @@ async function absent(route, cache) {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Cairn — hors réseau</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: light; }
   /* La barre d'état recouvre le haut de l'écran : le titre se pose dessous,
      ici comme dans l'application. */
   body { margin:0; padding:calc(env(safe-area-inset-top) + 48px) 20px 48px;
-         background:#0e1316; color:#ece8df;
+         background:#F4F2EE; color:#15181B;
          font:16px/1.5 -apple-system, system-ui, sans-serif; }
   main { max-width:420px; margin:0 auto; }
-  h1 { font-size:28px; line-height:1.1; margin:0 0 12px; font-weight:640; }
-  p { margin:0 0 20px; color:#98a09c; font-size:15px; }
-  code { color:#98a09c; }
-  a { display:block; padding:12px 0; color:#ece8df; text-decoration:underline;
-      text-underline-offset:3px; text-decoration-color:#343d40; }
+  h1 { font-family:ui-serif, "New York", Georgia, serif; font-size:34px; line-height:1.05; margin:0 0 12px; font-weight:400; }
+  p { margin:0 0 20px; color:#4A5056; font-size:15px; }
+  code { color:#4A5056; }
+  a { display:block; padding:12px 0; color:#15181B; text-decoration:underline;
+      text-underline-offset:3px; text-decoration-color:#C9C3B8; }
 </style></head><body><main>
 <h1>Pas de réseau</h1>
 <p>Cairn n'a pas <code>${route.replace(/[&<>"]/g, '')}</code> en réserve : cette page n'a jamais été

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Archivo } from 'next/font/google';
+import { Instrument_Sans, Instrument_Serif } from 'next/font/google';
 import { Lock } from '@/components/Lock';
 import { Nav } from '@/components/Nav';
 import { Offline } from '@/components/Offline';
@@ -7,19 +7,25 @@ import { TermSheet } from '@/components/Term';
 import './globals.css';
 
 /**
- * Archivo, axe de largeur compris.
+ * Instrument Serif pour les titres et les grands nombres, Instrument Sans pour
+ * le reste — la direction « Altitude », choisie par Pierre le 14/10.
  *
- * `next/font` télécharge la police à la construction et la sert depuis le site :
- * l'application installée s'ouvre sans un seul appel vers Google, y compris hors
- * réseau. L'axe `wdth` est demandé explicitement — sans lui, le titre étroit du
- * matin (`font-stretch: 70%`) retomberait silencieusement sur la largeur
- * normale, et la direction retenue tiendrait à une police qui n'est pas là.
+ * `next/font` télécharge les polices à la construction et les sert depuis le
+ * site : l'application installée s'ouvre sans un seul appel vers Google, y
+ * compris hors réseau.
  */
-const archivo = Archivo({
+const sans = Instrument_Sans({
   subsets: ['latin'],
   axes: ['wdth'],
   display: 'swap',
-  variable: '--font-archivo',
+  variable: '--font-instrument-sans',
+});
+const serif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  style: ['normal', 'italic'],
+  display: 'swap',
+  variable: '--font-instrument-serif',
 });
 
 export const metadata: Metadata = {
@@ -27,15 +33,15 @@ export const metadata: Metadata = {
   description:
     "Coaching trail personnalisé : modèle physiologique individuel alimenté par Strava, planification adaptative et analyse de séance.",
   // Ouvert depuis l'écran d'accueil : un nom court sous l'icône, et une barre
-  // d'état ardoise au-dessus d'une application ardoise.
-  appleWebApp: { capable: true, title: 'Cairn', statusBarStyle: 'black' },
+  // d'état claire au-dessus d'une application de papier.
+  appleWebApp: { capable: true, title: 'Cairn', statusBarStyle: 'default' },
   // Le commit de cette construction, que le service worker relit avant de
   // ranger une coquille neuve (`public/sw.js`).
   ...(process.env.CAIRN_COMMIT ? { other: { 'cairn-commit': process.env.CAIRN_COMMIT } } : {}),
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0e1316',
+  themeColor: '#F4F2EE',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
@@ -43,7 +49,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" className={archivo.variable}>
+    <html lang="fr" className={`${sans.variable} ${serif.variable}`}>
       <body>
         <Offline />
         {/* Face ID à chaque ouverture : rien de l'app avant lui (`components/Lock.tsx`). */}

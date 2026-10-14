@@ -19,6 +19,7 @@ import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale,
   unweighed, Waiting, WhereLine,
 } from '@/components/ui';
+import { CountUp } from '@/components/CountUp';
 import { Glossed, Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
 import { HomeForm, Itinerary } from '@/components/Itinerary';
@@ -45,6 +46,9 @@ import { HomeForm, Itinerary } from '@/components/Itinerary';
  */
 
 const answeredStatus = (s: SessionRow) => s.status === 'completed' || s.status === 'replaced';
+
+/** « Force C : une jambe » dans une phrase : la majuscule du début tombe, pas celle de « C ». */
+const lowerFirst = (text: string) => `${text.slice(0, 1).toLocaleLowerCase('fr')}${text.slice(1)}`;
 
 /** « Demain » n'est vrai qu'un jour sur deux : un repos intercalé le rend faux. */
 const isTomorrow = (date: string, today: string) =>
@@ -121,7 +125,7 @@ export function Morning({
         <>
           {early.status === 'completed' && <Trace session={early} muted />}
           {early.completedActivityId && (
-            <Link href={`/activities/${early.completedActivityId}`} className="m-link">
+            <Link href={`/activities/${early.completedActivityId}`} className="m-link" transitionTypes={['nav-forward']}>
               {plan.completedByDate[early.date]?.id === early.completedActivityId
                 ? plan.completedByDate[early.date]!.name
                 : 'La séance d’hier'} · l&apos;analyse →
@@ -136,7 +140,7 @@ export function Morning({
         <>
           {session.status === 'completed' && <Trace session={session} muted />}
           {doneToday && (
-            <Link href={`/activities/${doneToday.id}`} className="m-link">
+            <Link href={`/activities/${doneToday.id}`} className="m-link" transitionTypes={['nav-forward']}>
               {doneToday.name} · l&apos;analyse →
             </Link>
           )}
@@ -153,7 +157,7 @@ export function Morning({
           <h2 className="m-title m-title-next">{sessionHeadline(openNext)}</h2>
           <p className="m-sub">{subline(openNext)}</p>
           {isWorkout(openNext)
-            ? <Link href={`/seance?d=${openNext.date}`} className="m-link">Voir la séance →</Link>
+            ? <Link href={`/seance?d=${openNext.date}`} className="m-link" transitionTypes={['nav-forward']}>Voir la séance →</Link>
             : <Trace session={openNext} />}
           <GarminLine status={openNext.garmin} />
         </section>
@@ -181,7 +185,7 @@ export function Morning({
         <>
           <p className="m-after">
             {isTomorrow(next.date, today) ? 'Demain' : 'Ensuite'}, {frDate(next.date, { weekday: true, long: true })}
-            {' : '}{sessionHeadline(next).toLocaleLowerCase('fr')}
+            {'\u00a0: '}{lowerFirst(sessionHeadline(next))}
             {next.plannedDurationS > 0 && <>, {prime(next.plannedDurationS)}</>}.
           </p>
           <GarminLine status={next.garmin} />
@@ -299,7 +303,7 @@ function WorkoutEntry({ session }: { session: SessionRow }) {
   const parts = workoutOf(session);
   return (
     <section className="m-session">
-      <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary">
+      <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary" transitionTypes={['nav-forward']}>
         Ouvrir la séance →
       </Link>
       <div className="m-toc">
@@ -309,7 +313,7 @@ function WorkoutEntry({ session }: { session: SessionRow }) {
             <span>{partSummary(p)}</span>
             {/* « Échauffement », sous « Échauffement », ne dit rien de plus. */}
             {!(p.steps.length === 1 && p.steps[0]!.name === p.name) && (
-              <p>{nbsp(p.steps.map((step) => step.name).join(' · '))}</p>
+              <p>{nbsp(p.steps.map((step) => step.name).join('\u00a0· '))}</p>
             )}
           </div>
         ))}
@@ -601,8 +605,9 @@ function Trace({
       aria-label={`Profil de la séance : ${spoken(session)}. ${p.caption}.`}
     >
       <path d={`M0 ${GROUND}H${W}`} className="m-trace-ground" />
+      {/* Le tracé se dessine de gauche à droite, un registre après l'autre : la séance se lit dans l'ordre où elle se fait. */}
       {paths.map((s, i) => (
-        <path key={i} d={s.d} className="m-trace-line" data-tone={s.tone} />
+        <path key={i} d={s.d} className="m-trace-line" data-tone={s.tone} pathLength={1} style={{ animationDelay: `${120 + i * 110}ms` }} />
       ))}
       {marks.map((m, i) => (
         <text
@@ -708,7 +713,7 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
     <section className="m-avail">
       <div className="m-avail-grid">
         <div className="m-gauge">
-          <span className="m-score">{readiness.score}</span>
+          <span className="m-score"><CountUp value={readiness.score} /></span>
           <svg viewBox="0 0 44 5" className="m-bars" role="img"
             aria-label={`${verdict.word} : niveau ${verdict.bars} sur 3`}>
             {[0, 16, 32].map((x, i) => (

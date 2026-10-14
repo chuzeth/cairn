@@ -65,6 +65,8 @@ let gate: Server;
 let site: Server;
 let gatePort: number;
 let seen: { method: string; url: string; headers: IncomingHttpHeaders }[];
+/** Ce que la porte écrit dans le journal du service. */
+let logs: string[];
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -125,6 +127,7 @@ async function enrolled(): Promise<{ auth: SoftAuthenticator; session: string }>
 beforeEach(async () => {
   clock = Date.parse('2026-09-30T08:00:00Z');
   seen = [];
+  logs = [];
   site = createServer((req, res) => {
     seen.push({ method: req.method!, url: req.url!, headers: req.headers });
     req.resume();
@@ -137,6 +140,7 @@ beforeEach(async () => {
     store, origin: () => ORIGIN, browserScript: '/* webauthn */',
     upstream: { host: '127.0.0.1', port: sitePort },
     now: () => clock,
+    log: (line) => logs.push(line),
   });
   gatePort = await listen(gate);
 });
@@ -171,7 +175,9 @@ describe('Sans session', () => {
     expect(res.status).toBe(401);
     expect(res.headers.location).toBeUndefined();
     expect(res.headers['x-cairn-connexion']).toBe('requise');
-    expect(res.body).toContain('Se connecter avec Face ID');
+    // Face ID se lance seul ; le bouton ne sert qu'après un échec.
+    expect(res.body).toContain('login(true)');
+    expect(res.body).toContain('Déverrouiller');
     expect(res.body).toContain('"/plan?semaine=2"');
     expect(seen).toHaveLength(0);
   });
@@ -423,5 +429,67 @@ describe('Tentatives de connexion', () => {
     expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
     clock += 10 * 60_000 + 1;
     expect((await call('POST', '/connexion/enregistrement/options', { body: { code: 'ZZZZZZZZ' } })).status).toBe(403);
+  });
+});
+
+// ── Invariant 6 : ce qui échoue se lit dans le journal ──────────────────────
+
+const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
+
+describe('Le journal de la porte', () => {
+  it('dit pourquoi une connexion échoue, et depuis quel appareil', async () => {
+    // Le 14/10 : aucune connexion réussie depuis le 02/10, et pas une ligne pour dire pourquoi.
+    const { auth } = await enrolled();
+    logs.length = 0;
+    const headers = { 'user-agent': IPHONE };
+    const ask = async () => {
+      const options = await call('POST', '/connexion/options', { body: {}, headers });
+      return { cookie: cookieFrom(options, CEREMONY), challenge: JSON.parse(options.body) as { challenge: string } };
+    };
+    const lost = await ask();
+    await call('POST', '/connexion/verifier', { headers, body: auth.assert(lost.challenge) });
+    const stranger = await ask();
+    await call('POST', '/connexion/verifier', { headers: { ...headers, cookie: stranger.cookie }, body: new SoftAuthenticator().assert(stranger.challenge) });
+    const forged = await ask();
+    await call('POST', '/connexion/verifier', { headers: { ...headers, cookie: forged.cookie }, body: auth.assert(forged.challenge, { origin: 'https://evil.example' }) });
+    const right = await ask();
+    expect((await call('POST', '/connexion/verifier', { headers: { ...headers, cookie: right.cookie }, body: auth.assert(right.challenge) })).status).toBe(200);
+    expect(logs.map((l) => l.replace(/connexion refusée : Unexpected .*\(/, 'connexion refusée : origine ('))).toEqual([
+      'connexion : Face ID demandé (iPhone)',
+      'connexion refusée : cérémonie absente ou expirée (iPhone)',
+      'connexion : Face ID demandé (iPhone)',
+      "connexion refusée : clé d'accès inconnue (iPhone)",
+      'connexion : Face ID demandé (iPhone)',
+      'connexion refusée : origine (iPhone)',
+      'connexion : Face ID demandé (iPhone)',
+      'connexion : session ouverte (iPhone)',
+    ]);
+  });
+
+  it('note les écrans de l’app refusés faute de session, une fois par minute, et pas ce que tentent les robots', async () => {
+    const page = { 'user-agent': IPHONE, 'sec-fetch-mode': 'navigate', accept: 'text/html' };
+    await call('GET', '/', { headers: page });
+    await call('GET', '/', { headers: page });
+    await call('GET', '/health', { headers: { 'user-agent': IPHONE } });
+    await call('GET', '/wp-login.php', { headers: page });
+    await call('GET', '/.env');
+    expect(logs).toEqual(['sans session : page / refusée (iPhone)', 'sans session : GET /health refusée (iPhone)']);
+    clock += 60_001;
+    await call('GET', '/', { headers: page });
+    expect(logs).toHaveLength(3);
+  });
+
+  it('garde ce qu’un appareil dit de son ouverture, sans session, sans rien relayer ni prendre une tentative', async () => {
+    for (let i = 0; i < 40; i++) {
+      const res = await call('POST', '/connexion/journal', {
+        headers: { 'user-agent': IPHONE }, body: { evenement: 'Face ID échoué', detail: 'NotAllowedError : annulé\n\u0007' },
+      });
+      expect(res.status).toBe(204);
+    }
+    expect(logs).toHaveLength(40);
+    expect(logs[0]).toBe('iPhone : Face ID échoué — NotAllowedError : annulé');
+    expect(seen).toHaveLength(0);
+    // Quarante lignes, et les trente tentatives de connexion sont toujours là : aucune clé, pas de fenêtre pleine.
+    expect((await call('POST', '/connexion/options', { body: {} })).status).toBe(409);
   });
 });

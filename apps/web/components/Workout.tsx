@@ -197,10 +197,10 @@ export function WorkoutView({
   return (
     <div className="w">
       <nav className="w-crumbs">
-        <Link href={back.href}>← {back.label}</Link>
+        <Link href={back.href} transitionTypes={['nav-back']}>← {back.label}</Link>
         <span className="w-days">
-          {prev && <Link href={`/seance?d=${prev}`}>‹ {frDate(prev, { weekday: true })}</Link>}
-          {next && <Link href={`/seance?d=${next}`}>{frDate(next, { weekday: true })} ›</Link>}
+          {prev && <Link href={`/seance?d=${prev}`} transitionTypes={['nav-back']}>‹ {frDate(prev, { weekday: true })}</Link>}
+          {next && <Link href={`/seance?d=${next}`} transitionTypes={['nav-forward']}>{frDate(next, { weekday: true })} ›</Link>}
         </span>
       </nav>
 

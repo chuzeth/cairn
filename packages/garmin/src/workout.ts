@@ -154,7 +154,7 @@ function targetFor(rule: AlarmRule, hr: [number, number] | undefined): WatchTarg
  * montre sache compter : elle n'est pas envoyée, et elle le dit.
  */
 const NOT_ON_WATCH: Partial<Record<SessionType, string>> = {
-  strength: 'renforcement : la montre ne sait pas en exécuter les mouvements, la séance reste dans Cairn',
+  strength: 'renforcement\u00a0: la montre ne sait pas en exécuter les mouvements, la séance reste dans Cairn',
   mobility: 'mobilité : rien que la montre sache exécuter, la séance reste dans Cairn',
   cross_training: "hors course à pied : Cairn n'envoie que des séances de course",
   race: "jour de course : le plan d'allure reste dans Cairn",
