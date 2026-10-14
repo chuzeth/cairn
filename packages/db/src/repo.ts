@@ -6,6 +6,7 @@ import type {
 import type { GarminSyncState, LedgerEntry } from '@cairn/garmin';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm';
 import { getTableConfig, type SQLiteColumn, type SQLiteTable } from 'drizzle-orm/sqlite-core';
+import { createHash } from 'node:crypto';
 import { getDb, packStreams, unpackStreams } from './client.js';
 import * as t from './schema.js';
 
@@ -1312,4 +1313,43 @@ export async function saveStrengthTest(
     .values({ id, athleteId, date, test, value, updatedAt })
     .onConflictDoUpdate({ target: t.strengthTests.id, set: { value, updatedAt } });
   return { date, test, ...value, updatedAt };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ce qui a changé
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Ce que les écrans montrent, en une empreinte. Elle change dès qu'une séance,
+ * une sortie, une analyse, le modèle, un point du jour, un test, un objectif,
+ * une absence ou une note du coach change — que l'écriture vienne de l'API, du
+ * serveur MCP ou d'un script. L'app ouverte la relit toutes les dix secondes
+ * (`/api/pulse`) et se relit elle-même quand elle bouge.
+ *
+ * Les compteurs de SQLite (`data_version`, `total_changes`) n'y suffisent pas :
+ * libsql ouvre une connexion neuve après chaque transaction, et ils repartent
+ * de zéro. Un point du jour réécrit ne touche aucune date : ses trois derniers
+ * jours entrent en entier.
+ */
+export async function changeStamp(athleteId: string): Promise<string> {
+  const rows = await getDb().all<Record<string, unknown>>(sql`
+    select
+      (select count(*) || '/' || max(created_at) || '/' || max(updated_at) from planned_sessions where athlete_id = ${athleteId}) as plan,
+      (select max(updated_at) from training_plans where athlete_id = ${athleteId}) as plans,
+      (select count(*) || '/' || max(created_at) from activities where athlete_id = ${athleteId}) as activities,
+      (select count(*) || '/' || max(computed_at) from activity_analyses where athlete_id = ${athleteId}) as analyses,
+      (select max(created_at) from physiology_models where athlete_id = ${athleteId}) as model,
+      (select group_concat(c, ';') from (
+        select date || '|' || coalesce(fatigue, '') || '|' || coalesce(sleep_hours, '') || '|' || coalesce(sleep_quality, '')
+          || '|' || coalesce(soreness, '') || '|' || coalesce(stress, '') || '|' || coalesce(motivation, '')
+          || '|' || coalesce(resting_hr, '') || '|' || coalesce(hrv_rmssd, '') || '|' || coalesce(notes, '')
+          || '|' || coalesce(note_handled_at, '') as c
+        from daily_check_ins where athlete_id = ${athleteId} order by date desc limit 3
+      )) as checkins,
+      (select count(*) || '/' || max(updated_at) from strength_tests where athlete_id = ${athleteId}) as tests,
+      (select count(*) || '/' || max(updated_at) from race_goals where athlete_id = ${athleteId}) as races,
+      (select count(*) || '/' || max(created_at) from declared_absences where athlete_id = ${athleteId}) as absences,
+      (select count(*) || '/' || max(created_at) from coach_insights where athlete_id = ${athleteId}) as insights
+  `);
+  return createHash('sha1').update(JSON.stringify(rows[0] ?? {})).digest('base64url').slice(0, 16);
 }

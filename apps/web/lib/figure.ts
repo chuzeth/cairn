@@ -825,3 +825,99 @@ export function carryShape(carry: NonNullable<Panel['carry']>, k: Skeleton): { p
   const c = add(lerp(hip, knee, 0.62), mul(n, 6.4));
   return { pts: blob([{ c: add(c, mul(d, -3.4)), r: 3.5 }, { c: add(c, mul(d, 3.4)), r: 3.5 }]), front: true };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le mouvement
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Un angle vers un autre, par le plus court chemin. */
+const lerpAngle = (a: number, b: number, t: number): number => a + ((((b - a) % 360) + 540) % 360 - 180) * t;
+const lerpNum = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/** Les angles d'une jambe résolue : ce qui la fait tourner autour de la hanche et du genou. */
+const legAngles = (l: LegPts): { thigh: number; shank: number; sole: number } => ({
+  thigh: thetaOf(sub(l.knee, l.hip)), shank: thetaOf(sub(l.ankle, l.knee)), sole: l.sole,
+});
+
+/**
+ * Une jambe entre deux positions. Un pied qui reste posé se tient par la
+ * cheville — le genou se résout autour, le pied ne glisse pas. Une jambe qui
+ * balance tourne par ses angles : par la cheville, elle irait en ligne droite
+ * et plierait le genou en chemin.
+ */
+function legBetween(a: LegSpec, la: LegPts, b: LegSpec, lb: LegPts, t: number): LegSpec {
+  if ('ankle' in a && 'ankle' in b) {
+    return { ankle: lerp(a.ankle, b.ankle, t), sole: lerpNum(a.sole ?? 0, b.sole ?? 0, t) };
+  }
+  if (dist(la.ankle, lb.ankle) < 4) {
+    return { ankle: lerp(la.ankle, lb.ankle, t), sole: lerpNum(la.sole, lb.sole, t) };
+  }
+  const x = 'thigh' in a ? { thigh: a.thigh, shank: a.shank, sole: a.sole ?? 0 } : legAngles(la);
+  const y = 'thigh' in b ? { thigh: b.thigh, shank: b.shank, sole: b.sole ?? 0 } : legAngles(lb);
+  return { thigh: lerpAngle(x.thigh, y.thigh, t), shank: lerpAngle(x.shank, y.shank, t), sole: lerpNum(x.sole, y.sole, t) };
+}
+
+/** Un bras entre deux positions : par ses angles s'ils sont dits des deux côtés, sinon par la main. */
+function armBetween(a: ArmSpec, pa: ArmPts, b: ArmSpec, pb: ArmPts, t: number): ArmSpec {
+  const fingers = (s: ArmSpec) => ('fingers' in s ? s.fingers : undefined);
+  const fa = fingers(a);
+  const fb = fingers(b);
+  const f = fa != null && fb != null ? lerpAngle(fa, fb, t) : (t < 0.5 ? fa : fb);
+  if ('upper' in a && 'upper' in b) return { upper: lerpAngle(a.upper, b.upper, t), fore: lerpAngle(a.fore, b.fore, t) };
+  if (pa.projected || pb.projected) {
+    return { elbow: lerp(pa.elbow, pb.elbow, t), hand: lerp(pa.wrist, pb.wrist, t), ...(f != null ? { fingers: f } : {}) };
+  }
+  return { hand: lerp(pa.wrist, pb.wrist, t), ...(f != null ? { fingers: f } : {}) };
+}
+
+/**
+ * La position à l'instant `t` d'un mouvement, de `a` (0) à `b` (1).
+ *
+ * Le 14/10, Pierre : « quitte à permettre au système d'être un petit peu
+ * animé, d'être en mouvement ». Le schéma passe de la position de départ à la
+ * position dessinée, segment par segment : un corps de 100 unités qui se plie,
+ * pas deux images qui se fondent. Les longueurs restent celles de Winter à
+ * chaque instant (les tests le vérifient). Deux vues différentes ne se
+ * mélangent pas : la seconde remplace la première à mi-chemin.
+ */
+export function between(a: Pose, b: Pose, t: number): Pose {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  if (a.view === 'side' && b.view === 'side') {
+    const ka = skeleton(a);
+    const kb = skeleton(b);
+    const castOf = (p: SidePose) => (typeof p.cast === 'object' ? p.cast : null);
+    const ca = castOf(a);
+    const cb = castOf(b);
+    return {
+      ...b,
+      hip: lerp(a.hip, b.hip, t),
+      lean: lerpAngle(a.lean, b.lean, t),
+      nod: lerpNum(a.nod ?? 0, b.nod ?? 0, t),
+      near: legBetween(a.near, ka.legs.near!, b.near, kb.legs.near!, t),
+      far: legBetween(a.far, ka.legs.far!, b.far, kb.legs.far!, t),
+      free: armBetween(a.free, ka.arms.free, b.free, kb.arms.free, t),
+      cast: ca && cb ? { ...armBetween(ca, ka.arms.cast, cb, kb.arms.cast, t), ...(cb.over ? { over: true } : {}) } : (t < 0.5 ? a.cast : b.cast),
+    };
+  }
+  if (a.view === 'front' && b.view === 'front') {
+    return {
+      ...b,
+      pelvis: lerp(a.pelvis, b.pelvis, t),
+      tilt: lerpNum(a.tilt ?? 0, b.tilt ?? 0, t),
+      turn: lerpAngle(a.turn ?? 0, b.turn ?? 0, t),
+      left: { ankle: lerp(a.left.ankle, b.left.ankle, t) },
+      right: { ankle: lerp(a.right.ankle, b.right.ankle, t) },
+      free: { side: b.free.side, elbow: lerp(a.free.elbow, b.free.elbow, t), hand: lerp(a.free.hand, b.free.hand, t) },
+      ...(a.cast && b.cast ? { cast: { elbow: lerp(a.cast.elbow, b.cast.elbow, t), hand: lerp(a.cast.hand, b.cast.hand, t) } } : {}),
+    };
+  }
+  if (a.view === 'top' && b.view === 'top') {
+    return {
+      ...b,
+      at: lerp(a.at, b.at, t),
+      free: { side: b.free.side, elbow: lerp(a.free.elbow, b.free.elbow, t), hand: lerp(a.free.hand, b.free.hand, t) },
+    };
+  }
+  return t < 0.5 ? a : b;
+}

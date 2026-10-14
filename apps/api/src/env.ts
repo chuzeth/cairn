@@ -60,6 +60,15 @@ const isSet = (value: string | undefined): boolean =>
  * MCP, où le modèle est fourni par le client. Une clé absente n'est donc pas une
  * configuration incomplète, c'est un choix.
  */
+/**
+ * Le chat de l'app peut-il répondre ? Il lui faut une clé Anthropic sur le Mac.
+ * Sans elle, l'écran le dit avant qu'on écrive — le coach reste joignable par
+ * le serveur MCP, depuis Claude.
+ */
+export function coachAvailable(): boolean {
+  return isSet(process.env.ANTHROPIC_API_KEY) || isSet(process.env.ANTHROPIC_AUTH_TOKEN);
+}
+
 export function missingConfig(): string[] {
   const missing: string[] = [];
   if (!isSet(process.env.STRAVA_CLIENT_ID)) missing.push('STRAVA_CLIENT_ID');

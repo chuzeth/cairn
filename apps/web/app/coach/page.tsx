@@ -38,8 +38,16 @@ export default function CoachPage() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  /** Le chat de l'app peut-il répondre (`/health`) ? `null` tant qu'on ne le sait pas. */
+  const [available, setAvailable] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    void get<{ coach?: { available?: boolean } }>('/health')
+      .then((h) => setAvailable(h.coach?.available ?? null))
+      .catch(() => setAvailable(null));
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -170,6 +178,16 @@ export default function CoachPage() {
         </div>
       </div>
 
+      {available === false && (
+        <div className="coach-off" role="status">
+          <p className="coach-off-title">Le coach de l’app est éteint</p>
+          <p>
+            Il lui faut une clé API Anthropic sur le Mac, facturée à l’usage. En attendant, parle-lui
+            depuis Claude : les mêmes outils, les mêmes données, sans frais.
+          </p>
+        </div>
+      )}
+
       <Card style={{ padding: 20 }}>
         <div className="chat">
           <div className="chat-scroll" ref={scrollRef}>
@@ -187,7 +205,10 @@ export default function CoachPage() {
             )}
 
             {messages.map((m, i) => (
-              <div className="msg" data-role={m.role} key={i}>
+              <div
+                className="msg" data-role={m.role} key={i}
+                data-unanswered={m.role === 'user' && !m.streaming && messages[i + 1]?.role !== 'assistant' && !busy ? 'true' : undefined}
+              >
                 <div className="msg-avatar">{m.role === 'user' ? 'PC' : 'C'}</div>
                 <div className="msg-body">
                   {m.tools && m.tools.length > 0 && (
@@ -211,7 +232,7 @@ export default function CoachPage() {
             ))}
           </div>
 
-          {messages.length === 0 && loaded && (
+          {messages.length === 0 && loaded && available !== false && (
             <div className="suggestions" style={{ marginTop: 16 }}>
               {SUGGESTIONS.map((s) => (
                 <button className="suggestion" key={s} onClick={() => void send(s)}>{s}</button>
@@ -223,7 +244,7 @@ export default function CoachPage() {
             <textarea
               ref={textareaRef}
               value={input}
-              placeholder="Pose ta question, ou annonce une course…"
+              placeholder={available === false ? 'Le coach de l’app est éteint' : 'Pose ta question, ou annonce une course…'}
               rows={1}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -236,9 +257,9 @@ export default function CoachPage() {
                   void send(input);
                 }
               }}
-              disabled={busy}
+              disabled={busy || available === false}
             />
-            <button className="btn" data-variant="primary" onClick={() => void send(input)} disabled={busy || !input.trim()}>
+            <button className="btn" data-variant="primary" onClick={() => void send(input)} disabled={busy || available === false || !input.trim()}>
               {busy ? <span className="spinner" /> : 'Envoyer'}
             </button>
           </div>

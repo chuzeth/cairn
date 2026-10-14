@@ -127,6 +127,10 @@ export function useVersion(): VersionState {
 
 /** Un doigt ou une touche depuis la dernière ouverture. */
 let touched = false;
+/** Le dernier geste, ms : l'app ouverte ne se recharge pas sous un doigt qui vient de bouger. */
+let lastTouchAt = 0;
+/** Sans geste depuis ce délai, une version neuve peut prendre la place de l'écran, app ouverte. */
+export const IDLE_MS = 45_000;
 /** Les champs que l'athlète a remplis ; ceux qui ont quitté l'écran ne comptent plus. */
 const filled = new Set<Element>();
 /** Les saisies qu'un écran garde hors des champs, déclarées par {@link useUnsent}. */
@@ -223,17 +227,27 @@ const STATUS: Record<Verdict, VersionState['status']> = {
 
 let checking = false;
 
+/**
+ * Un geste qui retient la recharge. À l'ouverture : n'importe quel geste depuis
+ * l'ouverture. App ouverte (`live`) : un geste de moins de 45 s, ou la séance
+ * suivie en plein écran — un minuteur ne s'interrompt pas pour une version.
+ */
+function held(live: boolean): boolean {
+  if (!live) return touched;
+  return Date.now() - lastTouchAt < IDLE_MS || document.querySelector('.w-player') != null;
+}
+
 /** Une ouverture : se comparer, se recharger s'il le faut et si on le peut, dire où on en est. */
-async function check(): Promise<void> {
+async function check(live = false): Promise<void> {
   if (!BUILD || checking) return;
   checking = true;
   try {
     const { served, deploy, offline } = await askMac();
     const verdict = decide({
-      build: BUILD, served: served?.commit ?? null, offline, reloadedFor: reloadedFor(), typing: typing(), touched,
+      build: BUILD, served: served?.commit ?? null, offline, reloadedFor: reloadedFor(), typing: typing(), touched: held(live),
     });
     // Ranger la coquille prend un moment : un geste pendant ce temps l'emporte.
-    if (verdict === 'reload' && served && (await prepare(served.commit)) && !touched && !typing() && markReload(served.commit)) {
+    if (verdict === 'reload' && served && (await prepare(served.commit)) && !held(live) && !typing() && markReload(served.commit)) {
       location.reload();
       return;
     }
@@ -349,12 +363,14 @@ export function watchVersion(): void {
   started = true;
   const touch = () => {
     touched = true;
+    lastTouchAt = Date.now();
   };
   const options = { capture: true, passive: true };
   document.addEventListener('pointerdown', touch, options);
   document.addEventListener('keydown', touch, options);
   document.addEventListener('input', (event) => {
     touched = true;
+    lastTouchAt = Date.now();
     if (event.target instanceof Element) filled.add(event.target);
   }, options);
   const reopen = () => {
@@ -368,6 +384,15 @@ export function watchVersion(): void {
     if (event.persisted) reopen();
   });
   void check();
+}
+
+/**
+ * Le Mac sert une autre version pendant que l'app est ouverte (`lib/live.ts`) :
+ * elle la range et se recharge dès qu'on la laisse 45 s sans y toucher, hors
+ * saisie et hors séance en plein écran. Sinon, à la prochaine ouverture.
+ */
+export function checkWhileOpen(): void {
+  void check(true);
 }
 
 /**
@@ -389,10 +414,13 @@ export function onForeground(run: () => void): () => void {
   window.addEventListener('pageshow', shown);
   // Face ID passé : ce que l'écran montre date d'avant le verrou.
   window.addEventListener('cairn:deverrouille', run);
+  // Le Mac a changé ce que l'écran montre, app ouverte (`lib/live.ts`).
+  window.addEventListener('cairn:changement', run);
   return () => {
     document.removeEventListener('visibilitychange', visible);
     window.removeEventListener('pageshow', shown);
     window.removeEventListener('cairn:deverrouille', run);
+    window.removeEventListener('cairn:changement', run);
   };
 }
 

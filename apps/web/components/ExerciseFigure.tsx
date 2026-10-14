@@ -1,10 +1,12 @@
-import type { ReactNode } from 'react';
+'use client';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ExerciseKey } from '@cairn/core/exercises';
 import { FIGURES } from '@/lib/exerciseFigures';
 import {
-  FURNITURE, add, angleAt, carryShape, dist, doorHook, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
-  type Panel, type Part, type Prop, type Pt, type Ref, type Skeleton,
+  FURNITURE, add, angleAt, between, carryShape, dist, doorHook, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
+  type Panel, type Part, type Pose, type Prop, type Pt, type Ref, type Skeleton,
 } from '@/lib/figure';
+import { cycleOf, phaseAt, type Cycle } from '@/lib/motion';
 
 /**
  * Le schéma d'un exercice : une ou deux vignettes, chacune la position qui
@@ -286,10 +288,42 @@ function arcPoints(at: Pt, a: Pt, b: Pt, r: number): Pt[] {
   });
 }
 
-function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: string }) {
-  const { skeleton: k, parts: list } = parts(panel.pose);
+/** Le corps dans toutes les positions du mouvement : le cadre ne bouge pas pendant qu'il se plie. */
+function bodyExtent(panel: Panel): Pt[] {
+  const pts: Pt[] = [];
+  const add = (pose: Pose) => { for (const p of parts(pose).parts) pts.push(...p.pts); };
+  add(panel.pose);
+  if (panel.ghost) {
+    add(panel.ghost);
+    for (const s of [0.2, 0.4, 0.6, 0.8]) add(between(panel.ghost, panel.pose, s));
+  }
+  return pts;
+}
+
+function PanelView({ panel, uid, name, frame, moving = false, notesShown = 1, compact = false, control }: {
+  panel: Panel;
+  uid: string;
+  name: string;
+  /**
+   * Étroit — un téléphone : sans les consignes écrites autour du corps, qui le
+   * réduisaient à 40 % de la vignette. Elles sont dites juste dessous, dans les
+   * repères ; ici, c'est le geste qu'on regarde, en grand.
+   */
+  compact?: boolean;
+  /** La position de l'instant, quand le schéma bouge ; sans elle, la position dessinée. */
+  frame?: Pose;
+  /** En mouvement : le corps suit le geste, les angles et les flèches se taisent. */
+  moving?: boolean;
+  /** Les consignes écrites, de 0 à 1 : elles parlent de la position dessinée, et n'apparaissent qu'avec elle. */
+  notesShown?: number;
+  control?: ReactNode;
+}) {
+  // Le corps à l'instant ; les annotations, elles, décrivent la position dessinée.
+  const { skeleton: k, parts: list } = parts(frame ?? panel.pose);
+  const end = frame ? parts(panel.pose).skeleton : k;
   const ghost = panel.ghost ? parts(panel.ghost) : null;
-  const at = (ref: Ref, s: Skeleton = k) => resolve(ref, s);
+  const at = (ref: Ref, s: Skeleton = end) => resolve(ref, s);
+  const extent = useMemo(() => bodyExtent(panel), [panel]);
 
   const muscles = new Map<string, Pt[][]>();
   for (const m of panel.muscles ?? []) {
@@ -297,9 +331,9 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     if (shape) muscles.set(shape.clip, [...(muscles.get(shape.clip) ?? []), shape.pts]);
   }
 
-  // Le cadre : le corps dans ses deux positions, le mobilier, les annotations.
+  // Le cadre : le corps dans toutes ses positions, le mobilier, les annotations.
   const box: Box = { x0: Infinity, x1: -Infinity, y0: 0, y1: -Infinity };
-  for (const p of [...list, ...(ghost?.parts ?? [])]) for (const q of p.pts) grow(box, q);
+  for (const q of extent) grow(box, q);
   for (const prop of panel.props) for (const q of propPoints(prop)) grow(box, q);
   const growText = (text: string, pos: Pt, anchor: 'start' | 'middle' | 'end') => {
     const tb = textBox(text, pos, anchor);
@@ -307,7 +341,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     grow(box, [tb.x1, tb.y1]);
   };
 
-  const notes = (panel.notes ?? []).map((n) => {
+  const notes = (compact ? [] : panel.notes ?? []).map((n) => {
     const target = at(n.at);
     const pos = add(target, [n.dx, n.dy]);
     const anchor: 'start' | 'middle' | 'end' = n.dx > 1 ? 'start' : n.dx < -1 ? 'end' : 'middle';
@@ -327,7 +361,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
   });
   const motions = (panel.motions ?? []).map((m) => {
     const from = m.joint && ghost ? resolve(m.joint, ghost.skeleton) : at(m.from!);
-    const to = m.joint ? resolve(m.joint, k) : at(m.to!);
+    const to = m.joint ? resolve(m.joint, end) : at(m.to!);
     const mid = lerp(from, to, 0.5);
     const n = rot(unit(sub(to, from)), 90);
     const ctrl = add(mid, mul(n, m.bend ?? 0));
@@ -336,9 +370,9 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     grow(box, apex);
     if (m.label) growText(m.label, top, 'middle');
     // Les extrémités s'écartent des points : la pointe ne les recouvre pas.
-    const end = add(to, mul(unit(sub(ctrl, to)), Math.min(2, dist(to, ctrl) * 0.3)));
+    const end2 = add(to, mul(unit(sub(ctrl, to)), Math.min(2, dist(to, ctrl) * 0.3)));
     const start = add(from, mul(unit(sub(ctrl, from)), Math.min(1.4, dist(from, ctrl) * 0.2)));
-    return { start, ctrl, end, label: m.label, top, joint: m.joint, n, bend: m.bend ?? 0 };
+    return { start, ctrl, end: end2, label: m.label, top, joint: m.joint, n, bend: m.bend ?? 0 };
   });
   // Les numéros 1 et 2 marquent un déplacement qui se voit ; sur quelques centimètres, ils masqueraient le geste.
   const first = ghost ? motions.find((m) => m.joint && dist(m.start, m.end) > 12) : undefined;
@@ -352,23 +386,25 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
     grow(box, add(st.at, [-3, -3]));
     grow(box, add(st.at, [3, 3]));
   }
-  const bands = (panel.bands ?? []).map((b) => ({ a: at(b.from), b: at(b.to), kind: b.kind, behind: b.behind === true }));
+  // L'élastique suit le corps : il se tend et se détend avec le geste.
+  const bands = (panel.bands ?? []).map((b) => ({ a: resolve(b.from, k), b: resolve(b.to, k), kind: b.kind, behind: b.behind === true }));
   const ghostBands = ghost
     ? (panel.ghostBands ?? []).map((b) => ({ a: at(b.from, ghost.skeleton), b: at(b.to, ghost.skeleton), kind: b.kind }))
     : [];
   const guides = (panel.guides ?? []).map((g) => ({ a: at(g.from), b: at(g.to) }));
-  for (const s of [...bands, ...ghostBands, ...guides]) {
-    grow(box, s.a);
-    grow(box, s.b);
+  for (const s2 of [...(panel.bands ?? []).map((b) => ({ a: at(b.from), b: at(b.to) })), ...ghostBands, ...guides]) {
+    grow(box, s2.a);
+    grow(box, s2.b);
   }
   // L'haltère et la poignée se voient par le bout : un disque, un anneau, dans la main valide.
   const weight = (s: Skeleton) => add(resolve('free.wrist', s), mul(unit(sub(resolve('free.tip', s), resolve('free.wrist', s))), 3));
   const ring = panel.hold === 'handle' ? 2 : 3.2;
   const held = panel.hold ? { pose: weight(k), ghost: ghost ? weight(ghost.skeleton) : null } : null;
-  if (held) for (const q of [held.pose, held.ghost]) if (q) { grow(box, add(q, [-3.4, -3.4])); grow(box, add(q, [3.4, 3.4])); }
+  if (panel.hold) for (const q of [weight(end), held?.ghost]) if (q) { grow(box, add(q, [-3.4, -3.4])); grow(box, add(q, [3.4, 3.4])); }
   // Le sac chargé : derrière le buste, ou devant le corps, sur les genoux ou à la main.
   const carried = panel.carry ? carryShape(panel.carry, k) : null;
-  if (carried) for (const q of carried.pts) grow(box, q);
+  const carriedEnd = panel.carry ? carryShape(panel.carry, end) : null;
+  if (carriedEnd) for (const q of carriedEnd.pts) grow(box, q);
 
   const pad = 3.5;
   const floor = panel.props.some((p) => p.kind === 'floor');
@@ -383,7 +419,8 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
   );
 
   return (
-    <figure className="xf-panel">
+    <figure className="xf-panel" data-moving={moving || undefined}>
+      {control}
       <svg viewBox={vb} className="xf" role="img" aria-label={`${name} : ${panel.label}`}>
         <defs>
           <marker id={marker} viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
@@ -394,7 +431,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
         {floor && <PropView prop={{ kind: 'floor' }} box={box} />}
         {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r={ring} className="fg-weight-ghost" />}
         {ghost && <GhostView list={ghost.parts} />}
-        {ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
+        {!moving && ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
         {bands.filter((b) => b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `bb${i}`))}
         {carried && !carried.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
         <BodyView list={list} muscles={muscles} uid={uid} />
@@ -406,14 +443,14 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
           </g>
         )}
         {bands.filter((b) => !b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `b${i}`))}
-        {guides.map((g, i) => line(g.a, g.b, 'fg-guide', `g${i}`))}
-        {angles.map((a, i) => (
+        {!moving && guides.map((g, i) => line(g.a, g.b, 'fg-guide', `g${i}`))}
+        {!moving && angles.map((a, i) => (
           <g key={`a${i}`} className="fg-angle">
             <path d={pathOf(a.pts, false)} />
             <text x={fmt(a.pos[0])} y={fmt(-a.pos[1] + TEXT * 0.35)} textAnchor="middle">{a.label}</text>
           </g>
         ))}
-        {motions.map((m, i) => (
+        {!moving && motions.map((m, i) => (
           <g key={`m${i}`} className="fg-motion">
             <path
               d={`M${fmt(m.start[0])} ${fmt(-m.start[1])} Q${fmt(m.ctrl[0])} ${fmt(-m.ctrl[1])} ${fmt(m.end[0])} ${fmt(-m.end[1])}`}
@@ -422,7 +459,7 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
             {m.label && <text x={fmt(m.top[0])} y={fmt(-m.top[1] + TEXT * 0.35)} textAnchor="middle">{m.label}</text>}
           </g>
         ))}
-        {steps.map((st) => (
+        {!moving && steps.map((st) => (
           <g key={`s${st.n}`} className="fg-step">
             <circle cx={fmt(st.at[0])} cy={fmt(-st.at[1])} r="2.7" />
             <text x={fmt(st.at[0])} y={fmt(-st.at[1] + 1.25)} textAnchor="middle">{st.n}</text>
@@ -430,10 +467,10 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
         ))}
         {notes.map((n, i) => {
           const lead = add(n.target, mul(unit(sub(n.pos, n.target)), 1.3));
-          const end: Pt = [n.pos[0] + (n.anchor === 'start' ? -0.8 : n.anchor === 'end' ? 0.8 : 0), n.pos[1] + TEXT * 0.3];
+          const endPt: Pt = [n.pos[0] + (n.anchor === 'start' ? -0.8 : n.anchor === 'end' ? 0.8 : 0), n.pos[1] + TEXT * 0.3];
           return (
-            <g key={`n${i}`} className="fg-note">
-              {line(lead, end, '', 'l')}
+            <g key={`n${i}`} className="fg-note" style={notesShown < 1 ? { opacity: notesShown } : undefined}>
+              {line(lead, endPt, '', 'l')}
               <text x={fmt(n.pos[0])} y={fmt(-n.pos[1])} textAnchor={n.anchor}>
                 {linesOf(n.text).map((l, j) => (
                   <tspan key={j} x={fmt(n.pos[0])} dy={j === 0 ? 0 : fmt(TEXT * 1.15)}>{l}</tspan>
@@ -451,12 +488,109 @@ function PanelView({ panel, uid, name }: { panel: Panel; uid: string; name: stri
   );
 }
 
-export function ExerciseFigure({ exercise, label }: { exercise: ExerciseKey; label: string }) {
+/** Le mouvement est-il permis ? Sans, le schéma reste la position dessinée, annotée. */
+function useStill(): boolean {
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    const q = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setStill(q.matches);
+    const change = () => setStill(q.matches);
+    q.addEventListener('change', change);
+    return () => q.removeEventListener('change', change);
+  }, []);
+  return still;
+}
+
+/**
+ * Une vignette qui bouge : de la position de départ à la position dessinée, au
+ * tempo de la séance (`lib/motion`), en boucle. Elle ne bouge que sous les
+ * yeux — hors de l'écran ou app en arrière-plan, elle s'arrête. Un toucher la
+ * fige sur la position dessinée, avec ses angles et ses flèches ; un second la
+ * relance.
+ */
+function MovingPanel({ panel, uid, name, cycle, compact }: { panel: Panel; uid: string; name: string; cycle: Cycle; compact: boolean }) {
+  const still = useStill();
+  const [paused, setPaused] = useState(false);
+  const [t, setT] = useState(0);
+  const [seen, setSeen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setSeen(e?.isIntersecting ?? false), { threshold: 0.2 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  const running = seen && !paused && !still;
+  useEffect(() => {
+    if (!running) return;
+    let raf = 0;
+    let last = 0;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      // Trente images par seconde : un geste lent n'en demande pas plus, la batterie si.
+      if (now - last >= 32) {
+        last = now;
+        if (!document.hidden) setT(phaseAt(cycle, now - t0));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [running, cycle]);
+
+  // Immobile — hors de l'écran, figé, sans mouvement permis : la position dessinée, annotée.
+  const frame = running && panel.ghost ? between(panel.ghost, panel.pose, t) : undefined;
+  // Les consignes arrivent avec la position qu'elles décrivent, et repartent avec elle.
+  const notesShown = running ? Math.max(0, Math.min(1, (t - 0.8) / 0.2)) : 1;
+  const control = still ? null : (
+    <button
+      type="button"
+      className="xf-play"
+      onClick={() => setPaused((p) => !p)}
+      aria-label={paused ? 'Montrer le mouvement' : 'Arrêter le mouvement sur la position dessinée'}
+    >
+      {paused ? '▶' : '❚❚'}
+    </button>
+  );
+  return (
+    <div ref={ref} className="xf-moving">
+      <PanelView panel={panel} uid={uid} name={name} frame={frame} moving={running} notesShown={notesShown} compact={compact} control={control} />
+    </div>
+  );
+}
+
+/** La largeur d'une vignette, px : en deçà, elle passe en `compact`. */
+const COMPACT_PX = 460;
+
+export function ExerciseFigure({ exercise, label, tempo }: { exercise: ExerciseKey; label: string; tempo?: string }) {
   const spec = FIGURES[exercise];
+  const cycle = useMemo(() => cycleOf(tempo), [tempo]);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const first = el.firstElementChild;
+      const w = first instanceof HTMLElement ? first.clientWidth : el.clientWidth;
+      setCompact(w > 0 && w < COMPACT_PX);
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
   if (!spec) return null;
   return (
-    <div className="xf-panels" data-count={spec.panels.length}>
-      {spec.panels.map((p, i) => <PanelView key={i} panel={p} uid={`${exercise}-${i}`} name={label} />)}
+    <div ref={ref} className="xf-panels" data-count={spec.panels.length}>
+      {spec.panels.map((p, i) =>
+        p.ghost
+          ? <MovingPanel key={i} panel={p} uid={`${exercise}-${i}`} name={label} cycle={cycle} compact={compact} />
+          : <PanelView key={i} panel={p} uid={`${exercise}-${i}`} name={label} compact={compact} />,
+      )}
     </div>
   );
 }

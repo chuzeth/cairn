@@ -394,7 +394,7 @@ function StepCard({ step, done, onDone, ...tests }: { step: Step; done: number; 
       <div className="w-step-grid">
         {x && (
           <div className="w-step-fig">
-            <ExerciseFigure exercise={x.key} label={x.name} />
+            <ExerciseFigure exercise={x.key} label={x.name} tempo={step.block.tempo} />
           </div>
         )}
         <div className="w-step-body">
@@ -780,7 +780,7 @@ function Player({
         <main className="w-p-main" key={at}>
           {step.sheet && (
             <div className="w-p-fig">
-              <ExerciseFigure exercise={step.sheet.key} label={step.sheet.name} />
+              <ExerciseFigure exercise={step.sheet.key} label={step.sheet.name} tempo={step.block.tempo} />
             </div>
           )}
           <div className="w-p-info">

@@ -15,7 +15,7 @@ import type { ActivityStreams, DeclaredAbsence, DecisionOrigin, PlannedSession, 
 import {
   formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
 } from '@cairn/physiology';
-import { env, missingConfig } from './env.js';
+import { coachAvailable, env, missingConfig } from './env.js';
 import { garminLoopStatus, garminPlanView } from './garmin.js';
 import { activityPollerStatus } from './poller.js';
 import { lastDeploy, runningVersion } from './release.js';
@@ -95,6 +95,8 @@ export async function buildServer() {
       athleteId: A,
       stravaConnected: tokens != null,
       missingConfig: missingConfig(),
+      // Le chat de l'app : sans clé Anthropic, il ne répond pas, et l'écran le dit d'emblée.
+      coach: { available: coachAvailable() },
       sync: sync ?? null,
       // `sync` dit ce que le dernier import a fait ; `poll` dit si l'horloge
       // qui les déclenche tourne encore. Sans le second, une relève morte
@@ -111,6 +113,18 @@ export async function buildServer() {
       version: runningVersion(),
       deploy: lastDeploy(),
     };
+  });
+
+  /**
+   * Le pouls : ce que l'app ouverte demande toutes les dix secondes. L'empreinte
+   * de ce que montrent les écrans, et la version en service — de quoi se relire,
+   * ou se mettre à jour, sans attendre qu'on la referme. Deux lectures légères :
+   * rien de ce qui part ici ne coûte au Mac.
+   */
+  // Dix secondes, toute la journée : rien au journal, il ne dirait que « le pouls a battu ».
+  app.get('/api/pulse', { logLevel: 'silent' }, async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { stamp: await db.changeStamp(A), commit: runningVersion()?.commit ?? null };
   });
 
   /**

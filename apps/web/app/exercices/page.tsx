@@ -23,14 +23,14 @@ export default function ExercisesPage() {
         <div>
           <h1 className="page-title">Exercices</h1>
           <p className="page-sub">
-            Le bloc de force, du 9 octobre au 1er novembre : une séance par jour. Rien ne s&apos;appuie sur le bras
+            Le bloc de force, du 9 octobre au 1er novembre : une séance par jour. Rien ne s&apos;appuie sur le bras
             plâtré, rien ne se tient à deux mains.
           </p>
         </div>
       </header>
 
       <section className="xs-rules xs-block">
-        <h2>Ton bloc de force, du 9 octobre au 1er novembre</h2>
+        <h2>Ton bloc de force, du 9 octobre au 1er novembre</h2>
         <p className="xs-block-lead">
           Tous les jours, mais pas dur tous les jours : trois séances de force à 48 h l&apos;une de l&apos;autre, et
           entre elles ce qui ne les gêne pas. Le muscle se construit entre les séances, pas pendant.
