@@ -4,7 +4,7 @@ import type {
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { decimal, directivesFor, localDate, sessionDuration, writtenOn } from '@cairn/core';
-import { ACWR_SPIKE } from '@cairn/physiology';
+import { ACWR_SPIKE, isRunFree } from '@cairn/physiology';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
 import { addDays, mondayOf } from './periodization.js';
@@ -794,8 +794,15 @@ export function evaluateAdjustments(
   // retenu respecte en plus la politique du dossier — un seul fractionné par
   // semaine —, sans quoi décaler d'un dimanche au lundi suivant en logeait deux
   // dans la même semaine, et rien ne l'aurait dit.
+  //
+  // Elle espace ce qui se court. Hors course — le bloc de force du coude cassé,
+  // une séance par jour —, l'alternance des muscles est celle du programme, et
+  // ses tests la vérifient : le 13/10, la règle avait décalé tout le bloc d'un
+  // jour, séance après séance, et laissé le mercredi 14/10 sans séance.
   const policy = intervalPolicy(state);
-  const keySessions = future.filter((s) => s.priority === 'key').sort((a, b) => a.date.localeCompare(b.date));
+  const keySessions = future
+    .filter((s) => s.priority === 'key' && !isRunFree(s.type))
+    .sort((a, b) => a.date.localeCompare(b.date));
   for (let i = 1; i < keySessions.length; i++) {
     const prev = keySessions[i - 1]!;
     const cur = keySessions[i]!;

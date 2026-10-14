@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { EXERCISES, FORCE_BLOCK_DAYS, annexOf, isExerciseKey, type ExerciseKey, type StrengthTestResult } from '@cairn/core';
-import { blockDay, blockWeekOf, compensationDay, compensationHomeDay, remeasured, weakSides } from '@cairn/coach';
+import {
+  EXERCISES, FORCE_BLOCK_DAYS, PIERRE, annexOf, isExerciseKey, type ExerciseKey, type PlannedSession, type StrengthTestResult,
+} from '@cairn/core';
+import {
+  addDays, blockDay, blockWeekOf, compensationDay, compensationHomeDay, evaluateAdjustments, remeasured, weakSides,
+} from '@cairn/coach';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
@@ -216,6 +220,26 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
         expect(EXERCISES[b.exercise as ExerciseKey].where, `${s.title} — ${b.label}`).not.toEqual(['salle']);
       }
     }
+  });
+
+  it('tient chaque jour à sa date : les règles n’espacent pas des séances hors course qui alternent les muscles', () => {
+    // Le 13/10, la règle des 48 h entre deux séances clefs a décalé tout le bloc d'un jour,
+    // séance après séance, du 14/10 au 02/11 : le mercredi 14/10 s'est retrouvé sans séance.
+    const sessions: PlannedSession[] = block.map((t, i) => ({
+      id: `bloc_${i}`, athleteId: 'pierre', date: addDays('2026-10-09', i), type: t.type, title: t.title,
+      intent: t.intent, blocks: t.blocks, plannedLoad: t.plannedLoad, plannedMechanicalLoad: t.plannedMechanicalLoad,
+      plannedDurationS: t.durationS, priority: t.priority, status: 'planned',
+    }));
+    const state = {
+      today: {
+        date: '2026-10-13', ctl: 20, atl: 25, tsb: -5, mechanicalTsb: 0, acwr: 1.0, mechanicalAcwr: 1.0,
+        rampRate: 3, monotony: 1.2, tsbLabel: '', acwrLabel: '', acwrRisk: 'low',
+      },
+      readiness: { date: '2026-10-13', score: 70, verdict: 'green', components: {}, recommendation: '' },
+      absences: [], model: PIERRE_MODEL, profile: PIERRE,
+    } as never;
+    const moves = evaluateAdjustments(state, sessions).filter((a) => a.action === 'move');
+    expect(moves.map((a) => `${a.date} ${a.rule}`)).toEqual([]);
   });
 
   it('ne dit « lesté » que d’un exercice qui se fait avec le sac', () => {
