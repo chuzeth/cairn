@@ -207,7 +207,7 @@ export function WorkoutView({
       <header className="w-head">
         <div className="w-date">{frDate(session.date, { weekday: true, long: true })}</div>
         <h1 className="w-title">{planName(session)}</h1>
-        <p className="w-summary">{workoutSummary(parts, session.plannedDurationS)}</p>
+        <p className="w-summary">{workoutSummary(parts, session.plannedDurationS, session.plannedElevationGainM ?? 0)}</p>
         {session.status === 'completed' && <p className="w-done">✓ Faite, et rattachée à la séance de ta montre.</p>}
         <div className="w-start">
           <button

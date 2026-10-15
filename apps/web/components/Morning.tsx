@@ -14,7 +14,7 @@ import {
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import { loadFigures } from '@/lib/figures';
-import { isWorkout, partSummary, workoutOf } from '@/lib/workout';
+import { isWorkout, partSummary, stairsEstimated, workoutOf } from '@/lib/workout';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale,
   unweighed, Waiting, WhereLine,
@@ -287,7 +287,9 @@ function subline(session: SessionRow): string {
   const parts = [slopeOf(session), time];
   // Le dénivelé de la séance, sauf quand la légende du tracé le dit déjà : « +35 m,
   // trois fois » est celui d'une répétition, pas celui de la journée.
-  if ((!p.captionIsClimb || p.captionPerRep) && p.gainM > 0) parts.push(`${metres(p.gainM)} de dénivelé`);
+  if ((!p.captionIsClimb || p.captionPerRep) && p.gainM > 0) {
+    parts.push(`${stairsEstimated(session.blocks) ? 'environ ' : ''}${metres(p.gainM)} de dénivelé`);
+  }
   return nbsp(parts.filter(Boolean).join(', '));
 }
 

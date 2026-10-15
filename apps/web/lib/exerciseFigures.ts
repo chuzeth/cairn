@@ -1524,6 +1524,33 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  // Le 15/10 : l'escalier de l'immeuble. Le pied du haut est posé, le corps monte dessus ; la main valide sur la rampe.
+  'escalier-immeuble': {
+    panels: [
+      {
+        label: 'Tu montes sur ce pied, la main valide sur la rampe',
+        ghostLabel: 'Le pied posé une marche plus haut',
+        props: [{ kind: 'floor' }, { kind: 'stairs', x: -20, n: 6, rail: true }],
+        ghost: {
+          view: 'side', hip: [17, 70], lean: 18,
+          near: { ankle: [33, 4 * STAIR.rise + A] },
+          far: { ankle: [15, 3 * STAIR.rise + A] },
+          free: { hand: [30, railY(-20, 30) + 0.8] },
+        },
+        pose: {
+          view: 'side', hip: [24, 77], lean: 12,
+          near: { ankle: [33, 4 * STAIR.rise + A] },
+          far: { ankle: ankleFromBall([23, 3 * STAIR.rise], -20), sole: -20 },
+          free: { hand: [37, railY(-20, 37) + 0.8] },
+        },
+        notes: [{ text: 'la rampe,\nla main valide', at: 'free.wrist', dx: 9, dy: 8 }],
+        muscles: [{ muscle: 'quads' }, { muscle: 'glutes' }, { muscle: 'calves', side: 'far' }],
+        contacts: [{ ref: 'near.heel', y: 4 * STAIR.rise }, { ref: 'far.ball', y: 3 * STAIR.rise }],
+        ghostContacts: [{ ref: 'near.heel', y: 4 * STAIR.rise }, { ref: 'far.heel', y: 3 * STAIR.rise }, { ref: 'far.ball', y: 3 * STAIR.rise }],
+      },
+    ],
+  },
+
   'soins-bras': {
     panels: [
       {

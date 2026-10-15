@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EXERCISES, FORCE_BLOCK_DAYS, PIERRE, annexOf, isExerciseKey, type ExerciseKey, type PlannedSession, type StrengthTestResult,
+  EXERCISES, FORCE_BLOCK_DAYS, HOME_STAIRS, PIERRE, annexOf, isExerciseKey, type ExerciseKey, type PlannedSession,
+  type StrengthTestResult,
 } from '@cairn/core';
 import {
   addDays, blockDay, blockWeekOf, compensationDay, compensationHomeDay, evaluateAdjustments, remeasured, weakSides,
@@ -364,5 +365,40 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
         s.plannedLoad, s.plannedDistanceM, s.plannedMechanicalLoad,
       ]);
     }
+  });
+});
+
+describe('L’escalier de l’immeuble', () => {
+  // Le 15/10, Pierre : six étages sans ascenseur, environ 21 m — « est-ce qu'on pourrait l'inclure aux séances ? »
+  const blocks = (i: number) => blockDay(PIERRE_MODEL, i).blocks;
+  const stairs = (i: number) => blocks(i).filter((b) => b.exercise === 'escalier-immeuble');
+
+  it('ouvre chaque séance de force par deux montées faciles, sans le sac ni consigne de cœur', () => {
+    for (const i of [3, 4, 6, 7, 10, 11, 13, 14, 17, 18, 20, 21]) {
+      const [first, second] = blocks(i);
+      expect([first?.label, first?.exercise, first?.elevationGainM, first?.elevationLossM], `jour ${i}`)
+        .toEqual(['Deux montées faciles', 'escalier-immeuble', 2 * HOME_STAIRS.heightM, 2 * HOME_STAIRS.heightM]);
+      expect(first?.hrRange, `jour ${i}`).toBeUndefined();
+      expect(second?.exercise, `jour ${i}`).toBe('echauffement-maison');
+    }
+  });
+
+  it('fait du samedi une montée continue, plus longue la semaine de charge, plus courte avant les tests', () => {
+    const saturday = (i: number) => stairs(i).map((b) => [b.label, b.durationS, b.elevationGainM, b.zone]);
+    expect(saturday(8)).toEqual([['Montées continues dans l\'escalier', 45 * 60, 14 * HOME_STAIRS.heightM, 'Z2']]);
+    expect(saturday(15)).toEqual([['Montées continues dans l\'escalier', 70 * 60, 22 * HOME_STAIRS.heightM, 'Z2']]);
+    expect(saturday(22)).toEqual([['Montées continues dans l\'escalier', 40 * 60, 12 * HOME_STAIRS.heightM, 'Z2']]);
+    // Le tabouret ne fait plus l'endurance des montées.
+    expect(blocks(8).some((b) => b.exercise === 'montee-tabouret')).toBe(false);
+  });
+
+  it('garde le fractionné du mercredi dehors, et dit sa variante à la maison au même dénivelé', () => {
+    const intervals = blocks(5).find((b) => b.label === 'Montées rapides au seuil')!;
+    expect(intervals.notes).toContain('Pluie ou nuit : 13 montées au seuil à la maison');
+    expect(stairs(5)).toEqual([]);
+  });
+
+  it('laisse le dimanche et les tests sans escalier', () => {
+    for (const i of [9, 16, 23]) expect(stairs(i), `jour ${i}`).toEqual([]);
   });
 });

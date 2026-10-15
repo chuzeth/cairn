@@ -1,6 +1,7 @@
-import type {
-  ExerciseKey, PhysiologyModel, PlanRevision, PlannedSession, SessionBlock, SessionDecision, SessionType,
-  StrengthTestResult, ZoneKey,
+import {
+  HOME_STAIRS,
+  type ExerciseKey, type PhysiologyModel, type PlanRevision, type PlannedSession, type SessionBlock, type SessionDecision,
+  type SessionType, type StrengthTestResult, type ZoneKey,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { buildZones, hrProvenanceOf } from '@cairn/physiology';
@@ -602,8 +603,8 @@ interface BlockDose {
   isoSets: number;
   /** Le fractionné en côte : des répétitions de 3 min. */
   climb: { reps: number; zone: ZoneKey };
-  /** Montées continues lestées : des séries de `min`. */
-  me: { sets: number; min: number };
+  /** Les montées continues du samedi, dans l'escalier de l'immeuble, min. */
+  stairsMin: number;
   /** Chaise contre le mur, s. */
   wallS: number;
   /** Gainage sur le côté, s. */
@@ -613,21 +614,21 @@ interface BlockDose {
 const BLOCK_DOSE: Record<BlockWeek, BlockDose> = {
   0: {
     main: 3, second: 3, acc: 2, mainReps: 10, reserve: 3, pack: '', harder: false, isoSets: 3,
-    climb: { reps: 4, zone: 'Z4' }, me: { sets: 2, min: 4 }, wallS: 60, holdS: 40,
+    climb: { reps: 4, zone: 'Z4' }, stairsMin: 30, wallS: 60, holdS: 40,
   },
   1: {
     main: 4, second: 3, acc: 3, mainReps: 8, reserve: 2,
     pack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.', harder: false, isoSets: 4,
-    climb: { reps: 5, zone: 'Z4' }, me: { sets: 3, min: 6 }, wallS: 75, holdS: 45,
+    climb: { reps: 5, zone: 'Z4' }, stairsMin: 45, wallS: 75, holdS: 45,
   },
   2: {
     main: 5, second: 4, acc: 3, mainReps: 6, reserve: 1,
     pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: true, isoSets: 5,
-    climb: { reps: 6, zone: 'Z4' }, me: { sets: 3, min: 8 }, wallS: 90, holdS: 50,
+    climb: { reps: 6, zone: 'Z4' }, stairsMin: 70, wallS: 90, holdS: 50,
   },
   3: {
     main: 2, second: 2, acc: 2, mainReps: 8, reserve: 3, pack: 'Le sac à dos de 8 kg.', harder: false, isoSets: 3,
-    climb: { reps: 4, zone: 'Z4' }, me: { sets: 2, min: 6 }, wallS: 60, holdS: 40,
+    climb: { reps: 4, zone: 'Z4' }, stairsMin: 40, wallS: 60, holdS: 40,
   },
 };
 
@@ -768,10 +769,41 @@ function ex(exercise: ExerciseKey, part: string, r: Rx): SessionBlock {
 /** Le sac de la semaine, devant ce que la séance ajoute. */
 const withPack = (d: BlockDose, rest = '') => [d.pack, rest].filter(Boolean).join(' ') || undefined;
 
-function blockWarmUp(model: PhysiologyModel): SessionBlock {
-  // Ses consignes sont dans la fiche ; un échauffement à la maison ne se pilote pas au cœur.
-  const { hrRange: _hr, provenance: _p, notes: _n, ...rest } = homeWarmUp(model);
-  return { ...rest, part: PART.warmUp };
+/**
+ * L'escalier de l'immeuble : un aller-retour en zone 2 — monter en parlant,
+ * redescendre lentement, faire demi-tour — prend un peu plus de trois minutes.
+ */
+const STAIRS_ROUND_TRIP_S = 195;
+
+/** Le dénivelé de `climbs` montées de l'escalier, m. */
+const stairsGain = (climbs: number): number => climbs * HOME_STAIRS.heightM;
+
+/** Combien de montées tiennent dans `seconds`, à l'allure d'un aller-retour en zone 2. */
+const climbsIn = (seconds: number): number => Math.max(1, Math.round(seconds / STAIRS_ROUND_TRIP_S));
+
+/**
+ * L'échauffement d'un jour de force : deux montées faciles dans l'escalier de
+ * l'immeuble, puis l'échauffement à la maison.
+ *
+ * Le 15/10, Pierre : six étages sans ascenseur, « je me demandais si on pouvait
+ * pas inclure ça aux séances ». Monter chauffe le cœur, les mollets et les
+ * fessiers mieux qu'une minute de marche sur place, et ajoute 40 m de
+ * dénivelé facile à chaque jour de force. Le samedi, l'escalier fait la séance :
+ * l'échauffement s'en tient à la maison (`stairs` à faux).
+ */
+function blockWarmUp(model: PhysiologyModel, stairs = true): SessionBlock[] {
+  // Ses consignes sont dans les fiches ; un échauffement ne se pilote pas au cœur.
+  const { hrRange: _hr, provenance: _p, notes: _n, ...home } = homeWarmUp(model);
+  if (!stairs) return [{ ...home, part: PART.warmUp }];
+  // Deux allers-retours, sans presser, et le temps d'allumer la frontale : 7 minutes.
+  const { hrRange: _h, provenance: _q, ...climbs } = heart(model, 'Deux montées faciles', 'Z1', 7 * 60, {
+    exercise: 'escalier-immeuble',
+    part: PART.warmUp,
+    elevationGainM: stairsGain(2),
+    elevationLossM: stairsGain(2),
+    notes: 'Sans le sac, en parlant.',
+  });
+  return [climbs, { ...home, part: PART.warmUp }];
 }
 
 /**
@@ -852,7 +884,8 @@ export function blockTests(model: PhysiologyModel, when: 'start' | 'end'): Sessi
       : 'Les sept mesures du 9 octobre, dans le même ordre et à la même heure : ce que trois semaines de force ont ' +
           'changé, jambe par jambe.',
     [
-      blockWarmUp(model),
+      // L'échauffement du 9 octobre, sans l'escalier : les mesures du 1er novembre se comparent aux siennes.
+      ...blockWarmUp(model, false),
       test('test-mollets', 'Mollets, sur un pied', { sets: 1, sides: 'jambe', setS: 75, restS: 120 }),
       test('test-pont', 'Pont sur une jambe, talon sur le step', { sets: 1, sides: 'jambe', setS: 75, restS: 120 }),
       test('test-chaise', 'Chaise contre le mur', { sets: 1, setS: 180, restS: 120 }),
@@ -875,7 +908,7 @@ export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       '0,68 de celle d\'un bon traileur — ta marge la plus nette pour la Maxi-Race. Et le bras valide, qui ' +
       'entretient l\'autre.',
     [
-      blockWarmUp(model),
+      ...blockWarmUp(model),
       ex('split-squat-maison', PART.legs, {
         label: d.pack ? 'Fente bulgare lestée' : 'Fente bulgare', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 90,
         reserve: d.reserve,
@@ -909,7 +942,7 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
     'Les fessiers et l\'arrière des cuisses poussent dans chaque montée — 5 000 m à la Maxi-Race — et retiennent la ' +
       'jambe à chaque foulée. Chargés, sur une jambe, le côté faible des tests en premier.',
     [
-      blockWarmUp(model),
+      ...blockWarmUp(model),
       ex('souleve-une-jambe', PART.posterior, {
         label: 'Soulevé de terre sur une jambe, lesté', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 75,
         reserve: d.reserve, setS: 50, tempo: '3 s pour descendre, 1 s pour remonter',
@@ -960,7 +993,9 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSide
           exercise: 'marche-cote',
           part: PART.intervals,
           elevationGainM: vert,
-          notes: 'Effort 7 sur 10, des phrases courtes. Entre deux montées, la redescente lente est la récupération.',
+          notes:
+            'Effort 7 sur 10, des phrases courtes. Entre deux montées, la redescente lente est la récupération. ' +
+            `Pluie ou nuit : ${Math.round((reps * vert) / HOME_STAIRS.heightM)} montées au seuil à la maison, chacune suivie de sa descente.`,
         }),
         repeat: reps,
         recovery: { durationS: 180, zone: 'Z1', active: true, betweenReps: true, elevationLossM: vert },
@@ -999,7 +1034,7 @@ export function blockForceC(model: PhysiologyModel, week: BlockWeek, w: WeakSide
     'La puissance des relances et la force sur un seul appui — celui de chaque foulée, en montée comme en descente : ' +
       'monter vite, descendre lentement, sur une jambe.',
     [
-      blockWarmUp(model),
+      ...blockWarmUp(model),
       ex('montee-tabouret', PART.legs, {
         label: 'Montée explosive sur le step', sets: d.main, reps: 5, sides: 'jambe', restS: 75, reserve: d.reserve,
         setS: 40, tempo: 'Monte le plus vite possible sans sauter, redescends en 3 s',
@@ -1029,7 +1064,7 @@ export function blockHanches(model: PhysiologyModel, week: BlockWeek, w: WeakSid
       'comme dans les dévers de la Maxi-Race. Une séance plus légère pour les grosses cuisses, avant l\'endurance de ' +
       'samedi.',
     [
-      blockWarmUp(model),
+      ...blockWarmUp(model),
       ex('pas-chasses', PART.hips, {
         label: 'Pas chassés à la mini-bande', sets: d.acc, reps: 15, sides: 'côté', restS: 30, setS: 35,
         effort: 'Jusqu\'à la brûlure', notes: 'La mini-bande la plus dure.',
@@ -1063,18 +1098,17 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
   const d = BLOCK_DOSE[week];
   return template(model, `bloc_endurance_${week}`, 'strength', 'Endurance des montées',
     'Ta durabilité, moyenne sur les sorties longues, est ton plus gros gisement : c\'est elle qui fait tenir quinze ' +
-      'boucles ou 5 000 m de dénivelé. Des montées continues lestées, des fentes, la chaise : longtemps, sous charge.',
+      'boucles ou 5 000 m de dénivelé. L\'escalier de l\'immeuble en continu, le sac sur le dos, puis des fentes et la ' +
+      'chaise : longtemps, sous charge.',
     [
-      blockWarmUp(model),
-      {
-        ...heart(model, 'Montées continues lestées', 'Z2', d.me.min * 60, {
-          exercise: 'montee-tabouret',
-          part: PART.climbs,
-          notes: withPack(d, 'Une montée toutes les 2 s, change de jambe toutes les 30 s. Arrête si la jambe tremble.'),
-        }),
-        repeat: d.me.sets,
-        recovery: { durationS: 120, zone: 'Z1', active: true, betweenReps: true },
-      },
+      ...blockWarmUp(model, false),
+      heart(model, 'Montées continues dans l\'escalier', 'Z2', d.stairsMin * 60, {
+        exercise: 'escalier-immeuble',
+        part: PART.climbs,
+        elevationGainM: stairsGain(climbsIn(d.stairsMin * 60)),
+        elevationLossM: stairsGain(climbsIn(d.stairsMin * 60)),
+        notes: withPack(d, `Environ ${climbsIn(d.stairsMin * 60)} montées sans t'arrêter ; les deux premières plus lentes.`),
+      }),
       ex('fente-arriere', PART.climbs, {
         label: 'Fente arrière lestée', sets: d.second, reps: d.harder ? 15 : 12, sides: 'jambe', restS: 60, setS: 60,
         effort: 'Jusqu\'à la brûlure', tempo: '2 s pour descendre, 1 s pour revenir', notes: withPack(d),

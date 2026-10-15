@@ -87,19 +87,24 @@ describe('La séance à suivre', () => {
     expect(tests[5]!.timer).toBeNull();
   });
 
-  it('dit le fractionné au cœur, la récupération en marchant, et les montées lestées en continu', () => {
+  it('dit le fractionné au cœur, la récupération en marchant, et les montées de l’escalier en continu', () => {
     const montees = stepsOf(workoutOf(day(5))).find((s) => s.name.startsWith('Montées rapides'))!;
     expect(montees.main).toBe('5 × 3 min');
     expect(montees.details).toContainEqual({ label: 'Récupération', text: '3 min en marchant, en redescendant' });
-    const endurance = find(stepsOf(workoutOf(day(8))), 'Montées continues lestées');
-    expect(endurance.main).toBe('3 × 6 min');
+    const endurance = find(stepsOf(workoutOf(day(8))), 'Montées continues dans l’escalier'.replace('’', '\''));
+    expect(endurance.main).toBe('45 min');
     expect(endurance.details).toContainEqual({ label: 'Cœur', text: 'entre 141 et 155 bpm' });
   });
 
   it('annonce la séance en parties, exercices et durée', () => {
     const d = day(3);
-    expect(workoutSummary(workoutOf(d), d.plannedDurationS)).toMatch(/^6 parties · 12 exercices · 1 h \d\d$/);
+    // Les deux montées de l'escalier ouvrent l'échauffement depuis le 15/10 : un exercice de plus.
+    expect(workoutSummary(workoutOf(d), d.plannedDurationS)).toMatch(/^6 parties · 13 exercices · 1 h \d\d$/);
     expect(isWorkout(d)).toBe(true);
+    // Une séance de montée dit son dénivelé — « environ » tant que les marches de l'escalier ne sont pas comptées.
+    const samedi = blockDay(PIERRE_MODEL, 8);
+    expect(workoutSummary(workoutOf({ blocks: samedi.blocks }), samedi.durationS, 294))
+      .toMatch(/ · environ 294\u00a0m de dénivelé$/);
     expect(isWorkout({ blocks: [{ label: 'Footing', zone: 'Z2', durationS: 2400 }] })).toBe(false);
   });
 

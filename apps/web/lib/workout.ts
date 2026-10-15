@@ -1,4 +1,4 @@
-import { EXERCISES, isExerciseKey, type ExerciseSheet, type TestMeasure } from '@cairn/core/exercises';
+import { EXERCISES, HOME_STAIRS, isExerciseKey, type ExerciseSheet, type TestMeasure } from '@cairn/core/exercises';
 import { blockDuration, duration, num, type SessionRow } from './api';
 
 /**
@@ -55,7 +55,7 @@ export interface Step {
 
 /** Une ligne du détail : « Tempo — 3 s pour descendre… ». */
 export interface Detail {
-  label: 'Tempo' | 'Repos' | 'Récupération' | 'Effort' | 'Cœur';
+  label: 'Tempo' | 'Repos' | 'Récupération' | 'Effort' | 'Cœur' | 'Dénivelé';
   text: string;
 }
 
@@ -132,6 +132,19 @@ function stepOf(b: Block, index: number, n: number): Step {
   if (b.tempo) details.push({ label: 'Tempo', text: asValue(b.tempo) });
   const heart = heartLine(b);
   if (heart) details.push({ label: 'Cœur', text: heart });
+  // Le dénivelé : celui d'une montée pour un fractionné, celui de l'étape sinon. L'escalier de
+  // l'immeuble dit « environ » tant que ses marches n'ont pas été comptées (`HOME_STAIRS`).
+  if (b.elevationGainM) {
+    const about = b.exercise === 'escalier-immeuble' && !HOME_STAIRS.measured ? 'environ ' : '';
+    const gain = Math.round(b.elevationGainM);
+    const loss = Math.round(b.elevationLossM ?? 0);
+    details.push({
+      label: 'Dénivelé',
+      text: repeat > 1
+        ? `${about}${gain} m par montée`
+        : `${about}${gain} m en montée${loss === gain ? ', autant en descente' : loss > 0 ? `, ${loss} m en descente` : ''}`,
+    });
+  }
   if (restS > 0 && measure) {
     // Un test se repose entre les deux jambes, puis avant le test suivant.
     details.push({
@@ -187,14 +200,30 @@ export const isWorkout = (session: Pick<SessionRow, 'blocks'>): boolean =>
   session.blocks.length > 0 && session.blocks.every((b) => b.part);
 
 /** « 3 parties · 11 exercices · 1 h 07 ». */
-export function workoutSummary(parts: Part[], totalS: number): string {
-  const steps = stepsOf(parts).length;
+/**
+ * La séance en une ligne : ses parties, ses exercices, sa durée — et son
+ * dénivelé quand c'est une séance de montée, à partir de 100 m : les 40 m des
+ * deux montées d'échauffement ne font pas d'une séance de force une séance de
+ * dénivelé.
+ */
+export function workoutSummary(parts: Part[], totalS: number, elevationGainM = 0): string {
+  const steps = stepsOf(parts);
+  const about = stairsEstimated(steps.map((s) => s.block)) ? 'environ ' : '';
   return [
     `${parts.length} partie${parts.length > 1 ? 's' : ''}`,
-    `${steps} exercice${steps > 1 ? 's' : ''}`,
+    `${steps.length} exercice${steps.length > 1 ? 's' : ''}`,
     duration(totalS),
+    ...(elevationGainM >= 100 ? [`${about}${Math.round(elevationGainM)}\u00a0m de dénivelé`] : []),
   ].join(' · ');
 }
+
+/**
+ * Le dénivelé de ces blocs repose-t-il sur l'escalier de l'immeuble, dont les
+ * marches n'ont pas encore été comptées ? Il se dit alors « environ » : une
+ * estimation affichée comme une mesure en deviendrait une.
+ */
+export const stairsEstimated = (blocks: readonly { exercise?: string; elevationGainM?: number }[]): boolean =>
+  !HOME_STAIRS.measured && blocks.some((b) => b.exercise === 'escalier-immeuble' && (b.elevationGainM ?? 0) > 0);
 
 /** La durée d'une partie, à la minute la plus proche : 110 s font 2 min, pas 1. */
 export const partDuration = (part: Part): string => duration(Math.max(60, Math.round(part.durationS / 60) * 60));

@@ -30,11 +30,24 @@ export const EXERCISE_KEYS = [
   'balancier-jambe', 'squat-profond',
   // Le 12/10, le bras valide sans l'accroche de porte : le plan de travail, l'élastique sous le pied.
   'pompe-inclinee', 'tirage-sous-pied', 'max-table',
+  // Le 15/10, l'escalier de l'immeuble : six étages sans ascenseur, à la porte.
+  'escalier-immeuble',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
 
 export type ExerciseKey = (typeof EXERCISE_KEYS)[number];
+
+/**
+ * L'escalier de l'immeuble de Pierre : six étages sans ascenseur, deux volées
+ * par étage. Environ 21 m du rez-de-chaussée au sixième — estimé d'après les
+ * hauteurs d'un immeuble haussmannien, plancher compris : un peu plus de 4 m au
+ * rez-de-chaussée, 3 à 3,6 m aux étages, moins sous les toits ; Pierre
+ * l'estimait entre 20 et 25 m. Les marches d'une montée complète, comptées une
+ * fois, et une contremarche mesurée le rendront exact : `measured` passe alors à
+ * vrai, et chaque séance dit son dénivelé sans « environ ».
+ */
+export const HOME_STAIRS = { floors: 6, heightM: 21, measured: false } as const;
 
 export const isExerciseKey = (key: string): key is ExerciseKey => (EXERCISE_KEYS as readonly string[]).includes(key);
 
@@ -581,7 +594,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     name: 'Marche en côte dehors',
     what: 'Monter des escaliers ou une côte en marchant, vite ou tranquillement selon le bloc, puis redescendre lentement.',
     cues: [
-      'Des escaliers secs et revêtus : Fourvière, la Grande-Côte, Saint-Barthélemy ; s\'il pleut, ceux de ton immeuble.',
+      'Des escaliers secs et revêtus : Fourvière, la Grande-Côte, Saint-Barthélemy ; s\'il pleut, l\'escalier de l\'immeuble.',
       'Une marche à la fois, jamais en courant : aucune chute possible.',
       'La main valide près de la rampe, en montant comme en descendant.',
     ],
@@ -604,6 +617,45 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     cast:
       'Une chute sur le bras plâtré coûterait des semaines : pas de sentier technique, pas de marches mouillées, ' +
       'pas de descente rapide. L\'écharpe si la marche fait lancer le coude.',
+  },
+  'escalier-immeuble': {
+    key: 'escalier-immeuble',
+    name: 'L\'escalier de l\'immeuble',
+    what: 'Du rez-de-chaussée au sixième, tu montes d\'un pas régulier, une marche à la fois ; au sommet, demi-tour, et tu redescends à vitesse de marche avant de repartir.',
+    cues: [
+      'La frontale sur la tête : la minuterie s\'éteint sans prévenir.',
+      'En descente, ta main droite ne quitte ni la rampe ni le mur.',
+      'Compte tes montées : chacune vaut environ 21 m de dénivelé.',
+    ],
+    where: ['maison'],
+    equipment: 'L\'escalier de ton immeuble, six étages, environ 21 m ; la frontale ; le sac à dos chargé quand la séance le dit',
+    why:
+      'De vraies montées à ta porte, par tous les temps et à toute heure : le cœur et les mollets y travaillent comme en ' +
+      'côte, ce que le step de 40 cm ne fait pas. Les descentes lentes font freiner le quadriceps en s\'allongeant, ' +
+      'marche après marche — ton aisance en descente, à 0,68 d\'un bon traileur, est ta marge la plus nette pour la ' +
+      'Maxi-Race et la SaintéLyon.',
+    setup: [
+      'Une fois, compte les marches d\'une montée complète et mesure la hauteur d\'une marche : leur produit est ton dénivelé exact. Dis-le à Cairn.',
+      'La frontale allumée, les lacets serrés, rien dans la main valide.',
+    ],
+    steps: [
+      'Monte au rythme de la séance : facile, tu parles en phrases ; au seuil, quelques mots seulement.',
+      'Au sixième, fais demi-tour sans t\'arrêter sur le palier.',
+      'Redescends lentement, en posant tout le pied : la descente fait partie du travail, et c\'est elle qui récupère entre deux montées rapides.',
+      'Chaque passage au rez-de-chaussée compte une montée.',
+    ],
+    breath: 'Régulière : en montée, l\'expiration rythme les pas.',
+    feel: 'Les mollets et les cuisses chauffent en montée ; en descente, le devant des cuisses freine sans à-coups.',
+    mistakes: [
+      'Descendre en courant, ou deux marches à la fois.',
+      'Partir trop vite : la dernière montée doit ressembler à la première.',
+      'Monter tôt le matin ou tard le soir : les marches d\'un vieil immeuble résonnent chez les voisins.',
+    ],
+    easier: 'Moins de montées, ou sans le sac.',
+    harder: 'Le sac à dos de 6 à 8 kg, puis 10 à 12 kg ; plus de montées — jamais une descente plus rapide.',
+    cast:
+      'Une chute dans l\'escalier coûterait des semaines : si la rampe est du côté du plâtre en descendant, la main ' +
+      'valide glisse le long du mur. Pas de chaussons, pas de marches mouillées, la lumière toujours allumée.',
   },
   'soins-bras': {
     key: 'soins-bras',

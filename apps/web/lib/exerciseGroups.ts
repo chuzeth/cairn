@@ -52,8 +52,8 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   },
   {
     title: 'Marcher et monter',
-    lead: 'La longue marche du samedi, le fractionné dans les escaliers, la marche des jours calmes.',
-    keys: ['marche-cote', 'marche', 'marche-tapis'],
+    lead: 'L’escalier de l’immeuble, le fractionné dans les escaliers de la ville, la marche des jours calmes.',
+    keys: ['escalier-immeuble', 'marche-cote', 'marche', 'marche-tapis'],
   },
   {
     title: 'Chaque jour',
