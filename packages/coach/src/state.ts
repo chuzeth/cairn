@@ -776,7 +776,9 @@ const JUDGED_FR: Partial<Record<PlannedSession['status'], string>> = {
  * c'est la passe de rattachement, qui ne réécrit une analyse que pour y poser
  * un rattachement. `onlyIfRejudged` : rien n'est écrit si le jugement de la
  * séance rattachée ne change pas — c'est la même passe, sur une activité
- * qu'une séance tient déjà.
+ * qu'une séance tient déjà. Ni si la séance est « partielle » : le jugement
+ * automatique ne sait dire que « faite » ou « remplacée », et ce que l'athlète
+ * a dit avoir fait à moitié, il ne le défait pas.
  */
 export async function analyzeAndStore(
   athleteId: string,
@@ -800,7 +802,7 @@ export async function analyzeAndStore(
     if (!compliance) return null;
     const target = planned.find((p) => p.id === compliance.plannedSessionId);
     const status = compliance.outcome === 'fulfilled' ? 'completed' : 'replaced';
-    if (opts.onlyIfRejudged && target?.status === status) return null;
+    if (opts.onlyIfRejudged && (target?.status === status || target?.status === 'partial')) return null;
     await recordAttachment(activity, compliance, target, status);
     return null;
   }
@@ -817,7 +819,7 @@ export async function analyzeAndStore(
   if ((opts.onlyIfMatched || opts.onlyIfRejudged) && !compliance) return null;
   const target = compliance ? planned.find((p) => p.id === compliance.plannedSessionId) : undefined;
   const status = compliance?.outcome === 'fulfilled' ? 'completed' : 'replaced';
-  if (opts.onlyIfRejudged && target?.status === status) return null;
+  if (opts.onlyIfRejudged && (target?.status === status || target?.status === 'partial')) return null;
   await db.saveAnalysis(athleteId, activity.startDateLocal, analysis);
   if (compliance) await recordAttachment(activity, compliance, target, status);
   return analysis;

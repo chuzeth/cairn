@@ -310,6 +310,18 @@ describe('Une séance saisie à la main dans Strava, sans flux', () => {
     expect(await rematchRecent('pierre', PIERRE_MODEL, '2026-10-13')).toEqual([]);
     expect(store.sessions[0]!.completedActivityId).toBeUndefined();
   });
+
+  it('ne défait pas une séance que le coach a dite partielle', async () => {
+    // Le 19/10 : le 16/10, « la moitié de ce qui était prévu », saisi 42 min. Le coach l'a dite
+    // partielle à 10 h 18 ; la relève de 10 h 22 l'a remise « faite » — sans flux, la durée seule
+    // ne sait dire que « faite » ou « remplacée », et 42 min passaient pour la force sans l'annexe.
+    store.sessions = [{ ...FORCE_1210, status: 'partial', completedActivityId: 'strava-force' }];
+    store.activities = [manual('strava-force', '2026-10-12', 'WeightTraining', 56)];
+    store.streams = new Map();
+    await rematchRecent('pierre', PIERRE_MODEL, '2026-10-13');
+    expect(store.sessions[0]).toMatchObject({ status: 'partial', completedActivityId: 'strava-force' });
+    expect(store.updates).toBe(0);
+  });
 });
 
 // ── Les voisines d'une séance clef réalisée un autre jour ────────────────────
