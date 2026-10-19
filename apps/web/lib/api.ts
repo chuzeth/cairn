@@ -598,7 +598,7 @@ export interface SessionRow {
     lastOptional?: boolean;
     /** Répétitions par série d'un exercice de renforcement : l'écran dit « 4 × 8 », pas « 4 × 45″ ». */
     reps?: number;
-    /** La fiche de l'exercice (`/exercices#clé`) : comment le faire, et avec le plâtre. */
+    /** La fiche de l'exercice (`/exercices#clé`) : comment le faire, et avec le bras blessé. */
     exercise?: string;
     /** Bloc non couru : souplesse et respiration du dossier, ou l'activation d'un renforcement. */
     kind?: 'mobility' | 'respiratory' | 'activation';

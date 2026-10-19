@@ -295,8 +295,10 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
       const opened = parts.filter((p, i) => i === 0 || parts[i - 1] !== p);
       expect(new Set(opened).size, `${s.title} : ${opened.join(' / ')}`).toBe(opened.length);
       expect(parts[0], s.title).toMatch(/^(Échauffement|Marche|Mobilité)$/);
-      expect(parts.at(-1), s.title).toBe('Bras plâtré et respiration');
     }
+    block.forEach((s, i) => {
+      expect(s.blocks.at(-1)!.part, s.title).toBe(blockWeekOf(i) >= 2 ? 'Coude et respiration' : 'Bras plâtré et respiration');
+    });
   });
 
   it('dit chaque exercice d’une jambe par jambe : autant de séries de chaque côté, plus celles du côté faible', () => {
@@ -310,13 +312,16 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
   });
 
   it('suit la semaine type, et ses titres sont ceux que la page Exercices annonce', () => {
-    for (const w of weeks.slice(0, 2)) {
-      expect(w.map((s) => s.type)).toEqual([
-        'strength', 'strength', 'cross_training', 'strength', 'strength', 'strength', 'cross_training',
-      ]);
-    }
+    // La semaine 1, telle qu'elle a été faite ; à partir du 19/10, un jour de force, un jour d'escalier.
+    expect(weeks[0]!.map((s) => s.title.split(/ \d| —/)[0])).toEqual([
+      'Force A : genoux et descentes', 'Force B : chaîne arrière', 'Moteur et mollets', 'Force C : une jambe, puissance',
+      'Hanches et tronc', 'Endurance des montées', 'Récupération',
+    ]);
+    expect(weeks[1]!.map((s) => s.type)).toEqual([
+      'strength', 'strength', 'strength', 'cross_training', 'strength', 'strength', 'cross_training',
+    ]);
     block.forEach((s, i) => {
-      if (i <= 2 || i === 23) return;
+      if (i <= 9 || i === 23) return;
       expect(s.title.startsWith(FORCE_BLOCK_DAYS[dow(i)]!.title), s.title).toBe(true);
     });
     // Le samedi 10/10, le lendemain des tests : la force A, sans les mollets vidés la veille.
@@ -351,8 +356,21 @@ describe('Le bloc de force, du 09/10 au 01/11', () => {
   });
 
   it('entretient le bras plâtré tous les jours, et l’imagine forcer cinq jours sur sept', () => {
-    for (const s of block) expect(s.blocks.some((b) => b.exercise === 'soins-bras'), s.title).toBe(true);
-    for (const w of weeks) expect(w.filter((s) => s.blocks.some((b) => b.label.startsWith('Imagerie'))).length).toBe(5);
+    const casted = block.filter((_, i) => blockWeekOf(i) <= 1);
+    for (const s of casted) expect(s.blocks.some((b) => b.exercise === 'soins-bras'), s.title).toBe(true);
+    expect(weeks[0]!.filter((s) => s.blocks.some((b) => b.label.startsWith('Imagerie'))).length).toBe(5);
+  });
+
+  it('laisse le coude à la kiné une fois le plâtre retiré : dix minutes chaque jour, et aucun exercice du coude', () => {
+    // Le 19/10, Pierre : plus de plâtre, une attelle, la rééducation commence avec une kiné.
+    const after = block.filter((_, i) => blockWeekOf(i) >= 2);
+    expect(after).toHaveLength(14);
+    for (const s of after) {
+      const kine = s.blocks.filter((b) => b.exercise === 'kine');
+      expect(kine.map((b) => [b.durationS, b.kind, b.part]), s.title).toEqual([[600, 'mobility', 'Coude et respiration']]);
+      expect(s.blocks.some((b) => b.exercise === 'soins-bras' || b.exercise === 'imagerie'), s.title).toBe(false);
+      expect(s.blocks.some((b) => b.exercise === 'respiration'), s.title).toBe(true);
+    }
   });
 
   it('se recompte sans devenir des kilomètres', () => {
@@ -374,7 +392,8 @@ describe('L’escalier de l’immeuble', () => {
   const stairs = (i: number) => blocks(i).filter((b) => b.exercise === 'escalier-immeuble');
 
   it('ouvre chaque séance de force par deux montées faciles, sans le sac ni consigne de cœur', () => {
-    for (const i of [3, 4, 6, 7, 10, 11, 13, 14, 17, 18, 20, 21]) {
+    // La semaine 1 : force A, B, C, hanches et tronc ; ensuite, la force A, C et B, un jour sur deux.
+    for (const i of [3, 4, 6, 7, 10, 12, 14, 17, 19, 21]) {
       const [first, second] = blocks(i);
       expect([first?.label, first?.exercise, first?.elevationGainM, first?.elevationLossM], `jour ${i}`)
         .toEqual(['Deux montées faciles', 'escalier-immeuble', 2 * HOME_STAIRS.heightM, 2 * HOME_STAIRS.heightM]);
@@ -394,11 +413,57 @@ describe('L’escalier de l’immeuble', () => {
 
   it('garde le fractionné du mercredi dehors, et dit sa variante à la maison au même dénivelé', () => {
     const intervals = blocks(5).find((b) => b.label === 'Montées rapides au seuil')!;
-    expect(intervals.notes).toContain('Pluie ou nuit : 13 montées au seuil à la maison');
+    expect(intervals.notes).toContain('Pluie ou nuit : 12 montées au seuil à la maison');
     expect(stairs(5)).toEqual([]);
   });
 
   it('laisse le dimanche et les tests sans escalier', () => {
     for (const i of [9, 16, 23]) expect(stairs(i), `jour ${i}`).toEqual([]);
+  });
+});
+
+describe('L’alternance du 19/10 : un jour de force, un jour d’escalier', () => {
+  // Le 19/10, Pierre : « est-ce qu'on alternerait pas un jour escalier, un jour renfo ? »
+  const day = (i: number) => blockDay(PIERRE_MODEL, i);
+  /** Ce qui monte vraiment : l'escalier hors échauffement, le fractionné en côte. */
+  const climbs = (i: number) =>
+    day(i).blocks.filter((b) => (b.exercise === 'escalier-immeuble' && b.part !== 'Échauffement') || b.part === 'Fractionné');
+  /** Le D− d'une séance, récupérations comprises. */
+  const down = (i: number) =>
+    day(i).blocks.reduce((a, b) => a + ((b.elevationLossM ?? 0) + (b.recovery?.elevationLossM ?? 0)) * (b.repeat ?? 1), 0);
+
+  it('force le lundi, le mercredi et le vendredi, monte le mardi, le jeudi et le samedi', () => {
+    for (const monday of [10, 17]) {
+      const week = [0, 1, 2, 3, 4, 5].map((k) => monday + k);
+      const titles = week.map((i) => day(i).title).join(' / ');
+      expect(week.filter((_, k) => k % 2 === 0).every((i) => day(i).title.startsWith('Force')), titles).toBe(true);
+      expect(week.map((i) => climbs(i).length > 0), titles).toEqual([false, true, false, true, false, true]);
+    }
+  });
+
+  it('garde le mardi facile : sans sac, en zone 2, 40 min la semaine de charge, 30 la dernière', () => {
+    const tuesday = (i: number) => day(i).blocks.find((b) => b.part === 'Escalier')!;
+    expect([11, 18].map((i) => [tuesday(i).durationS, tuesday(i).zone, tuesday(i).elevationGainM, tuesday(i).elevationLossM]))
+      .toEqual([
+        [40 * 60, 'Z2', 12 * HOME_STAIRS.heightM, 12 * HOME_STAIRS.heightM],
+        [30 * 60, 'Z2', 9 * HOME_STAIRS.heightM, 9 * HOME_STAIRS.heightM],
+      ]);
+    for (const i of [11, 18]) expect(tuesday(i).notes, `jour ${i}`).toContain('sans le sac');
+  });
+
+  it('allonge la longue montée du samedi sans alourdir le sac : 6 à 8 kg, la semaine de charge comprise', () => {
+    for (const i of [8, 15, 22]) {
+      const long = day(i).blocks.find((b) => b.label === 'Montées continues dans l\'escalier')!;
+      expect(long.notes, `jour ${i}`).toMatch(/^Le sac à dos de 6 à 8 kg/);
+    }
+    // Les fentes du même samedi, elles, prennent le sac de la semaine.
+    expect(day(15).blocks.find((b) => b.exercise === 'fente-arriere')!.notes).toMatch(/^Le sac à dos de 10 à 12 kg/);
+  });
+
+  it('descend, la semaine de charge, ce que ses semaines de course descendaient : moins de 1 400 m', () => {
+    // Avant la chute, de 350 à 2 500 m de D− par semaine, 800 à 1 700 m le plus souvent — en courant.
+    const week2 = [10, 11, 12, 13, 14, 15, 16].reduce((a, i) => a + down(i), 0);
+    expect(week2).toBeGreaterThan(1000);
+    expect(week2).toBeLessThan(1400);
   });
 });

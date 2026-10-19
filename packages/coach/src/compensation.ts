@@ -597,6 +597,13 @@ interface BlockDose {
   reserve: number;
   /** Le sac de la semaine, en clair ; vide : sans sac. */
   pack: string;
+  /**
+   * Le sac des montées continues du samedi. Chaque montée se redescend avec lui :
+   * la semaine de charge allonge la séance plutôt que d'alourdir le sac — une
+   * seule chose progresse à la fois, et ce n'est pas le poids que les genoux
+   * freinent à chaque marche.
+   */
+  stairsPack: string;
   /** Les exercices qui se durcissent : la version « plus dur » de la fiche. */
   harder: boolean;
   /** Isométrie des mollets, séries par jambe. */
@@ -605,6 +612,8 @@ interface BlockDose {
   climb: { reps: number; zone: ZoneKey };
   /** Les montées continues du samedi, dans l'escalier de l'immeuble, min. */
   stairsMin: number;
+  /** Les montées faciles du mardi, sans sac, à partir de la semaine 2, min. */
+  easyStairsMin: number;
   /** Chaise contre le mur, s. */
   wallS: number;
   /** Gainage sur le côté, s. */
@@ -613,22 +622,25 @@ interface BlockDose {
 
 const BLOCK_DOSE: Record<BlockWeek, BlockDose> = {
   0: {
-    main: 3, second: 3, acc: 2, mainReps: 10, reserve: 3, pack: '', harder: false, isoSets: 3,
-    climb: { reps: 4, zone: 'Z4' }, stairsMin: 30, wallS: 60, holdS: 40,
+    main: 3, second: 3, acc: 2, mainReps: 10, reserve: 3, pack: '', stairsPack: '', harder: false, isoSets: 3,
+    climb: { reps: 4, zone: 'Z4' }, stairsMin: 30, easyStairsMin: 20, wallS: 60, holdS: 40,
   },
   1: {
     main: 4, second: 3, acc: 3, mainReps: 8, reserve: 2,
     pack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.', harder: false, isoSets: 4,
-    climb: { reps: 5, zone: 'Z4' }, stairsMin: 45, wallS: 75, holdS: 45,
+    stairsPack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.',
+    climb: { reps: 5, zone: 'Z4' }, stairsMin: 45, easyStairsMin: 30, wallS: 75, holdS: 45,
   },
   2: {
     main: 5, second: 4, acc: 3, mainReps: 6, reserve: 1,
     pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: true, isoSets: 5,
-    climb: { reps: 6, zone: 'Z4' }, stairsMin: 70, wallS: 90, holdS: 50,
+    stairsPack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.',
+    climb: { reps: 6, zone: 'Z4' }, stairsMin: 70, easyStairsMin: 40, wallS: 90, holdS: 50,
   },
   3: {
-    main: 2, second: 2, acc: 2, mainReps: 8, reserve: 3, pack: 'Le sac à dos de 8 kg.', harder: false, isoSets: 3,
-    climb: { reps: 4, zone: 'Z4' }, stairsMin: 40, wallS: 60, holdS: 40,
+    main: 2, second: 2, acc: 2, mainReps: 8, reserve: 3, pack: 'Le sac à dos de 8 kg.', stairsPack: 'Le sac à dos de 6 à 8 kg.',
+    harder: false, isoSets: 3,
+    climb: { reps: 4, zone: 'Z4' }, stairsMin: 40, easyStairsMin: 30, wallS: 60, holdS: 40,
   },
 };
 
@@ -638,6 +650,9 @@ const BLOCK_DAYS = 24;
 /** La semaine du jour `index` du bloc (0 = le 09/10). */
 export const blockWeekOf = (index: number): BlockWeek =>
   (index < 3 ? 0 : Math.min(3, Math.floor((index - 3) / 7) + 1)) as BlockWeek;
+
+/** Plus de plâtre : Pierre le dit le 19/10, premier jour de la semaine 2. Le coude passe à la kiné (`armCare`). */
+const afterCast = (week: BlockWeek): boolean => week >= 2;
 
 /** Le côté qu'un test dit faible, et ce qu'il en a mesuré. */
 export interface WeakSide {
@@ -711,9 +726,11 @@ const PART = {
   intervals: 'Fractionné',
   coolDown: 'Retour au calme',
   climbs: 'Endurance des montées',
+  stairs: 'Escalier',
   mobility: 'Souplesse',
   moves: 'Mobilité',
   cast: 'Bras plâtré et respiration',
+  elbow: 'Coude et respiration',
 } as const;
 
 /** Ce qu'un exercice demande, dit pour être suivi en le faisant. */
@@ -811,8 +828,20 @@ function blockWarmUp(model: PhysiologyModel, stairs = true): SessionBlock[] {
  * au vendredi — imaginer des contractions maximales, sans contracter : quatre
  * semaines de plâtre ont coûté deux fois moins de force du poignet à ceux qui
  * la pratiquaient (Clark 2014).
+ *
+ * Le 19/10, Pierre : plus de plâtre, une attelle, et la rééducation commence avec
+ * une kiné (`castOff`). Le coude est désormais son affaire : la séance garde dix
+ * minutes à ses exercices et n'en écrit aucun — un exercice du coude prescrit ici
+ * pourrait contredire les siens. L'imagerie s'arrête : le vrai mouvement, guidé
+ * par elle, la remplace.
  */
-function armCare(weekday: boolean): SessionBlock[] {
+function armCare(weekday: boolean, castOff = false): SessionBlock[] {
+  if (castOff) {
+    return [
+      { label: 'Les exercices de ta kiné', kind: 'mobility', part: PART.elbow, zone: 'Z1', durationS: 600, exercise: 'kine' },
+      ...daily().filter((b) => b.kind === 'respiratory').map((b) => ({ ...b, part: PART.elbow })),
+    ];
+  }
   return [
     ...daily().map((b) => ({ ...b, part: PART.cast })),
     ...(weekday
@@ -855,15 +884,23 @@ const pushPull = (d: BlockDose): SessionBlock[] => [
   }),
 ];
 
-/** Les adducteurs : la Copenhague du côté où elle se fait, le coussin pour les deux. */
-const adductors = (d: BlockDose): SessionBlock[] => [
-  ex('copenhague', PART.adductors, {
-    label: 'Copenhague, la jambe du côté du plâtre', sets: d.harder ? 3 : 2, reps: d.harder ? 10 : 8, restS: 45,
-    tempo: '1 s pour monter, 2 s pour redescendre', setS: 30,
-  }),
+/** Le serrage de coussin : les adducteurs des deux côtés, sans rien porter. */
+const squeeze = (): SessionBlock =>
   ex('adducteurs-coussin', PART.adductors, {
     label: 'Serrage de coussin', sets: 1, reps: 6, pulse: { workS: 10, restS: 10 }, restS: 0, effort: 'Serre à fond',
+  });
+
+/**
+ * Les adducteurs : la Copenhague du côté où elle se fait, le coussin pour les deux.
+ * Elle se fait appuyée sur le coude droit, le valide : seule la jambe gauche, celle
+ * du dessus, y travaille.
+ */
+const adductors = (d: BlockDose): SessionBlock[] => [
+  ex('copenhague', PART.adductors, {
+    label: 'Copenhague, jambe gauche', sets: d.harder ? 3 : 2, reps: d.harder ? 10 : 8, restS: 45,
+    tempo: '1 s pour monter, 2 s pour redescendre', setS: 30,
   }),
+  squeeze(),
 ];
 
 const deadBug = (part: string, effort = 'Dos plaqué') =>
@@ -896,7 +933,7 @@ export function blockTests(model: PhysiologyModel, when: 'start' | 'end'): Sessi
       test('test-cheville', 'Cheville, genou au mur', { sets: 1, sides: 'jambe', setS: 90, restS: 30, effort: 'La mesure' }),
       test('test-souplesse', 'Souplesse, debout', { sets: 1, setS: 60, restS: 0, effort: 'La mesure' }),
       // Le vendredi des tests de départ est un jour de semaine, le dimanche des tests de fin non.
-      ...armCare(start),
+      ...armCare(start, !start),
     ]);
 }
 
@@ -931,7 +968,7 @@ export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ...(week === 0 ? [] : [calfIso(d, w)]),
       ...pushPull(d),
       deadBug(PART.core),
-      ...armCare(true),
+      ...armCare(true, afterCast(week)),
     ]);
 }
 
@@ -968,7 +1005,7 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
         label: 'Le maximum, sous la table', sets: 2, reps: 3, pulse: { workS: 5, restS: 10 }, restS: 30,
         effort: 'De toutes tes forces',
       }),
-      ...armCare(true),
+      ...armCare(true, afterCast(week)),
     ]);
 }
 
@@ -1023,7 +1060,7 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSide
         label: 'Pied court', sets: 1, reps: 10, sides: 'jambe', pulse: { workS: 5, restS: 3 }, restS: 0, effort: 'Lent',
         notes: 'Puis 10 gros orteils seuls et 10 fois les quatre autres.' + (d.harder ? ' Cette semaine, debout.' : ''),
       }),
-      ...armCare(true),
+      ...armCare(true, afterCast(week)),
     ]);
 }
 
@@ -1052,9 +1089,39 @@ export function blockForceC(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       calfIso(d, w),
       balance(w, PART.ankleBalance),
       ...pushPull(d),
-      ...armCare(true),
+      ...armCare(true, afterCast(week)),
     ]);
 }
+
+/** Le moyen fessier, le psoas et le pont : les hanches, sans charge lourde. */
+const hips = (d: BlockDose, w: WeakSides): SessionBlock[] => [
+  ex('pas-chasses', PART.hips, {
+    label: 'Pas chassés à la mini-bande', sets: d.acc, reps: 15, sides: 'côté', restS: 30, setS: 35,
+    effort: 'Jusqu\'à la brûlure', notes: 'La mini-bande la plus dure.',
+  }),
+  ex('montee-genou', PART.hips, {
+    label: 'Montée de genou sur le dos', sets: d.acc, reps: 10, sides: 'jambe', restS: 20, setS: 30,
+    effort: 'Bas du dos collé', tempo: '1 s pour monter le genou, 2 s pour repartir',
+  }),
+  ex('pont-une-jambe', PART.hips, {
+    label: 'Pont sur une jambe, au sol', sets: 2, reps: 15, sides: 'jambe', restS: 30, setS: 45,
+    tempo: '1 s pour monter, 2 s serrées en haut', effort: 'Jusqu\'à la brûlure', weak: { side: w.hips, sets: 1 },
+  }),
+];
+
+/** Le tronc : porter d'une main, tenir sur le côté, ne pas tourner, ne pas se creuser. */
+const core = (d: BlockDose): SessionBlock[] => [
+  ex('port-valise', PART.core, {
+    label: 'Port de valise, à une main', sets: 4, holdS: d.harder ? 60 : 40, restS: 45,
+    notes: withPack(d),
+  }),
+  ex('gainage-lateral', PART.core, { label: 'Gainage sur le côté', sets: 3, holdS: d.holdS, restS: 45 }),
+  ex('anti-rotation', PART.core, {
+    label: 'Anti-rotation', sets: 2, reps: 8, sides: 'côté', restS: 30, setS: 40, effort: 'Bras tendu 3 s',
+    tempo: '2 s pour tendre, 3 s tenu, 2 s pour revenir', notes: 'Un élastique de 6 ou 7 kg.',
+  }),
+  deadBug(PART.core),
+];
 
 /** Les hanches et le tronc : le bassin qui tient quand la fatigue arrive. */
 export function blockHanches(model: PhysiologyModel, week: BlockWeek, w: WeakSides): SessionTemplate {
@@ -1065,31 +1132,49 @@ export function blockHanches(model: PhysiologyModel, week: BlockWeek, w: WeakSid
       'samedi.',
     [
       ...blockWarmUp(model),
-      ex('pas-chasses', PART.hips, {
-        label: 'Pas chassés à la mini-bande', sets: d.acc, reps: 15, sides: 'côté', restS: 30, setS: 35,
-        effort: 'Jusqu\'à la brûlure', notes: 'La mini-bande la plus dure.',
-      }),
-      ex('montee-genou', PART.hips, {
-        label: 'Montée de genou sur le dos', sets: d.acc, reps: 10, sides: 'jambe', restS: 20, setS: 30,
-        effort: 'Bas du dos collé', tempo: '1 s pour monter le genou, 2 s pour repartir',
-      }),
-      ex('pont-une-jambe', PART.hips, {
-        label: 'Pont sur une jambe, au sol', sets: 2, reps: 15, sides: 'jambe', restS: 30, setS: 45,
-        tempo: '1 s pour monter, 2 s serrées en haut', effort: 'Jusqu\'à la brûlure', weak: { side: w.hips, sets: 1 },
-      }),
+      ...hips(d, w),
       ...adductors(d),
-      ex('port-valise', PART.core, {
-        label: 'Port de valise, à une main', sets: 4, holdS: d.harder ? 60 : 40, restS: 45,
-        notes: withPack(d),
-      }),
-      ex('gainage-lateral', PART.core, { label: 'Gainage sur le côté', sets: 3, holdS: d.holdS, restS: 45 }),
-      ex('anti-rotation', PART.core, {
-        label: 'Anti-rotation', sets: 2, reps: 8, sides: 'côté', restS: 30, setS: 40, effort: 'Bras tendu 3 s',
-        tempo: '2 s pour tendre, 3 s tenu, 2 s pour revenir', notes: 'Un élastique de 6 ou 7 kg.',
-      }),
-      deadBug(PART.core),
+      ...core(d),
       { ...souplesse(600), part: PART.mobility },
-      ...armCare(true),
+      ...armCare(true, afterCast(week)),
+    ]);
+}
+
+/**
+ * L'escalier facile, les hanches et le tronc : le mardi de l'alternance.
+ *
+ * Le 19/10, Pierre : « est-ce qu'on alternerait pas un jour escalier, un jour
+ * renfo ? » Oui, à partir de la semaine 2 : la force le lundi, le mercredi et le
+ * vendredi, l'escalier le mardi, le jeudi et le samedi (`blockDay`). Chaque séance
+ * de force arrive sur des jambes qui n'ont fait que monter la veille, chaque
+ * escalier sur des jambes qui n'ont pas porté lourd. Le mardi reste facile, sans
+ * sac — le fractionné du jeudi et la longue montée du samedi font le travail dur ;
+ * un jour d'escalier de plus par semaine, ce sont autant de descentes que les
+ * cuisses freinent, et il ne fallait pas en ajouter de lourdes. Les hanches et le
+ * tronc, qui ne fatiguent pas les cuisses, s'y ajoutent ; des adducteurs, le seul
+ * serrage : la Copenhague reste au vendredi, avec la force B.
+ */
+export function blockEscalier(model: PhysiologyModel, week: BlockWeek, w: WeakSides): SessionTemplate {
+  const d = BLOCK_DOSE[week];
+  const climbs = climbsIn(d.easyStairsMin * 60);
+  return template(model, `bloc_escalier_${week}`, 'strength', 'Escalier, hanches et tronc',
+    'Monter longtemps et sans forcer entretient ton endurance pendant l\'arrêt — le cœur, les mollets, les cuisses — ' +
+      'sans la fatigue d\'un jour de force. Puis le moyen fessier et le tronc, qui tiennent le bassin quand la fatigue ' +
+      'arrive, sur 100 km de backyard comme dans les dévers de la Maxi-Race.',
+    [
+      ...blockWarmUp(model, false),
+      heart(model, 'Montées faciles dans l\'escalier', 'Z2', d.easyStairsMin * 60, {
+        exercise: 'escalier-immeuble',
+        part: PART.stairs,
+        elevationGainM: stairsGain(climbs),
+        elevationLossM: stairsGain(climbs),
+        notes: `Environ ${climbs} montées, sans le sac, en parlant ; la descente toujours au pas.`,
+      }),
+      ...hips(d, w),
+      squeeze(),
+      ...core(d),
+      { ...souplesse(600), part: PART.mobility },
+      ...armCare(true, afterCast(week)),
     ]);
 }
 
@@ -1107,7 +1192,8 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
         part: PART.climbs,
         elevationGainM: stairsGain(climbsIn(d.stairsMin * 60)),
         elevationLossM: stairsGain(climbsIn(d.stairsMin * 60)),
-        notes: withPack(d, `Environ ${climbsIn(d.stairsMin * 60)} montées sans t'arrêter ; les deux premières plus lentes.`),
+        notes: [d.stairsPack, `Environ ${climbsIn(d.stairsMin * 60)} montées sans t'arrêter ; les deux premières plus lentes.`]
+          .filter(Boolean).join(' '),
       }),
       ex('fente-arriere', PART.climbs, {
         label: 'Fente arrière lestée', sets: d.second, reps: d.harder ? 15 : 12, sides: 'jambe', restS: 60, setS: 60,
@@ -1118,7 +1204,7 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
         label: 'Pont sur une jambe, au sol', sets: 2, reps: 20, sides: 'jambe', restS: 30, setS: 50,
         tempo: '1 s pour monter, 1 s pour redescendre', effort: 'Jusqu\'à la brûlure', weak: { side: w.hips, sets: 1 },
       }),
-      ...armCare(false),
+      ...armCare(false, afterCast(week)),
     ]);
 }
 
@@ -1126,7 +1212,7 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
  * La récupération du dimanche : la semaine s'assimile, la souplesse se gagne.
  * `walk` à faux : pas de marche, les hanches et les chevilles en mouvement à la place.
  */
-export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true): SessionTemplate {
+export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true, week: BlockWeek = 1): SessionTemplate {
   const ankleBalance = [
     ankle(w, PART.ankleBalance),
     balance(w, PART.ankleBalance),
@@ -1155,7 +1241,7 @@ export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true): S
         },
         ...ankleBalance,
         { ...souplesse(900), part: PART.mobility },
-        ...armCare(false),
+        ...armCare(false, afterCast(week)),
       ]);
   }
   return template(model, 'bloc_recup', 'cross_training', 'Récupération',
@@ -1167,15 +1253,20 @@ export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true): S
       }),
       { ...souplesse(900), part: PART.mobility },
       ...ankleBalance,
-      ...armCare(false),
+      ...armCare(false, afterCast(week)),
     ]);
 }
 
 /**
  * Le jour `index` du bloc (0 = le vendredi 09/10) : les tests, puis la semaine
- * type — force A, force B, moteur et mollets, force C, hanches et tronc,
- * endurance des montées, récupération. Le samedi 10/10 ouvre par la force A,
- * le dernier dimanche refait les tests. `weak` : les côtés faibles des tests.
+ * type. La semaine 1 — force A, force B, moteur et mollets, force C, hanches et
+ * tronc, endurance des montées, récupération — telle qu'elle a été faite ; à
+ * partir du 19/10, l'alternance que Pierre a proposée : un jour de force, un jour
+ * d'escalier (`blockEscalier`). La force C, qui charge les cuisses sur une jambe,
+ * passe au mercredi, et la force B, sur la chaîne arrière, au vendredi : la veille
+ * de la longue montée lestée du samedi, les cuisses qui freinent dans chaque
+ * descente n'ont pas porté lourd. Le samedi 10/10 ouvre par la force A, le
+ * dernier dimanche refait les tests. `weak` : les côtés faibles des tests.
  */
 export function blockDay(model: PhysiologyModel, index: number, weak: WeakSides = {}): SessionTemplate {
   if (index === 0) return blockTests(model, 'start');
@@ -1185,15 +1276,16 @@ export function blockDay(model: PhysiologyModel, index: number, weak: WeakSides 
   if (index === 2) return blockRecup(model, weak, false);
   const week = blockWeekOf(index);
   const dow = (index + 4) % 7;
-  return [
-    () => blockForceA(model, week, weak),
-    () => blockForceB(model, week, weak),
-    () => blockMoteur(model, week, weak),
-    () => blockForceC(model, week, weak),
-    () => blockHanches(model, week, weak),
-    () => blockEndurance(model, week, weak),
-    () => blockRecup(model, weak),
-  ][dow]!();
+  const forceA = () => blockForceA(model, week, weak);
+  const forceB = () => blockForceB(model, week, weak);
+  const moteur = () => blockMoteur(model, week, weak);
+  const forceC = () => blockForceC(model, week, weak);
+  const endurance = () => blockEndurance(model, week, weak);
+  const recup = () => blockRecup(model, weak, true, week);
+  const days = week <= 1
+    ? [forceA, forceB, moteur, forceC, () => blockHanches(model, week, weak), endurance, recup]
+    : [forceA, () => blockEscalier(model, week, weak), forceC, moteur, forceB, endurance, recup];
+  return days[dow]!();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1301,8 +1393,11 @@ export async function layCompensation(
     const open = day.filter((s) => s.type !== 'race' && REPLACEABLE.has(s.status));
     const [target, ...others] = open;
     if (target) {
+      // La séance reprise peut venir d'un autre jour — reportée par une règle —, voire
+      // d'une autre semaine : elle se range dans celle de sa date.
       await db.updateSession(target.id, {
         ...content,
+        weekStart: mondayOf(date),
         history: withHistory(target.history, { at, by: 'coach', text: `${target.title} remplacée. ${why}` }),
       });
       changes.push({ date, before: target.title, after: t.title, reason: why });

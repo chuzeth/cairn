@@ -143,6 +143,33 @@ describe('Une pyramide devenue footing est un footing', () => {
   });
 });
 
+describe('Une séance passée dont le contenu change', () => {
+  // Le 19/10 : samedi 17/10, une heure d'escalier au lieu de 45 min, et rien d'autre. Le contenu
+  // remplacé, la séance gardait son titre d'avant — « 1 h 13 · 294 m D+ » —, comme le 13/10.
+  const samedi = (): PlannedSession => ({
+    id: 'samedi', athleteId: 'pierre', date: '2026-09-26', type: 'strength',
+    title: 'Endurance des montées 1 h 13 + souplesse et respiration 15 min · 294 m D+', intent: '',
+    priority: 'support', status: 'planned',
+    blocks: [
+      { label: 'Montées continues dans l\'escalier', zone: 'Z2', durationS: 2700, elevationGainM: 294, elevationLossM: 294 },
+      { label: 'Fente arrière lestée', zone: 'Z3', durationS: 720 },
+      { label: 'Respiration', zone: 'Z1', durationS: 600 },
+    ],
+    plannedLoad: 60, plannedMechanicalLoad: 20, plannedDurationS: 5335, plannedElevationGainM: 294,
+  });
+
+  it('prend le titre de ce qui a été fait', async () => {
+    db.sessions = [samedi()];
+    await executeTool('pierre', 'modify_session', {
+      session_id: 'samedi', status: 'completed', rationale: 'Une heure d\'escalier, rien d\'autre.', apply: true,
+      blocks: [{ label: 'Montées continues dans l\'escalier', zone: 'Z2', durationS: 3600, elevationGainM: 437, elevationLossM: 437 }],
+    });
+    const patch = db.updates[0]!.patch as Partial<PlannedSession>;
+    expect(patch.title).not.toMatch(/1 h 13|294 m/);
+    expect(patch.title).toBe('Endurance des montées — 1 h · 437 m D+');
+  });
+});
+
 describe('Une rando-course qui porte de l\'intensité garde ses blocs', () => {
   const efforts = (blocks: readonly SessionBlock[]) => blocks.filter((b) => b.zone === 'Z3');
 

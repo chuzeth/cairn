@@ -42,12 +42,12 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   },
   {
     title: 'Le tronc',
-    lead: 'Il ne se creuse pas, ne tourne pas, ne s’affaisse pas : le gainage, sans jamais s’appuyer sur le bras plâtré.',
+    lead: 'Il ne se creuse pas, ne tourne pas, ne s’affaisse pas : le gainage, sans jamais s’appuyer sur le bras blessé.',
     keys: ['dead-bug', 'gainage-lateral', 'anti-rotation', 'port-valise'],
   },
   {
     title: 'Le bras valide',
-    lead: 'Le kit d’élastiques à la porte, l’anneau, une table : le bras qui travaille entretient celui qui est plâtré.',
+    lead: 'Le kit d’élastiques à la porte, l’anneau, une table : le bras qui travaille entretient celui qui est blessé.',
     keys: ['tirage-elastique', 'pousse-elastique', 'bras-elastique', 'max-table', 'tirage-sous-pied', 'pompe-inclinee'],
   },
   {
@@ -57,8 +57,8 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
   },
   {
     title: 'Chaque jour',
-    lead: 'Le bras plâtré, la respiration, la souplesse : quelques minutes, tous les jours.',
-    keys: ['soins-bras', 'imagerie', 'respiration', 'souplesse'],
+    lead: 'Les exercices de ta kiné, la respiration, la souplesse : quelques minutes, tous les jours. Sous le plâtre, c’étaient ses soins et l’imagerie.',
+    keys: ['kine', 'respiration', 'souplesse', 'soins-bras', 'imagerie'],
   },
   {
     title: 'À la salle, plus tard',

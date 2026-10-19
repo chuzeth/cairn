@@ -1,5 +1,5 @@
 /**
- * Les fiches d'exercices : comment faire, et comment le faire avec un plâtre.
+ * Les fiches d'exercices : comment faire, et comment le faire avec le bras blessé.
  *
  * Le 03/10, Pierre se casse le coude en vélo : plâtre ou attelle rigide, plus de
  * course pour quelques semaines. Ses séances deviennent du renforcement, de la
@@ -7,8 +7,10 @@
  * à sa fiche (`SessionBlock.exercise`), et l'écran la montre avec son schéma.
  *
  * Une fiche dit en clair ce qu'on fait, ce qu'on doit sentir, ce qui se fait
- * mal, et ce que le bras plâtré change. Rien n'y demande d'appui sur ce bras,
- * ni de prise à deux mains : c'est la condition pour qu'une fiche existe ici.
+ * mal, et ce que le bras blessé change — le plâtre d'abord ; depuis le 19/10,
+ * une attelle, et la rééducation avec une kiné. Rien n'y demande d'appui sur ce
+ * bras, ni de prise à deux mains : c'est la condition pour qu'une fiche existe
+ * ici.
  */
 
 export const EXERCISE_KEYS = [
@@ -32,6 +34,8 @@ export const EXERCISE_KEYS = [
   'pompe-inclinee', 'tirage-sous-pied', 'max-table',
   // Le 15/10, l'escalier de l'immeuble : six étages sans ascenseur, à la porte.
   'escalier-immeuble',
+  // Le 19/10, le plâtre retiré : la rééducation du coude, avec sa kiné.
+  'kine',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
@@ -40,14 +44,23 @@ export type ExerciseKey = (typeof EXERCISE_KEYS)[number];
 
 /**
  * L'escalier de l'immeuble de Pierre : six étages sans ascenseur, deux volées
- * par étage. Environ 21 m du rez-de-chaussée au sixième — estimé d'après les
- * hauteurs d'un immeuble haussmannien, plancher compris : un peu plus de 4 m au
- * rez-de-chaussée, 3 à 3,6 m aux étages, moins sous les toits ; Pierre
- * l'estimait entre 20 et 25 m. Les marches d'une montée complète, comptées une
- * fois, et une contremarche mesurée le rendront exact : `measured` passe alors à
- * vrai, et chaque séance dit son dénivelé sans « environ ».
+ * par étage. Le 19/10, Pierre a compté 24 marches entre deux étages : 144 du
+ * rez-de-chaussée au sixième. Leur hauteur reste estimée — 16 cm, celle d'un
+ * escalier d'immeuble du Second Empire, 3,8 m d'un étage à l'autre plancher
+ * compris —, d'où environ 23 m par montée ; Pierre l'estimait entre 20 et 25 m.
+ * Une marche mesurée le rendra exact : `measured` passe alors à vrai, et chaque
+ * séance dit son dénivelé sans « environ ».
  */
-export const HOME_STAIRS = { floors: 6, heightM: 21, measured: false } as const;
+const STAIRS_FLOORS = 6;
+const STAIRS_STEPS_PER_FLOOR = 24;
+const STAIRS_RISER_M = 0.16;
+export const HOME_STAIRS = {
+  floors: STAIRS_FLOORS,
+  steps: STAIRS_FLOORS * STAIRS_STEPS_PER_FLOOR,
+  riserM: STAIRS_RISER_M,
+  heightM: Math.round(STAIRS_FLOORS * STAIRS_STEPS_PER_FLOOR * STAIRS_RISER_M),
+  measured: false,
+} as const;
 
 export const isExerciseKey = (key: string): key is ExerciseKey => (EXERCISE_KEYS as readonly string[]).includes(key);
 
@@ -80,7 +93,7 @@ export interface ExerciseSheet {
   easier?: string;
   /** Plus de réserve que prévu deux séances de suite : la suite. */
   harder?: string;
-  /** Ce que le bras plâtré change. */
+  /** Ce que le bras blessé change. */
   cast: string;
   /**
    * Ce qu'il faut avoir en tête en le faisant : deux à quatre consignes courtes.
@@ -129,7 +142,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'Chaud dans les fessiers et les mollets, pas encore fatigué.',
     mistakes: ['Le faire vite, pour en finir : c\'est la qualité du mouvement qui réveille.'],
-    cast: 'La main libre au mur pour les fentes ; le bras plâtré contre toi.',
+    cast: 'La main libre au mur pour les fentes ; le bras blessé contre toi.',
   },
   presse: {
     key: 'presse',
@@ -148,7 +161,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'quand tu recourras.',
     steps: [
       'Assieds-toi dos et bassin calés, pieds à plat au milieu du plateau, écartés de la largeur des hanches.',
-      'Déverrouille avec la main libre ; le bras plâtré reste contre ton ventre.',
+      'Déverrouille avec la main libre ; le bras blessé reste contre ton ventre.',
       'Descends en 3 secondes, jusqu\'à des genoux à angle droit.',
       'Pousse en 1 seconde à travers les talons, sans verrouiller les genoux en haut.',
     ],
@@ -158,7 +171,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Laisser les genoux rentrer vers l\'intérieur.',
       'Verrouiller les genoux en haut.',
     ],
-    cast: 'Seule la main libre touche la machine, pour régler et déverrouiller. Le bras plâtré reste contre toi.',
+    cast: 'Seule la main libre touche la machine, pour régler et déverrouiller. Le bras blessé reste contre toi.',
   },
   'split-squat-bulgare': {
     key: 'split-squat-bulgare',
@@ -186,7 +199,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     cast:
       'Toujours à côté d\'un support pour la main libre. Si l\'équilibre part, lâche l\'haltère et rattrape-toi avec ' +
-      'la main libre — jamais avec le bras plâtré.',
+      'la main libre — jamais avec le bras blessé.',
   },
   'extension-hanche': {
     key: 'extension-hanche',
@@ -204,7 +217,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'en descente.',
     steps: [
       'Règle le coussin juste sous l\'os du bassin, chevilles calées.',
-      'Croise les bras sur la poitrine, le bras plâtré dessous.',
+      'Croise les bras sur la poitrine, le bras blessé dessous.',
       'Bascule en avant depuis les hanches, dos droit, jusqu\'à sentir l\'arrière des cuisses s\'étirer.',
       'Remonte en serrant les fessiers jusqu\'à l\'alignement du corps, pas au-delà.',
     ],
@@ -269,7 +282,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     where: ['salle', 'maison'],
     equipment: 'Haltère, poulie ou élastique',
     why:
-      'Entraîner le bras sain entretient la force du bras plâtré : le cerveau transfère une partie du travail. ' +
+      'Entraîner le bras sain entretient la force du bras blessé : le cerveau transfère une partie du travail. ' +
       'Après une fracture du poignet, ce travail a donné un bras blessé plus fort et plus mobile à 12 semaines ' +
       '(Magnus et al., 2013).',
     steps: [
@@ -279,7 +292,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'L\'épaule, le dos, le biceps du bras libre ; rien dans l\'autre bras.',
     mistakes: ['Se cambrer pendant le développé.', 'Tourner le buste pendant le tirage.'],
-    cast: 'Uniquement le bras libre. Le bras plâtré ne porte rien et ne pousse rien.',
+    cast: 'Uniquement le bras libre. Le bras blessé ne porte rien et ne pousse rien.',
   },
 
   'anti-rotation': {
@@ -312,7 +325,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Laisser les hanches tourner.', 'Hausser l\'épaule.'],
     easier: 'Un pas plus près de la porte.',
     harder: 'Un pas plus loin, ou 5 secondes bras tendu.',
-    cast: 'Le bras plâtré reste contre toi. Une seule main, mais les deux côtés : c\'est ton orientation qui change.',
+    cast: 'Le bras blessé reste contre toi. Une seule main, mais les deux côtés : c\'est ton orientation qui change.',
   },
   'step-up': {
     key: 'step-up',
@@ -368,7 +381,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'Les deux pieds au sol.',
     harder: 'Les épaules sur le bord du canapé, le bassin descend plus bas ; puis 3 secondes tenues en haut.',
-    cast: 'Le bras plâtré posé sur ton ventre ou le long du corps, sans t\'y appuyer.',
+    cast: 'Le bras blessé posé sur ton ventre ou le long du corps, sans t\'y appuyer.',
   },
   chaise: {
     key: 'chaise',
@@ -396,7 +409,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Bloquer sa respiration.', 'Laisser les genoux dépasser les pointes de pied.', 'Pousser sur le mur avec les mains.'],
     easier: 'Moins bas, genoux à 120°.',
     harder: '15 secondes de plus ; puis sur une jambe, l\'autre pied levé de 5 cm, 20 à 30 secondes chacune.',
-    cast: 'Rien à tenir : le bras plâtré contre toi.',
+    cast: 'Rien à tenir : le bras blessé contre toi.',
   },
   'mollets-excentriques': {
     key: 'mollets-excentriques',
@@ -480,14 +493,14 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'Le côté de la fesse — des deux côtés : celle qui bouge et celle qui tient.',
     mistakes: ['Pencher le buste pour monter plus haut.', 'Tourner le pied vers le haut.'],
-    cast: 'Face au mur, la main libre suffit des deux côtés : rien ne pèse jamais sur le plâtre.',
+    cast: 'Face au mur, la main libre suffit des deux côtés : rien ne pèse jamais sur le bras blessé.',
   },
   'dead-bug': {
     key: 'dead-bug',
     name: 'Gainage sur le dos, jambes alternées (dead bug)',
     what: 'Allongé sur le dos, les jambes en l\'air pliées à angle droit : tu descends lentement un talon vers le sol sans que le bas du dos décolle, tu le remontes, puis l\'autre jambe.',
     cues: [
-      'Le bras valide le long du corps, le plâtre posé sur le ventre.',
+      'Le bras valide le long du corps, le bras blessé posé sur le ventre.',
       'Souffle en descendant : le ventre se creuse, le dos reste plaqué.',
       'Si le dos décolle, descends moins bas.',
     ],
@@ -502,7 +515,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'Le bas du ventre se tend, le dos reste collé.',
     mistakes: ['Laisser le dos se creuser.', 'Bloquer sa respiration.'],
-    cast: 'Le bras plâtré posé sur le ventre ou le long du corps.',
+    cast: 'Le bras blessé posé sur le ventre ou le long du corps.',
   },
   'gainage-lateral': {
     key: 'gainage-lateral',
@@ -518,7 +531,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     why: 'Les obliques et le moyen fessier : ce qui garde le bassin stable sur un sentier.',
     setup: [
       'Allongé sur le côté du bras libre, le coude juste sous l\'épaule, l\'avant-bras à plat devant toi.',
-      'Jambes tendues l\'une sur l\'autre, le bras plâtré posé sur la hanche.',
+      'Jambes tendues l\'une sur l\'autre, le bras blessé posé sur la hanche.',
     ],
     steps: [
       'Monte le bassin jusqu\'à aligner tête, bassin et pieds.',
@@ -531,7 +544,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Genoux pliés au sol : l\'appui est aux genoux, pas aux pieds.',
     harder: '10 secondes de plus ; puis la jambe du dessus soulevée.',
     cast:
-      'Uniquement sur le coude libre, le bras plâtré posé sur la hanche. L\'autre côté attendra la fin du plâtre. ' +
+      'Uniquement sur le coude libre, le bras blessé posé sur la hanche. L\'autre côté attendra le feu vert de ta kiné. ' +
       'Plus facile : genoux au sol.',
   },
   'marche-tapis': {
@@ -587,7 +600,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Le rameur et l\'elliptique : ils demandent les deux bras.',
       'Viser la FC de course sur le vélo : elle y monte 5 à 10 bpm moins haut pour le même effort.',
     ],
-    cast: 'Aucun appui sur le bras plâtré. Sur un vélo droit, buste redressé, la main libre seule sur le guidon.',
+    cast: 'Aucun appui sur le bras blessé. Sur un vélo droit, buste redressé, la main libre seule sur le guidon.',
   },
   'marche-cote': {
     key: 'marche-cote',
@@ -615,7 +628,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     feel: 'Les montées essoufflent sans brûler ; les descentes se font sans à-coups.',
     mistakes: ['Courir, même en montée : la marche rapide suffit à monter le cœur.', 'Courir les descentes.', 'Prendre un sentier glissant pour « faire trail ».'],
     cast:
-      'Une chute sur le bras plâtré coûterait des semaines : pas de sentier technique, pas de marches mouillées, ' +
+      'Une chute sur le bras blessé coûterait des semaines : pas de sentier technique, pas de marches mouillées, ' +
       'pas de descente rapide. L\'écharpe si la marche fait lancer le coude.',
   },
   'escalier-immeuble': {
@@ -625,17 +638,19 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     cues: [
       'La frontale sur la tête : la minuterie s\'éteint sans prévenir.',
       'En descente, ta main droite ne quitte ni la rampe ni le mur.',
-      'Compte tes montées : chacune vaut environ 21 m de dénivelé.',
+      `Compte tes montées : chacune vaut environ ${HOME_STAIRS.heightM} m de dénivelé.`,
     ],
     where: ['maison'],
-    equipment: 'L\'escalier de ton immeuble, six étages, environ 21 m ; la frontale ; le sac à dos chargé quand la séance le dit',
+    equipment:
+      `L'escalier de ton immeuble, six étages, ${HOME_STAIRS.steps} marches, environ ${HOME_STAIRS.heightM} m ; ` +
+      'la frontale ; le sac à dos chargé quand la séance le dit',
     why:
       'De vraies montées à ta porte, par tous les temps et à toute heure : le cœur et les mollets y travaillent comme en ' +
       'côte, ce que le step de 40 cm ne fait pas. Les descentes lentes font freiner le quadriceps en s\'allongeant, ' +
       'marche après marche — ton aisance en descente, à 0,68 d\'un bon traileur, est ta marge la plus nette pour la ' +
       'Maxi-Race et la SaintéLyon.',
     setup: [
-      'Une fois, compte les marches d\'une montée complète et mesure la hauteur d\'une marche : leur produit est ton dénivelé exact. Dis-le à Cairn.',
+      `Une fois, mesure la hauteur d'une marche : multipliée par tes ${HOME_STAIRS.steps} marches, c'est ton dénivelé exact. Dis-le à Cairn.`,
       'La frontale allumée, les lacets serrés, rien dans la main valide.',
     ],
     steps: [
@@ -654,7 +669,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Moins de montées, ou sans le sac.',
     harder: 'Le sac à dos de 6 à 8 kg, puis 10 à 12 kg ; plus de montées — jamais une descente plus rapide.',
     cast:
-      'Une chute dans l\'escalier coûterait des semaines : si la rampe est du côté du plâtre en descendant, la main ' +
+      'Une chute dans l\'escalier coûterait des semaines : si la rampe est du côté blessé en descendant, la main ' +
       'valide glisse le long du mur. Pas de chaussons, pas de marches mouillées, la lumière toujours allumée.',
   },
   'soins-bras': {
@@ -682,6 +697,33 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     cast:
       'Doigts qui gonflent, bleuissent, s\'engourdissent, ou douleur qui augmente dans le plâtre : appelle ton ' +
       'chirurgien ou les urgences sans attendre.',
+  },
+  kine: {
+    key: 'kine',
+    name: 'Les exercices de ta kiné',
+    what: 'La rééducation du coude que ta kiné t\'a donnée, faite comme elle te l\'a montrée.',
+    cues: [
+      'Ses exercices, dans son ordre, à son nombre.',
+      'L\'attelle : mise ou retirée, selon ses consignes.',
+      'Une douleur qui monte : tu t\'arrêtes, et tu le lui dis.',
+    ],
+    where: ['maison', 'salle', 'dehors'],
+    equipment: 'Ce qu\'elle t\'a demandé',
+    why:
+      'Après le plâtre, le coude retrouve son amplitude puis sa force par des exercices dosés au jour près, que seule ' +
+      'ta kiné, qui le voit et le touche, peut régler. Cairn leur garde du temps chaque jour et n\'en écrit aucun : ' +
+      'un exercice du coude prescrit d\'ici pourrait contredire les siens.',
+    steps: [
+      'Fais les exercices de ta dernière séance avec elle, dans l\'ordre et au nombre qu\'elle t\'a dits.',
+      'Les autres fois de la journée, quand elle te l\'a demandé.',
+      'À chaque séance avec elle, dis-lui ce que tu fais ici : l\'escalier, le sac à dos, les élastiques du bras valide.',
+    ],
+    feel: 'Ce qu\'elle t\'a dit de sentir ; une douleur qui monte n\'en fait jamais partie.',
+    mistakes: [
+      'Ajouter un exercice ou de la charge qu\'elle n\'a pas demandés.',
+      'Les sauter les jours de grosse séance : ils ne dépendent pas de l\'entraînement.',
+    ],
+    cast: 'En dehors de ses exercices, rien ne pèse sur le coude : ni appui, ni charge.',
   },
   respiration: {
     key: 'respiration',
@@ -729,7 +771,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'Un étirement net, jamais une douleur ; la respiration reste lente.',
     mistakes: ['Donner des à-coups.', 'Retenir son souffle.'],
-    cast: 'Tout se fait avec la main libre ; le bras plâtré reste posé.',
+    cast: 'Tout se fait avec la main libre ; le bras blessé reste posé.',
   },
 
   'echauffement-maison': {
@@ -746,7 +788,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     why:
       'Monter la température des muscles et des tendons, et répéter à vide les gestes de la séance : les premières ' +
       'séries se font avec un corps prêt, et une gêne se repère avant qu\'elle compte.',
-    setup: ['La chaise calée contre un mur, le bras plâtré en écharpe ou contre toi.'],
+    setup: ['La chaise calée contre un mur, le bras blessé contre toi.'],
     steps: [
       '1 minute de marche sur place, genoux hauts, la main libre au mur.',
       '10 assis-debout de la chaise sans les mains : le nez passe au-dessus des orteils, tu pousses dans les talons.',
@@ -762,7 +804,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'Les assis-debout la main libre sur la cuisse.',
     cast:
-      'Rien ne s\'appuie sur le bras plâtré. Pour te relever du tapis, roule du côté du bras libre et pousse sur ' +
+      'Rien ne s\'appuie sur le bras blessé. Pour te relever du tapis, roule du côté du bras libre et pousse sur ' +
       'cette main.',
   },
 
@@ -803,7 +845,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Le pied arrière au sol (fente arrière), ou une descente moins profonde.',
     harder: '2 secondes tenues en bas, puis 4 pour descendre.',
     cast:
-      'La main valide sur l\'encadrement suffit à l\'équilibre. Le bras plâtré reste en écharpe : ne le lève pas ' +
+      'La main valide sur l\'encadrement suffit à l\'équilibre. Le bras blessé reste contre toi : ne le lève pas ' +
       'pour compenser.',
   },
   'leg-curl-serviette': {
@@ -822,7 +864,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'freinage — le muscle qui s\'allonge sous tension — est ce qui les protège le mieux des déchirures.',
     setup: [
       'Sur le dos, les épaules sur le tapis, les talons sur la serviette posée à même le parquet.',
-      'Le bras libre au sol le long du corps, paume vers le bas ; le bras plâtré posé sur le ventre.',
+      'Le bras libre au sol le long du corps, paume vers le bas ; le bras blessé posé sur le ventre.',
     ],
     steps: [
       'Monte le bassin : épaules, bassin et genoux alignés.',
@@ -839,7 +881,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Glisser moins loin.',
     harder: 'Ramener aussi les talons bassin haut ; puis une seule jambe.',
     cast:
-      'Le bras plâtré reste posé sur le ventre ; seul le bras libre touche le sol, sans pousser. Des courbatures à ' +
+      'Le bras blessé reste posé sur le ventre ; seul le bras libre touche le sol, sans pousser. Des courbatures à ' +
       'l\'arrière des cuisses sont fréquentes les deux premières fois : elles ne doivent pas changer ta marche.',
   },
 
@@ -872,7 +914,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Tourner le buste pour tirer plus fort.', 'Hausser l\'épaule vers l\'oreille.', 'Lâcher le retour.'],
     easier: 'Un seul élastique, ou un pas plus près de la porte.',
     harder: 'Un pas plus loin, ou un troisième élastique sur la poignée.',
-    cast: 'Le bras plâtré reste en écharpe ; le buste ne tourne pas pour compenser, et c\'est aussi un gainage.',
+    cast: 'Le bras blessé reste contre toi ; le buste ne tourne pas pour compenser, et c\'est aussi un gainage.',
   },
 
   'bras-elastique': {
@@ -887,7 +929,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     where: ['maison'],
     equipment: 'Le kit d\'élastiques (un élastique, une poignée, l\'accroche de porte), l\'anneau de serrage',
     why:
-      'Entraîner le bras valide entretient le bras plâtré par le système nerveux : après une fracture du poignet, ' +
+      'Entraîner le bras valide entretient le bras blessé par le système nerveux : après une fracture du poignet, ' +
       'ceux qui entraînaient la main saine avaient plus de force du côté fracturé à 12 semaines (Magnus 2013). ' +
       'Pour un coude, ce sont les muscles qui le plient, ceux qui le tendent, et la poigne qui comptent — poussés ' +
       'près du maximum : c\'est l\'intensité qui passe d\'un bras à l\'autre.',
@@ -977,7 +1019,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'La pointe du pied libre reste posée derrière, comme une béquille.',
     harder: '4 secondes pour descendre ; puis un doigt seulement sur l\'encadrement.',
-    cast: 'La main libre ne lâche pas l\'encadrement ; le bras plâtré en écharpe. Pour l\'autre jambe, tu restes du même côté.',
+    cast: 'La main libre ne lâche pas l\'encadrement ; le bras blessé contre toi. Pour l\'autre jambe, tu restes du même côté.',
   },
   'pas-chasses': {
     key: 'pas-chasses',
@@ -1011,7 +1053,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'La bande au-dessus des genoux, ou la plus souple des trois.',
     harder: 'La bande aux chevilles, la plus dure, les genoux plus fléchis.',
-    cast: 'Face au mur, la main libre suffit dans les deux sens : rien ne pèse sur le plâtre.',
+    cast: 'Face au mur, la main libre suffit dans les deux sens : rien ne pèse sur le bras blessé.',
   },
   'montee-genou': {
     key: 'montee-genou',
@@ -1029,7 +1071,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'dos de se creuser. Les deux à la fois, sans les bras.',
     setup: [
       'Sur le dos sur le tapis, la mini-bande autour des deux pieds, au milieu de la plante.',
-      'Le bras libre au sol, le bras plâtré posé sur le ventre.',
+      'Le bras libre au sol, le bras blessé posé sur le ventre.',
     ],
     steps: [
       'Plaque le bas du dos au sol et lève les deux jambes tendues, talons à 20 cm du sol.',
@@ -1044,7 +1086,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'La jambe tendue plus haute, à 45°.',
     harder: 'La jambe tendue plus basse, ou une bande plus dure.',
-    cast: 'Le bras plâtré reste posé ; ne le soulève pas pour t\'aider.',
+    cast: 'Le bras blessé reste posé ; ne le soulève pas pour t\'aider.',
   },
   marche: {
     key: 'marche',
@@ -1173,7 +1215,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Laisser le genou d\'appui rentrer vers l\'intérieur.', 'Pousser sur la cuisse avec la main.'],
     easier: 'Moins bas : genou à 120°.',
     harder: '10 secondes de plus.',
-    cast: 'Rien à tenir : le bras plâtré contre toi.',
+    cast: 'Rien à tenir : le bras blessé contre toi.',
   },
   'squat-une-jambe': {
     key: 'squat-une-jambe',
@@ -1229,7 +1271,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     setup: [
       'Le livre au sol devant la chaise, l\'avant des deux pieds sur son bord, les talons dans le vide.',
       'Les genoux à angle droit, au-dessus des chevilles.',
-      'Le sac posé sur les genoux, la main valide dessus ; le bras plâtré contre toi.',
+      'Le sac posé sur les genoux, la main valide dessus ; le bras blessé contre toi.',
     ],
     steps: [
       'Monte les talons le plus haut possible, en 1 seconde.',
@@ -1241,7 +1283,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Rebondir en bas.', 'Monter à moitié.', 'Pousser avec la main sur le sac.'],
     easier: 'Sans le livre, les pieds à plat au sol.',
     harder: 'Un sac plus lourd, ou une jambe à la fois.',
-    cast: 'Le sac se pose et se retire d\'une main, assis : rien ne passe par le bras plâtré.',
+    cast: 'Le sac se pose et se retire d\'une main, assis : rien ne passe par le bras blessé.',
   },
   'mollets-charges': {
     key: 'mollets-charges',
@@ -1273,7 +1315,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'Sans le sac.',
     harder: 'Un sac plus lourd ; puis 5 secondes pour redescendre.',
     cast:
-      'Enfile le sac assis, le bras plâtré dans la bretelle d\'abord, sans plier le coude. La main valide au mur, ' +
+      'Enfile le sac assis, le bras blessé dans la bretelle d\'abord, sans forcer sur le coude. La main valide au mur, ' +
       'toujours.',
   },
   'port-valise': {
@@ -1288,7 +1330,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     where: ['maison'],
     equipment: 'Un sac lourd (sac à dos chargé, cabas de bouteilles)',
     why:
-      'Le gainage sur le côté que le plâtre interdit sur l\'autre coude : un sac tenu d\'un côté fait travailler le ' +
+      'Le gainage sur le côté que le coude blessé interdit de l\'autre côté : un sac tenu d\'un côté fait travailler le ' +
       'flanc opposé. Et la poigne et l\'épaule du bras valide, celles des bâtons dans les longues montées.',
     setup: ['Le sac au sol à côté du pied du côté valide ; plie les jambes pour le saisir, dos droit.'],
     steps: [
@@ -1301,7 +1343,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Pencher vers le sac ou à l\'opposé.', 'Hausser l\'épaule du sac.'],
     easier: 'Un sac plus léger, ou sur place.',
     harder: 'Plus lourd, ou plus long.',
-    cast: 'Le bras plâtré en écharpe, loin du sac : il ne doit pas le cogner.',
+    cast: 'Le bras blessé contre toi, loin du sac : il ne doit pas le cogner.',
   },
   'fente-arriere': {
     key: 'fente-arriere',
@@ -1386,7 +1428,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'Décoller le talon d\'appui.',
     ],
     easier: 'Moins ample, plus lent.',
-    cast: 'Le bras plâtré reste en écharpe ; la main valide au mur.',
+    cast: 'Le bras blessé reste contre toi ; la main valide au mur.',
   },
   'squat-profond': {
     key: 'squat-profond',
@@ -1422,7 +1464,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'Un livre sous les talons, ou un peu moins bas.',
     harder: 'Sans le livre ; puis lâche l\'encadrement quelques secondes.',
-    cast: 'La main valide à l\'encadrement, le bras plâtré en écharpe. Si l\'équilibre part en arrière, assieds-toi sur les fesses : c\'est tout près.',
+    cast: 'La main valide à l\'encadrement, le bras blessé contre toi. Si l\'équilibre part en arrière, assieds-toi sur les fesses : c\'est tout près.',
   },
   'pompe-inclinee': {
     key: 'pompe-inclinee',
@@ -1457,7 +1499,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'La main contre un mur, ou les pieds plus près.',
     harder: 'Une surface plus basse : une table, puis le dossier d\'un canapé ; ou 3 s pour descendre.',
-    cast: 'Le bras plâtré reste en écharpe, contre toi. Une surface sèche, une main sèche : si la main glisse, c\'est le plâtre qui tombe le premier.',
+    cast: 'Le bras blessé reste contre toi. Une surface sèche, une main sèche : si la main glisse, c\'est le coude blessé qui tombe le premier.',
   },
   'tirage-sous-pied': {
     key: 'tirage-sous-pied',
@@ -1488,7 +1530,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Redresser le buste pour tirer.', 'Tourner les épaules.', 'Laisser l\'élastique repartir d\'un coup.'],
     easier: 'Un élastique plus doux (4 kg).',
     harder: 'Un élastique plus dur (6 ou 7 kg), ou deux élastiques à la poignée.',
-    cast: 'Le bras plâtré reste en écharpe, contre toi ; le dos droit fait le travail que l\'autre main ferait, posée sur un genou.',
+    cast: 'Le bras blessé reste contre toi ; le dos droit fait le travail que l\'autre main ferait, posée sur un genou.',
   },
   'max-table': {
     key: 'max-table',
@@ -1503,7 +1545,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     equipment: 'Une table lourde',
     why:
       'Le maximum de force du bras valide, sans matériel : les muscles qui plient le coude, puis ceux qui le ' +
-      'tendent. C\'est l\'intensité qui passe d\'un bras à l\'autre : le bras entraîné entretient le bras plâtré ' +
+      'tendent. C\'est l\'intensité qui passe d\'un bras à l\'autre : le bras entraîné entretient le bras blessé ' +
       '(Magnus 2013).',
     steps: [
       'Assis face à la table, le coude collé au flanc, plié à angle droit.',
@@ -1513,7 +1555,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     breath: 'Souffle pendant la poussée, jamais en apnée.',
     feel: 'Le devant du bras quand tu pousses vers le haut, l\'arrière quand tu pousses vers le bas.',
     mistakes: ['Retenir son souffle.', 'Soulever la table : pousse moins fort si elle bouge.'],
-    cast: 'Le bras plâtré reste en écharpe, posé contre toi.',
+    cast: 'Le bras blessé reste posé contre toi.',
   },
   imagerie: {
     key: 'imagerie',
@@ -1588,7 +1630,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'L\'arrière de la cuisse et la fesse brûlent.',
     mistakes: ['Pousser avec les bras.', 'Se reposer le bassin au sol entre deux répétitions.'],
-    cast: 'Les bras croisés sur la poitrine, le plâtré dessous : il ne pousse pas.',
+    cast: 'Les bras croisés sur la poitrine, le blessé dessous : il ne pousse pas.',
     measure: { unit: 'répétitions', perSide: true, reference: 'Sur un banc de 60 cm : moins de 20, faible ; plus de 30, bon (Freckleton 2014). Sur 40 cm, compare-toi à toi-même.' },
   },
   'test-chaise': {
@@ -1610,7 +1652,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'Les cuisses brûlent, de plus en plus.',
     mistakes: ['Remonter un peu pour durer : la mesure ne vaut qu\'à la même hauteur.', 'Bloquer sa respiration.'],
-    cast: 'Rien à tenir : le bras plâtré contre toi.',
+    cast: 'Rien à tenir : le bras blessé contre toi.',
     measure: { unit: 'secondes', perSide: false, guide: 'chrono' },
   },
   'test-gainage': {
@@ -1631,7 +1673,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'Le côté du ventre et l\'épaule du dessous.',
     mistakes: ['Laisser le bassin partir en arrière pour durer.'],
-    cast: 'Uniquement sur le coude valide. Le bras plâtré posé sur la hanche.',
+    cast: 'Uniquement sur le coude valide. Le bras blessé posé sur la hanche.',
     measure: { unit: 'secondes', perSide: false, guide: 'chrono' },
   },
   'test-equilibre': {
@@ -1701,7 +1743,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     feel: 'L\'arrière des cuisses et des mollets s\'étire.',
     mistakes: ['Plier les genoux.', 'Donner un à-coup pour gagner un centimètre.'],
-    cast: 'Seul le bras valide descend ; le plâtré reste contre toi.',
+    cast: 'Seul le bras valide descend ; le blessé reste contre toi.',
     measure: { unit: 'cm', perSide: false, reference: 'Ton test d\'effort : −1 cm.' },
   },
   'reverse-nordic': {
@@ -1720,7 +1762,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
       'premier. Peu d\'exercices le chargent à cette longueur sans haltère. Son nom anglais : « reverse Nordic ».',
     setup: [
       'À genoux sur le tapis plié, genoux écartés de la largeur des hanches, le dessus des pieds au sol.',
-      'Le bras plâtré contre le ventre, la main valide sur la poitrine.',
+      'Le bras blessé contre le ventre, la main valide sur la poitrine.',
       'Le corps droit des genoux à la tête : fesses serrées, le bassin ne casse pas.',
     ],
     steps: [
@@ -1768,7 +1810,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Tourner le buste pour pousser plus loin.', 'Hausser l\'épaule.'],
     easier: 'Un seul élastique, ou un pas en arrière.',
     harder: 'Un troisième élastique, ou un pas en avant.',
-    cast: 'Le bras plâtré reste en écharpe ; le buste ne tourne pas, et c\'est aussi un gainage.',
+    cast: 'Le bras blessé reste contre toi ; le buste ne tourne pas, et c\'est aussi un gainage.',
   },
   'hip-thrust': {
     key: 'hip-thrust',
@@ -1787,7 +1829,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     setup: [
       'Assis au sol dos au canapé, les omoplates contre le bord de l\'assise.',
       'Un pied à plat devant toi, l\'autre jambe pliée en l\'air.',
-      'Le bras valide posé sur l\'assise, le bras plâtré sur le ventre.',
+      'Le bras valide posé sur l\'assise, le bras blessé sur le ventre.',
     ],
     steps: [
       'Pousse dans le talon et monte le bassin en 1 seconde, jusqu\'au tronc à plat, le genou à angle droit.',
@@ -1802,7 +1844,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'Les deux pieds au sol.',
     harder: '3 secondes tenues en haut, ou la série en continu sans poser le bassin.',
-    cast: 'Le bras valide stabilise sur l\'assise ; le bras plâtré ne prend aucun appui.',
+    cast: 'Le bras valide stabilise sur l\'assise ; le bras blessé ne prend aucun appui.',
   },
   copenhague: {
     key: 'copenhague',
@@ -1821,7 +1863,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     setup: [
       'Allongé sur le côté du bras valide, le coude sous l\'épaule, l\'avant-bras au sol.',
       'Le genou de la jambe du dessus posé sur le step à 40 cm ; la jambe du dessous pliée au sol.',
-      'Le bras plâtré posé sur la hanche.',
+      'Le bras blessé posé sur la hanche.',
     ],
     steps: [
       'Monte le bassin en appuyant le genou du dessus sur le step, jusqu\'à aligner la tête, le bassin et le genou ; la jambe du dessous décolle.',
@@ -1833,7 +1875,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     easier: 'La jambe du dessous reste au sol pour aider.',
     harder: 'La cheville, et non le genou, posée sur le step : le levier s\'allonge.',
     cast:
-      'Uniquement sur le coude valide : seule la jambe du côté du plâtre travaille ici. L\'autre jambe fait le ' +
+      'Uniquement sur le coude valide : seule la jambe du côté blessé travaille ici. L\'autre jambe fait le ' +
       'serrage de coussin.',
   },
   'adducteurs-coussin': {
@@ -1854,7 +1896,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     mistakes: ['Bloquer la respiration.', 'Décoller le bas du dos.'],
     easier: 'Serre à 70 %.',
     harder: 'En pont fessier, le bassin levé.',
-    cast: 'Le bras plâtré posé sur le ventre.',
+    cast: 'Le bras blessé posé sur le ventre.',
   },
   'mollets-iso': {
     key: 'mollets-iso',
@@ -1888,7 +1930,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     easier: 'Pousser à 70 %.',
     harder: 'L\'avant du pied sur le step à 20 cm, le talon plus bas que l\'avant du pied.',
-    cast: 'Seule la main valide pousse ; si le coude plâtré lance pendant l\'effort, pousse moins fort.',
+    cast: 'Seule la main valide pousse ; si le coude blessé lance pendant l\'effort, pousse moins fort.',
   },
   'pied-court': {
     key: 'pied-court',
@@ -1929,7 +1971,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     equipment: 'Un angle de mur ; le tapis plié pour plus difficile',
     why:
       'La cheville et la hanche corrigent sans les yeux : ce qu\'elles font dans un sentier technique, la nuit, ou ' +
-      'fatiguées. Un plâtre change l\'équilibre : on le réapprend.',
+      'fatiguées. Un bras immobilisé change l\'équilibre : on le réapprend.',
     setup: [
       'Dans un angle de mur, le mur à 20 cm de ta main valide.',
       'Sur un pied, genou un peu fléchi, l\'autre pied levé de quelques centimètres.',
@@ -1941,7 +1983,7 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     ],
     breath: 'Calme et lente.',
     feel: 'La cheville et le pied corrigent sans arrêt.',
-    mistakes: ['S\'appuyer au mur en continu.', 'Le faire loin d\'un mur : le plâtre interdit la chute.'],
+    mistakes: ['S\'appuyer au mur en continu.', 'Le faire loin d\'un mur : le coude blessé interdit la chute.'],
     easier: 'Les yeux ouverts, le regard fixe.',
     harder: 'Sur le tapis plié en quatre ; puis en tournant lentement la tête.',
     cast: 'Toujours dans un angle de mur, du côté de la main valide. Jamais au milieu d\'une pièce.',
@@ -2004,7 +2046,7 @@ export const EXERCISE_WORDS: { word: string; plain: string }[] = [
   { word: 'Tibial antérieur', plain: 'Le muscle du devant du tibia : il relève le pied et le pose en douceur.' },
   { word: 'Fléchisseurs de hanche', plain: 'Les muscles du pli de l\'aine : ils tirent la cuisse vers l\'avant, à chaque pas de montée.' },
   { word: 'Tendon d\'Achille', plain: 'Le tendon à l\'arrière de la cheville, qui relie le mollet au talon.' },
-  { word: 'Bras valide', plain: 'Celui qui n\'est pas dans le plâtre. Le bras plâtré ne porte jamais rien.' },
+  { word: 'Bras valide', plain: 'Celui qui n\'est pas blessé. Le bras blessé ne porte jamais rien.' },
   { word: 'Accroche de porte', plain: 'La sangle du kit : son cylindre se coince derrière la porte fermée, et l\'élastique s\'accroche à son crochet.' },
   { word: 'Mini-bande', plain: 'Un petit élastique en boucle, qu\'on passe autour des chevilles ou des pieds.' },
   { word: 'Zone 1, zone 2', plain: 'Des plages de fréquence cardiaque. En zone 1, tu parles sans effort ; en zone 2, tu parles en phrases courtes.' },
@@ -2013,7 +2055,7 @@ export const EXERCISE_WORDS: { word: string; plain: string }[] = [
   { word: 'Seuil', plain: 'L\'effort le plus intense que tu tiens longtemps sans t\'emballer, autour d\'une heure en course.' },
   { word: 'PMA', plain: 'La puissance maximale aérobie : l\'effort où tu atteins ta VO2max, tenable cinq à six minutes.' },
   { word: 'Zone 3, zone 4', plain: 'Plus haut : en zone 3, tu parles par bouts de phrase ; en zone 4, ton seuil, quelques mots seulement.' },
-  { word: 'Échec', plain: 'Le moment où tu ne peux plus faire une répétition propre. Debout sur une jambe, avec le plâtre, on ne va jamais jusque-là.' },
+  { word: 'Échec', plain: 'Le moment où tu ne peux plus faire une répétition propre. Debout sur une jambe, avec le coude blessé, on ne va jamais jusque-là.' },
   { word: 'Hypertrophie', plain: 'Le muscle qui grossit. Elle vient du nombre de séries dures, finies près de l\'échec, et des protéines qui suivent.' },
   { word: 'Semaine allégée', plain: 'Moins de séries, la même technique : c\'est pendant elle que le travail des semaines dures devient de la force.' },
   { word: 'Adducteurs', plain: 'Les muscles de l\'intérieur de la cuisse : ils ramènent la jambe vers l\'autre et tiennent le bassin dans les dévers.' },
@@ -2027,8 +2069,11 @@ export const EXERCISE_WORDS: { word: string; plain: string }[] = [
  * Le 09/10, Pierre : « je vais commencer le renforcement musculaire de façon
  * quotidienne, bien énervée, pour revenir encore plus puissant, plus musclé, et
  * combler des lacunes ». Tous les jours, mais jamais les mêmes muscles lourds
- * deux jours de suite : trois séances de force à 48 h l'une de l'autre, et
- * entre elles les tendons, le fractionné, la longue marche, la récupération.
+ * deux jours de suite. Le 19/10, il propose d'alterner un jour d'escalier, un
+ * jour de force : depuis, trois séances de force à 48 h l'une de l'autre, et
+ * entre elles l'escalier — facile le mardi, en fractionné le jeudi, long et lesté
+ * le samedi —, puis la récupération du dimanche. La première semaine suivait
+ * l'ordre d'avant : force A, force B, moteur, force C, hanches et tronc.
  * Les séances du plan (`blockDay`, `@cairn/coach`) commencent par ces titres.
  */
 export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why: string }[] = [
@@ -2040,32 +2085,32 @@ export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why:
   },
   {
     day: 'Mardi',
-    title: 'Force B : chaîne arrière',
-    focus: 'Soulevé de terre sur une jambe lesté, pont sur le canapé, flexion sur serviette, Copenhague ; le bras valide au maximum.',
-    why: 'Les fessiers et l\'arrière des cuisses poussent dans chaque montée ; ta jambe gauche, en retrait au test du pont, y fait une série de plus.',
+    title: 'Escalier, hanches et tronc',
+    focus: 'Des montées faciles dans l\'escalier de l\'immeuble, sans sac ; puis pas chassés, montée de genou, pont, serrage de coussin, port de valise, gainage, anti-rotation, souplesse.',
+    why: 'Monter longtemps sans forcer entretient ton endurance ; le bassin tient quand la fatigue arrive, sur 100 km de backyard comme dans les dévers de la Maxi-Race.',
   },
   {
     day: 'Mercredi',
-    title: 'Moteur et mollets',
-    focus: 'Le fractionné en côte dans les escaliers, puis le mollet lesté, le soléaire assis, la cheville, l\'équilibre, le pied.',
-    why: 'L\'intensité garde ta VO2max ; tes mollets, très endurants aux tests, ne progressent plus qu\'en charge.',
-  },
-  {
-    day: 'Jeudi',
     title: 'Force C : une jambe, puissance',
     focus: 'Montée explosive sur le step, squat sur une jambe jusqu\'au step, bascule arrière, mollet sous le cadre, équilibre.',
     why: 'La puissance des relances et la force sur un seul appui, celle de chaque foulée, en montée comme en descente.',
   },
   {
+    day: 'Jeudi',
+    title: 'Moteur et mollets',
+    focus: 'Le fractionné en côte dans les escaliers, puis le mollet lesté, le soléaire assis, la cheville, l\'équilibre, le pied.',
+    why: 'L\'intensité garde ta VO2max ; tes mollets, très endurants aux tests, ne progressent plus qu\'en charge.',
+  },
+  {
     day: 'Vendredi',
-    title: 'Hanches et tronc',
-    focus: 'Pas chassés, Copenhague, montée de genou, port de valise, gainage, anti-rotation, souplesse.',
-    why: 'Le bassin qui tient quand la fatigue arrive : sur 100 km de backyard comme dans les dévers de la Maxi-Race.',
+    title: 'Force B : chaîne arrière',
+    focus: 'Soulevé de terre sur une jambe lesté, pont sur le canapé, flexion sur serviette, Copenhague ; le bras valide au maximum.',
+    why: 'Les fessiers et l\'arrière des cuisses poussent dans chaque montée ; ta jambe gauche, en retrait au test du pont, y fait une série de plus. La veille de la longue montée, les cuisses qui freinent ne portent pas lourd.',
   },
   {
     day: 'Samedi',
     title: 'Endurance des montées',
-    focus: 'Des montées continues lestées sur le step, des fentes, la chaise, le pont : longtemps, sous charge.',
+    focus: 'Des montées continues lestées dans l\'escalier de l\'immeuble, des fentes, la chaise, le pont : longtemps, sous charge.',
     why: 'Ta durabilité, moyenne sur les sorties longues, est ton plus gros gisement : c\'est elle qui fait tenir 15 boucles ou 5 000 m de dénivelé.',
   },
   {
@@ -2091,11 +2136,13 @@ export const FORCE_BLOCK_WEEKS: { dates: string; name: string; what: string }[] 
   {
     dates: '19 au 25 octobre',
     name: 'Charger',
-    what: '5 séries, un sac de 10 à 12 kg, 1 répétition en réserve : la semaine qui fait progresser.',
+    what: '5 séries, un sac de 10 à 12 kg, 1 répétition en réserve : la semaine qui fait progresser. Un jour de ' +
+      'force, un jour d\'escalier : 40 min faciles le mardi, 70 min lestées le samedi.',
   },
   {
     dates: '26 octobre au 1er novembre',
     name: 'Alléger',
-    what: 'La moitié des séries, la charge gardée : le travail devient de la force. Les tests le dimanche 1er novembre.',
+    what: 'La moitié des séries, la charge gardée : le travail devient de la force. L\'escalier raccourci, 30 min ' +
+      'le mardi, 40 le samedi. Les tests le dimanche 1er novembre.',
   },
 ]

@@ -10,7 +10,7 @@ import { EXERCISE_GROUPS } from '@/lib/exerciseGroups';
  * Chaque exercice d'une séance y renvoie (« comment faire ») : le schéma, le
  * pourquoi, l'installation, le mouvement et son tempo, la respiration, ce qu'on
  * doit sentir, les erreurs, la version plus facile et la suivante, et ce que le
- * bras plâtré change. Une page statique : elle s'ouvre aussi sans réseau,
+ * bras blessé change. Une page statique : elle s'ouvre aussi sans réseau,
  * gardée par le service worker comme les écrans du menu.
  */
 
@@ -24,7 +24,7 @@ export default function ExercisesPage() {
           <h1 className="page-title">Exercices</h1>
           <p className="page-sub">
             Le bloc de force, du 9 octobre au 1er novembre : une séance par jour. Rien ne s&apos;appuie sur le bras
-            plâtré, rien ne se tient à deux mains.
+            blessé, rien ne se tient à deux mains.
           </p>
         </div>
       </header>
@@ -33,7 +33,7 @@ export default function ExercisesPage() {
         <h2>Ton bloc de force, du 9 octobre au 1er novembre</h2>
         <p className="xs-block-lead">
           Tous les jours, mais pas dur tous les jours : trois séances de force à 48 h l&apos;une de l&apos;autre, et
-          entre elles ce qui ne les gêne pas. Le muscle se construit entre les séances, pas pendant.
+          entre elles l&apos;escalier, qui ne les gêne pas. Le muscle se construit entre les séances, pas pendant.
         </p>
         <ol className="xs-days">
           {FORCE_BLOCK_DAYS.map((d) => (
@@ -57,7 +57,7 @@ export default function ExercisesPage() {
         <h3>Les règles du bloc</h3>
         <ul>
           <li>
-            <strong>Debout sur une jambe, jamais jusqu&apos;à l&apos;échec.</strong> Avec un plâtre, l&apos;échec,
+            <strong>Debout sur une jambe, jamais jusqu&apos;à l&apos;échec.</strong> Avec un coude blessé, l&apos;échec,
             c&apos;est la chute. L&apos;échec ne se cherche que couché ou contre le mur, et aux tests.
           </li>
           <li>
@@ -108,7 +108,7 @@ export default function ExercisesPage() {
           <li>
             <strong>Le schéma.</strong> En pointillé, la position d&apos;où tu pars (1) ; en plein, celle où tu
             arrives (2). La jambe et le bras du côté opposé sont en gris. En rouge, les muscles qui travaillent ; en
-            ocre, le bras plâtré ; en vert, l&apos;élastique ; en bleu, le mouvement et son tempo. Les angles écrits
+            ocre, le bras blessé ; en vert, l&apos;élastique ; en bleu, le mouvement et son tempo. Les angles écrits
             sont ceux du dessin.
           </li>
           <li>
@@ -139,7 +139,7 @@ export default function ExercisesPage() {
       </details>
 
       <section className="xs-rules">
-        <h2>Les règles du plâtre</h2>
+        <h2>Les règles du coude</h2>
         <ol>
           <li>
             <strong>Douleur au coude, de 0 à 10.</strong> Jusqu&apos;à 3, continue. À 4 ou 5, arrête l&apos;exercice
@@ -151,14 +151,20 @@ export default function ExercisesPage() {
             support à portée de la main libre.
           </li>
           <li>
+            <strong>La rééducation est celle de ta kiné.</strong> Ses exercices passent avant ceux d&apos;ici. Dis-lui
+            ce que tu fais dans le bloc — le sac à dos, l&apos;escalier, le bras valide — : ce qu&apos;elle
+            déconseille sort de ta séance.
+          </li>
+          <li>
             <strong>La montre au poignet libre.</strong> Enregistre chaque séance en Musculation, Marche, Vélo
             d&apos;intérieur ou Escalier, et l&apos;app la coche d&apos;elle-même. Jamais en Course ni en
             Randonnée : ces deux-là nourrissent ton modèle de coureur, et une marche y passerait pour une
             course lente.
           </li>
           <li>
-            <strong>Les signes qui n&apos;attendent pas.</strong> Doigts qui gonflent, bleuissent ou
-            s&apos;engourdissent, douleur qui monte dans le plâtre : ton chirurgien ou les urgences, sans attendre.
+            <strong>Les signes qui n&apos;attendent pas.</strong> Le coude qui gonfle, rougit ou
+            chauffe, des doigts qui s&apos;engourdissent, une douleur qui monte d&apos;une séance à l&apos;autre au lieu
+            de baisser : ta kiné ou ton chirurgien, sans attendre.
           </li>
         </ol>
       </section>
@@ -222,7 +228,7 @@ export default function ExercisesPage() {
                     {x.harder && <p><strong>Plus dur.</strong> {nbsp(x.harder)}</p>}
                   </div>
                 )}
-                <p className="xs-cast"><strong>Avec le plâtre.</strong> {nbsp(x.cast)}</p>
+                <p className="xs-cast"><strong>Le bras blessé.</strong> {nbsp(x.cast)}</p>
               </article>
             );
           })}

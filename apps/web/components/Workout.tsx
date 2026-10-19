@@ -422,7 +422,7 @@ function StepCard({ step, done, onDone, ...tests }: { step: Step; done: number; 
               <ul>{x.mistakes.map((m, i) => <li key={i}>{nbsp(m)}</li>)}</ul>
               {x.easier && <p><strong>Plus facile.</strong> {nbsp(x.easier)}</p>}
               {x.harder && <p><strong>Plus dur.</strong> {nbsp(x.harder)}</p>}
-              <p className="w-cast"><strong>Avec le plâtre.</strong> {nbsp(x.cast)}</p>
+              <p className="w-cast"><strong>Le bras blessé.</strong> {nbsp(x.cast)}</p>
             </details>
           )}
         </div>

@@ -133,7 +133,7 @@ function stepOf(b: Block, index: number, n: number): Step {
   const heart = heartLine(b);
   if (heart) details.push({ label: 'Cœur', text: heart });
   // Le dénivelé : celui d'une montée pour un fractionné, celui de l'étape sinon. L'escalier de
-  // l'immeuble dit « environ » tant que ses marches n'ont pas été comptées (`HOME_STAIRS`).
+  // l'immeuble dit « environ » tant que la hauteur de ses marches n'a pas été mesurée (`HOME_STAIRS`).
   if (b.elevationGainM) {
     const about = b.exercise === 'escalier-immeuble' && !HOME_STAIRS.measured ? 'environ ' : '';
     const gain = Math.round(b.elevationGainM);
@@ -218,9 +218,9 @@ export function workoutSummary(parts: Part[], totalS: number, elevationGainM = 0
 }
 
 /**
- * Le dénivelé de ces blocs repose-t-il sur l'escalier de l'immeuble, dont les
- * marches n'ont pas encore été comptées ? Il se dit alors « environ » : une
- * estimation affichée comme une mesure en deviendrait une.
+ * Le dénivelé de ces blocs repose-t-il sur l'escalier de l'immeuble, dont la
+ * hauteur des marches n'a pas encore été mesurée ? Il se dit alors « environ » :
+ * une estimation affichée comme une mesure en deviendrait une.
  */
 export const stairsEstimated = (blocks: readonly { exercise?: string; elevationGainM?: number }[]): boolean =>
   !HOME_STAIRS.measured && blocks.some((b) => b.exercise === 'escalier-immeuble' && (b.elevationGainM ?? 0) > 0);

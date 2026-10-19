@@ -1560,7 +1560,10 @@ export async function executeTool(
         decision,
         rationale: reasoning,
       };
-      if (retyped) decided.title = retitleFromContent(decided);
+      // Le titre suit le contenu : un type changé, ou des blocs remplacés. Une séance
+      // passée ne repasse pas par la présentation des séances à venir — sans cela,
+      // elle gardait le titre de ce qui avait été prévu (le 13/10, le 17/10).
+      if (retyped || rawBlocks !== undefined) decided.title = retitleFromContent(decided);
       // Encore à venir, elle se présente comme toute séance ; un statut, lui,
       // se dit par la première phrase de ce qui l'a fixé.
       const upcoming = decided.status === 'planned' && decided.date >= localDate(at);

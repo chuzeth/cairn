@@ -24,8 +24,9 @@ const joints = (pose: Pose) => parts(pose).skeleton.joints;
 const figure = (key: keyof typeof FIGURES, panel = 0) => FIGURES[key]!.panels[panel]!;
 
 describe('Les schémas d’exercices', () => {
-  it('dessinent chaque exercice', () => {
-    expect(EXERCISE_KEYS.filter((k) => !FIGURES[k])).toEqual([]);
+  it('dessinent chaque exercice, sauf ceux de la kiné', () => {
+    // Les exercices du coude sont ceux de sa kiné : Cairn ne les dessine pas plus qu'il ne les écrit.
+    expect(EXERCISE_KEYS.filter((k) => !FIGURES[k])).toEqual(['kine']);
   });
 
   it('rangent chaque fiche une fois sur la page : son ancre est unique', () => {
