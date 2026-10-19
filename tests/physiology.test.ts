@@ -1421,6 +1421,21 @@ describe('Conseil du jour', () => {
     expect(advice({ session: 'work', daysWithoutImpact: 6 }, 20)).toContain('exécutée telle quelle');
   });
 
+  it('ne fait pas d’une séance sans impact la reprise du choc au sol', () => {
+    // Le 19/10, coude cassé, seize jours sans courir : sous la force A, l'écran du matin
+    // disait « ce qui se reprend aujourd'hui est le choc au sol ». Rien n'y frappe le sol,
+    // pas plus que dans l'escalier ou le fractionné en marche du jeudi.
+    for (const work of ['strength', 'quality'] as const) {
+      const a = advice({ session: 'work', work, daysWithoutImpact: 16, impact: false });
+      expect(a, work).not.toContain('jours sans impact');
+      expect(a, work).not.toContain('choc au sol');
+    }
+    expect(advice({ session: 'work', work: 'strength', daysWithoutImpact: 16, impact: false }))
+      .toBe(advice({ session: 'work', work: 'strength' }));
+    // Une séance qui court, elle, reste une reprise.
+    expect(advice({ session: 'work', work: 'easy', daysWithoutImpact: 16, impact: true })).toContain('16 jours sans impact');
+  });
+
   it('distingue un repos prescrit et une séance déjà faite d\'une séance à faire', () => {
     expect(advice({ session: 'rest' })).toContain('Repos prescrit');
     expect(advice({ session: 'done' })).toContain('est faite');

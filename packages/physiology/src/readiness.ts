@@ -60,6 +60,12 @@ export interface ReadinessDay {
    * hier. Au-delà de `IMPACT_GAP_DAYS`, la séance du jour est une reprise.
    */
   daysWithoutImpact?: number;
+  /**
+   * La séance du jour frappe-t-elle le sol ? À faux — la force, l'escalier, le
+   * fractionné en marche —, elle ne reprend pas le choc au sol, quel que soit le
+   * nombre de jours sans impact. Absent, elle est lue comme une course.
+   */
+  impact?: boolean;
 }
 
 /**
@@ -419,7 +425,7 @@ function recommend(
       );
 
     case 'work': {
-      const gap = day?.daysWithoutImpact ?? 0;
+      const gap = day?.impact === false ? 0 : (day?.daysWithoutImpact ?? 0);
       if (gap >= IMPACT_GAP_DAYS) {
         const off = `${gap} jours sans impact`;
         return say(

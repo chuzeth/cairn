@@ -7,7 +7,7 @@ import {
   EASY_SPEED_WINDOW_DAYS, aggregateDurability, analyzeActivity, buildPmcSeries, buildPhysiologyModel, buildZones,
   complianceFromSummary,
   computeReadiness, decayedEnvelopeWithCompanion, estimateHrMax, fitCriticalSpeed, gpsQualityOf, hrHistogramOf,
-  interpretAcwr, interpretTsb, maximalEffortSupport, measuresGroundSpeed, modelFromLabOnly, monotonize,
+  interpretAcwr, interpretTsb, isRunFree, maximalEffortSupport, measuresGroundSpeed, modelFromLabOnly, monotonize,
   movingIndices, projectFrom, projectLoadRatios, ratioExceedances, type DailyLoad, type EasyRun, type FieldEvidence,
   type LoadRatioExceedance, type MmpCurve, type ReadinessDay,
 } from '@cairn/physiology';
@@ -383,7 +383,7 @@ async function situationOn(
   return {
     session,
     // Lue comme la règle de disponibilité la lit : le conseil dit ce qu'elle en fait.
-    ...(session === 'work' && planned ? { work: workOf(planned, model) } : {}),
+    ...(session === 'work' && planned ? { work: workOf(planned, model), impact: !isRunFree(planned.type) } : {}),
     absence: absenceCovering(absences, date)?.kind,
     daysWithoutImpact: await daysWithoutImpact(athleteId, date, recent),
   };
