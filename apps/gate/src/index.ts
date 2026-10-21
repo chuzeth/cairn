@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createGate } from './gate.js';
 import { GateStore } from './store.js';
 
@@ -30,6 +31,12 @@ const browserScript = readFileSync(
   join(dirname(createRequire(import.meta.url).resolve('@simplewebauthn/browser')), '../dist/bundle/index.umd.min.js'),
   'utf8',
 );
+/** Les polices de l'app, sous-ensemble latin, gardées à côté de la porte (`apps/gate/fonts`). */
+const fontDir = join(dirname(fileURLToPath(import.meta.url)), '../fonts');
+const fonts = {
+  serif: readFileSync(join(fontDir, 'bodoni-moda-latin.woff2')),
+  sans: readFileSync(join(fontDir, 'inter-tight-latin.woff2')),
+};
 /**
  * L'adresse publique, telle que Tailscale la donne. Relue tant qu'elle manque —
  * le démon peut démarrer après la porte —, puis gardée : le nom du Mac sur le
@@ -54,7 +61,7 @@ function origin(): string | null {
 
 const store = new GateStore(dbPath);
 const server = createGate({
-  store, origin, browserScript,
+  store, origin, browserScript, fonts,
   upstream: { host: '127.0.0.1', port: upstream },
   log: (line) => console.log(line),
 });

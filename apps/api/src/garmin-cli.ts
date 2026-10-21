@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { closeDb, getGarminSync, hasGarminTables, listGarminWorkouts, listPlannedSessions } from '@cairn/db';
 import {
   GarminConnect, PROBE_NAME, SessionFile, addDays, compareWorkouts, decodeWorkout, describeWorkout,
-  encodeWorkout, garminView, monthsOf, planReconciliation, probeWorkout, HORIZON_DAYS, type CalendarWorkout,
+  encodeWorkout, garminView, monthsOf, planReconciliation, probeCardioWorkout, probeWorkout, HORIZON_DAYS, type CalendarWorkout,
 } from '@cairn/garmin';
 import { env } from './env.js';
 import { loadDesired, localToday } from './garmin.js';
@@ -184,7 +184,22 @@ async function probe(session: SessionFile): Promise<number> {
   const before = await snapshot();
   console.log(`Calendrier relu : ${before.length} élément(s) sur ${months.length} mois.`);
 
-  const workout = probeWorkout();
+  let failures = 0;
+  for (const workout of [probeWorkout(), probeCardioWorkout()]) failures += await roundTrip(api, workout);
+
+  const after = await snapshot();
+  const intact = before.length === after.length && before.every((x, i) => x === after[i]);
+  console.log(`Calendrier : ${intact ? 'intact' : 'MODIFIÉ'} (${after.length} élément(s)).`);
+  if (!intact) failures++;
+
+  const watch = await api.watch().catch(() => null);
+  console.log(watch ? `Montre : ${watch.name}, synchronisée le ${fr(watch.syncedAt)}.` : 'Heure de synchronisation de la montre : non exposée.');
+  console.log(`\n${failures === 0 ? 'Liaison vérifiée.' : `${failures} problème(s).`} ${api.calls} appels à Garmin.`);
+  return failures === 0 ? 0 : 1;
+}
+
+/** Une séance jetable : créée, relue, comparée, supprimée — et la suppression vérifiée. */
+async function roundTrip(api: GarminConnect, workout: ReturnType<typeof probeWorkout>): Promise<number> {
   const id = await api.createWorkout(encodeWorkout(workout));
   console.log(`\nCréée : « ${workout.name} », n° ${id}.`);
   let failures = 0;
@@ -209,16 +224,7 @@ async function probe(session: SessionFile): Promise<number> {
     console.log(`\nSupprimée : ${gone && !listed ? 'vérifié — introuvable, et absente de la bibliothèque' : `NON VÉRIFIÉ (relue : ${gone ? 'absente' : 'présente'}, bibliothèque : ${listed ? 'présente' : 'absente'})`}.`);
     if (!gone || listed) failures++;
   }
-
-  const after = await snapshot();
-  const intact = before.length === after.length && before.every((x, i) => x === after[i]);
-  console.log(`Calendrier : ${intact ? 'intact' : 'MODIFIÉ'} (${after.length} élément(s)).`);
-  if (!intact) failures++;
-
-  const watch = await api.watch().catch(() => null);
-  console.log(watch ? `Montre : ${watch.name}, synchronisée le ${fr(watch.syncedAt)}.` : 'Heure de synchronisation de la montre : non exposée.');
-  console.log(`\n${failures === 0 ? 'Liaison vérifiée.' : `${failures} problème(s).`} ${api.calls} appels à Garmin.`);
-  return failures === 0 ? 0 : 1;
+  return failures;
 }
 
 /** Ce que le réconciliateur ferait maintenant, et ce qu'il laisse intact — sans rien écrire chez Garmin. */

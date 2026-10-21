@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createClient } from '@libsql/client';
 import type { PlannedSession, SessionBlock } from '@cairn/core';
 import {
-  downhillSession, endurance, hillRepeats, longRun, longTrail, pyramid, racePace, recovery, strength, tempo,
+  blockDay, downhillSession, endurance, hillRepeats, longRun, longTrail, pyramid, racePace, recovery, strength, tempo,
   threshold, vo2max,
 } from '@cairn/coach';
 import { createStatements, tables } from '@cairn/db';
@@ -13,7 +13,7 @@ import {
   DESCRIPTION_MAX, GarminConnect, GarminReauthRequired, GarminRejected, GarminUnreachable, NOTE_MAX,
   PROBE_NAME, SessionFile, WORKOUT_PREFIX, alarmRule, compareWorkouts, decodeWorkout, desiredState, encodeWorkout,
   fingerprintOf, garminView, targetText,
-  planReconciliation, prescribe, probeWorkout, reconcile, type CalendarWorkout, type GarminApi,
+  planReconciliation, prescribe, probeCardioWorkout, probeWorkout, reconcile, type CalendarWorkout, type GarminApi,
   type GarminSyncState, type GarminWorkoutPayload, type LedgerEntry, type LedgerStore, type WatchItem,
   type WatchStep, type WatchSync, type WatchWorkout,
 } from '@cairn/garmin';
@@ -294,6 +294,99 @@ describe('Codec : séance → Garmin → séance', () => {
   });
 });
 
+/**
+ * Le 21/10, Pierre : « quand est-ce qu'il va vouloir envoyer son exercice à la
+ * montre ? » Quand elle guide quelque chose que le téléphone ne peut pas guider
+ * en mouvement : un cœur à tenir, une durée qui sonne. L'escalier, la marche,
+ * les montées au seuil partent en Cardio — l'activité qu'elle enregistre se
+ * rattache à la séance, ce que la randonnée saisie le 20/10 ne faisait pas. Le
+ * renforcement sur le tapis reste dans Cairn : le téléphone le guide mieux.
+ */
+describe('Hors course : ce que la montre guide', () => {
+  const day = (i: number) => {
+    const t = blockDay(PIERRE_MODEL, i);
+    return { type: t.type, title: t.title, intent: t.intent, blocks: t.blocks as SessionBlock[] };
+  };
+
+  it('l’escalier part en Cardio, le cœur sous son plafond dans les montées', () => {
+    // Le 20/10 : « Escalier, hanches et tronc ».
+    const w = workoutOf(day(11));
+    expect(w.sport).toBe('cardio');
+    const stairs = steps(w).find((s) => s.note.startsWith('Montées faciles dans l’escalier') || s.note.startsWith("Montées faciles dans l'escalier"))!;
+    expect(stairs.end).toEqual({ type: 'time', seconds: 2400 });
+    expect(stairs.target).toEqual({ type: 'hr', low: 0, high: 155 });
+  });
+
+  it('chaque série d’un exercice finit au bouton, sa dose dans la note, le repos minuté', () => {
+    const w = workoutOf(day(11));
+    const bridge = steps(w).find((s) => s.note.startsWith('Pont sur une jambe'))!;
+    expect(bridge.end).toEqual({ type: 'lap' });
+    expect(bridge.target).toEqual({ type: 'none' });
+    expect(bridge.note).toMatch(/15 répétitions/);
+    expect(steps(w).some((s) => s.type === 'rest' && s.end.type === 'time')).toBe(true);
+  });
+
+  it('les montées au seuil, la marche de récupération partent aussi', () => {
+    expect(workoutOf(day(13)).sport).toBe('cardio');
+    expect(workoutOf(day(16)).sport).toBe('cardio');
+    expect(workoutOf(day(15)).sport).toBe('cardio');
+  });
+
+  it('une séance de force sur le tapis reste dans Cairn, et dit comment l’enregistrer', () => {
+    for (const i of [10, 12, 14, 7, 23]) {
+      const p = prescribe(day(i));
+      expect(p.sendable, day(i).title).toBe(false);
+      if (!p.sendable) expect(p.reason).toContain('Musculation');
+    }
+  });
+
+  it('part en Cardio chez Garmin, et se relit en Cardio', () => {
+    const w = workoutOf(day(11));
+    const payload = encodeWorkout(w);
+    expect(payload.sportType).toEqual({ sportTypeId: 6, sportTypeKey: 'cardio_training', displayOrder: 6 });
+    expect(payload.workoutSegments[0]!.sportType.sportTypeKey).toBe('cardio_training');
+    const back = decodeWorkout(wire(payload));
+    expect(back.sport).toBe('cardio');
+    expect(compareWorkouts(w, back)).toEqual([]);
+  });
+
+  it('une séance relue dans un autre sport est un écart nommé', () => {
+    const w = workoutOf(day(11));
+    const asRun = decodeWorkout(wire({ ...encodeWorkout(w), sportType: { sportTypeId: 1, sportTypeKey: 'running', displayOrder: 1 } }));
+    expect(compareWorkouts(w, asRun).map((d) => d.text).join(' ')).toMatch(/sport/i);
+  });
+
+  it('porte le nom de la séance, sans sa durée ni son annexe', () => {
+    expect(workoutOf(day(11)).name).toBe(`${WORKOUT_PREFIX}Escalier, hanches et tronc`);
+  });
+
+  it('ne pose pas de repos de zéro seconde, et dit l’effort guidé du serrage', () => {
+    const all = steps(workoutOf(day(11)));
+    expect(all.filter((x) => x.end.type === 'time' && x.end.seconds === 0)).toEqual([]);
+    expect(all.find((x) => x.note.startsWith('Serrage de coussin'))!.note).toMatch(/6 fois 10 s à fond, 10 s relâché/);
+  });
+
+  it('chaque consigne finit sa phrase', () => {
+    const bands = steps(workoutOf(day(11))).find((x) => x.note.startsWith('Pas chassés'))!;
+    expect(bands.note).toContain("Jusqu'à la brûlure. La mini-bande la plus dure.");
+  });
+
+  it('l’échauffement reste un échauffement', () => {
+    expect(steps(workoutOf(day(11)))[0]).toMatchObject({ type: 'warmup', end: { type: 'time', seconds: 360 } });
+  });
+
+  it('la séance jetable cardio de la sonde survit à l’aller-retour', () => {
+    const w = probeCardioWorkout();
+    expect(w.sport).toBe('cardio');
+    expect(compareWorkouts(w, decodeWorkout(wire(encodeWorkout(w))))).toEqual([]);
+  });
+
+  it('une course reste une course', () => {
+    expect(workoutOf(endurance(PIERRE_MODEL)).sport ?? 'running').toBe('running');
+    expect(encodeWorkout(workoutOf(endurance(PIERRE_MODEL))).sportType.sportTypeKey).toBe('running');
+  });
+});
+
 describe('Comparaison, dans les unités que Pierre lit', () => {
   const w: WatchWorkout = {
     name: 'Cairn — Seuil', description: 'Seuil.',
@@ -406,6 +499,11 @@ describe('Empreinte', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TODAY = '2026-09-22';
+
+/** Une séance de renforcement sur le tapis : des séries comptées en répétitions, rien au cœur. */
+const ON_THE_MAT: SessionBlock[] = [
+  { label: 'Squat sur une jambe', zone: 'Z3', durationS: 40, repeat: 6, reps: 8, sides: 'jambe' } as SessionBlock,
+];
 
 function session(over: Partial<PlannedSession> & { id: string; date: string }): PlannedSession {
   return {
@@ -667,7 +765,7 @@ describe('Passage complet', () => {
   const week = [
     session({ id: 'a', date: '2026-09-22' }),
     session({ id: 'b', date: '2026-09-24' }),
-    { ...session({ id: 's', date: '2026-09-25' }), type: 'strength' as const },
+    { ...session({ id: 's', date: '2026-09-25' }), type: 'strength' as const, blocks: ON_THE_MAT },
     session({ id: 'c', date: '2026-09-27' }),
   ];
 
@@ -836,8 +934,8 @@ describe('État affiché', () => {
   });
 
   it('non envoyée, et pourquoi ; retirée mais encore sur Garmin', () => {
-    const s = { ...session({ id: 's', date: '2026-09-25' }), type: 'strength' as const };
-    expect(view([s], []).bySession.s).toMatchObject({ state: 'not_sent', detail: expect.stringContaining('renforcement') });
+    const s = { ...session({ id: 's', date: '2026-09-25' }), type: 'strength' as const, blocks: ON_THE_MAT };
+    expect(view([s], []).bySession.s).toMatchObject({ state: 'not_sent', detail: expect.stringContaining('Musculation') });
     const e = entryFor(b, 3);
     expect(view([{ ...b, status: 'withdrawn' }], [e]).bySession.b).toMatchObject({ label: 'Encore sur Garmin' });
   });

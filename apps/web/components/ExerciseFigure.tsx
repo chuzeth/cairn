@@ -241,25 +241,79 @@ function PropView({ prop, box }: { prop: Prop; box: Box }) {
   }
 }
 
-/** Les contours d'un corps, chacun bordé du fond pour se détacher de ses voisins. */
+/**
+ * Les contours d'un corps, chacun bordé du fond pour se détacher de ses voisins,
+ * puis modelé : l'ombre au dos du membre, la lumière devant, comme sous une
+ * lampe de studio. Les muscles qui travaillent sont fondus dans la forme, pas
+ * posés dessus. Une ombre portée dit où le corps touche le sol.
+ */
 function BodyView({ list, muscles, uid }: { list: Part[]; muscles: Map<string, Pt[][]>; uid: string }) {
+  // Ce qui touche le sol, à un trait près : l'ombre portée s'étend sous ces points.
+  const grounded = list.filter((p) => p.tone !== 'sling').flatMap((p) => p.pts).filter((q) => q[1] < 0.9);
+  const xs = grounded.map((q) => q[0]);
+  const shadow = xs.length > 0 ? { cx: (Math.min(...xs) + Math.max(...xs)) / 2, rx: (Math.max(...xs) - Math.min(...xs)) / 2 + 4 } : null;
   return (
     <g>
-      {list.map((p, i) => (
-        <g key={`${p.name}-${i}`}>
-          <path d={pathOf(p.pts)} className={`fg-part fg-${p.tone}`} />
-          {(muscles.get(p.name) ?? []).map((m, j) => (
-            <g key={j}>
+      <defs>
+        <filter id={`${uid}-soft`} x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="0.7" />
+        </filter>
+        <filter id={`${uid}-blur`} x="-50%" y="-200%" width="200%" height="500%">
+          <feGaussianBlur stdDeviation="1.1" />
+        </filter>
+        {list.map((p, i) => p.shade && (
+          <linearGradient
+            key={i}
+            id={`${uid}-s${i}`}
+            gradientUnits="userSpaceOnUse"
+            x1={fmt(p.shade[0][0])} y1={fmt(-p.shade[0][1])} x2={fmt(p.shade[1][0])} y2={fmt(-p.shade[1][1])}
+          >
+            <stop offset="0" className="fg-shade-dark" />
+            <stop offset="0.5" className="fg-shade-mid" />
+            <stop offset="1" className="fg-shade-light" />
+          </linearGradient>
+        ))}
+      </defs>
+      {shadow && (
+        <ellipse cx={fmt(shadow.cx)} cy="0.4" rx={fmt(shadow.rx)} ry="1.3" className="fg-contact" filter={`url(#${uid}-blur)`} />
+      )}
+      {chainsOf(list).map((chain) => (
+        <g key={chain[0]!.i}>
+          {/* Le contour de la chaîne entière d'abord, puis ses fonds : la cuisse, le tibia et
+              le pied font une jambe, sans couture au genou ni à la cheville. */}
+          {chain.map(({ p, i }) => <path key={`e${i}`} d={pathOf(p.pts)} className={`fg-part fg-${p.tone}`} />)}
+          {chain.map(({ p, i }) => <path key={`f${i}`} d={pathOf(p.pts)} className={`fg-fill fg-${p.tone}`} />)}
+          {chain.map(({ p, i }) => p.shade && (p.tone === 'near' || p.tone === 'far') && (
+            <path key={`s${i}`} d={pathOf(p.pts)} fill={`url(#${uid}-s${i})`} className="fg-shade" />
+          ))}
+          {chain.map(({ p, i }) => (muscles.get(p.name) ?? []).map((m, j) => (
+            <g key={`m${i}-${j}`}>
               <clipPath id={`${uid}-c${i}-${j}`}>
                 <path d={pathOf(p.pts)} />
               </clipPath>
-              <path d={pathOf(m)} clipPath={`url(#${uid}-c${i}-${j})`} className="fg-muscle" />
+              <g clipPath={`url(#${uid}-c${i}-${j})`}>
+                <path d={pathOf(m)} className="fg-muscle" filter={`url(#${uid}-soft)`} />
+              </g>
             </g>
-          ))}
+          )))}
         </g>
       ))}
     </g>
   );
+}
+
+/** La chaîne d'une partie : une jambe, un bras, le corps (buste, cou, tête). */
+const chainKey = (name: string): string => (['trunk', 'neck', 'head'].includes(name) ? 'body' : name.split('.')[0]!);
+
+/** Les parties regroupées par chaîne, dans l'ordre du dessin : une chaîne se dessine d'un seul tenant. */
+function chainsOf(list: Part[]): { p: Part; i: number }[][] {
+  const out: { p: Part; i: number }[][] = [];
+  list.forEach((p, i) => {
+    const last = out[out.length - 1];
+    if (last && chainKey(last[0]!.p.name) === chainKey(p.name) && p.tone !== 'sling') last.push({ p, i });
+    else out.push([{ p, i }]);
+  });
+  return out;
 }
 
 /**

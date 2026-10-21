@@ -138,6 +138,7 @@ beforeEach(async () => {
   store = new GateStore(join(mkdtempSync(join(tmpdir(), 'cairn-gate-')), 'auth.sqlite'));
   gate = createGate({
     store, origin: () => ORIGIN, browserScript: '/* webauthn */',
+    fonts: { serif: Buffer.from('serif-woff2'), sans: Buffer.from('sans-woff2') },
     upstream: { host: '127.0.0.1', port: sitePort },
     now: () => clock,
     log: (line) => logs.push(line),
@@ -180,6 +181,30 @@ describe('Sans session', () => {
     expect(res.body).toContain('Déverrouiller');
     expect(res.body).toContain('"/plan?semaine=2"');
     expect(seen).toHaveLength(0);
+  });
+
+  it('sert ses deux polices sans session, et la page les autorise — rien d’autre', async () => {
+    // Le 21/10 : la page de connexion prend le style de l'app, Bodoni et Inter
+    // Tight. Sans session, rien de l'app n'est joignable : la porte les sert.
+    const serif = await call('GET', '/connexion/polices/serif.woff2');
+    expect(serif.status).toBe(200);
+    expect(serif.headers['content-type']).toBe('font/woff2');
+    expect(serif.body).toBe('serif-woff2');
+    expect((await call('GET', '/connexion/polices/sans.woff2')).body).toBe('sans-woff2');
+    expect((await call('GET', '/connexion/polices/autre.woff2')).status).toBe(401);
+    const page = await call('GET', '/', { headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' } });
+    expect(page.headers['content-security-policy']).toContain("font-src 'self'");
+    expect(page.body).toContain('/connexion/polices/serif.woff2');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('s’ouvre dans le thème choisi dans l’app, avant de se dessiner', async () => {
+    const page = await call('GET', '/', { headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' } });
+    // Le même choix que l'app (`lib/theme.ts`) : la porte et l'app partagent l'origine.
+    expect(page.body).toContain("localStorage.getItem('cairn:theme')");
+    expect(page.body).toContain('[data-theme="dark"]');
+    const nonce = /script-src 'self' 'nonce-([^']+)'/.exec(String(page.headers['content-security-policy']))?.[1];
+    expect(page.body.indexOf(`<script nonce="${nonce}">`)).toBeLessThan(page.body.indexOf('<body>'));
   });
 
   it('ne laisse joindre que les routes de connexion', async () => {

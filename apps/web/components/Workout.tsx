@@ -7,6 +7,7 @@ import { blockDuration, clock, frDate, nbsp, type SessionRow } from '@/lib/api';
 import { sendOrQueue } from '@/lib/offline';
 import { planName } from '@/lib/sessions';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
+import { WatchLine } from '@/components/Watch';
 import {
   measureText, parseMeasure, partDuration, partSummary, setLabel, stepRx, stepsOf, workoutOf, workoutSummary, type Part, type Step,
 } from '@/lib/workout';
@@ -233,6 +234,8 @@ export function WorkoutView({
             {done > 0 ? `${done} exercice${done > 1 ? 's' : ''} sur ${steps.length} fait${done > 1 ? 's' : ''}` : 'Un exercice à la fois, en grand, les repos minutés.'}
           </span>
         </div>
+        {/* La montre après l'action du moment : elle la sert, elle ne la précède pas. */}
+        {session.status !== 'completed' && <WatchLine sessionId={session.id} status={session.garmin} />}
       </header>
 
       <Sommaire parts={parts} finished={finished} />

@@ -18,6 +18,7 @@ import { Morning } from '@/components/Morning';
 import { ActivityCard } from '@/components/ActivityCard';
 import { Term } from '@/components/Term';
 import { ChargeLine, Countdown, Figures, SessionFlow, sessionFigures } from '@/components/Today';
+import { WatchLine } from '@/components/Watch';
 import { firstSentence, sessionHeadline } from '@/lib/sessions';
 import { isWorkout, workoutOf } from '@/lib/workout';
 
@@ -524,6 +525,7 @@ function TodayHero({ state, plan, actions }: { state: StateResponse; plan: PlanR
             )}
             {actions}
           </div>
+          {session && !done && <WatchLine sessionId={session.id} status={session.garmin} />}
           <p className="d-model">
             Modèle physiologique du {frDate(state.model.asOf, { long: true, year: true })} · confiance{' '}
             {num(state.model.confidence * 100)} %

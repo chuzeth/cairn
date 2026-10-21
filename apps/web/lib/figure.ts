@@ -396,7 +396,63 @@ export const ellipse = (c: Pt, rx: number, ry: number, deg = 0, n = 32): Pt[] =>
   });
 
 /**
- * Les parties d'un corps : chacune convexe, nommée, dans l'ordre où elle se
+ * Une courbe fermée lisse par des points de passage (Catmull-Rom centripète),
+ * échantillonnée : un galbe, pas une ligne brisée. Le 21/10, Pierre voulait
+ * des schémas « beaucoup plus réalistes » : un membre fait d'enveloppes
+ * convexes ne pouvait avoir ni le galbe du mollet, ni le creux du genou, ni la
+ * cambrure du dos.
+ */
+export function smoothClosed(control: Pt[], samples = 5): Pt[] {
+  const n = control.length;
+  if (n < 3) return control;
+  const out: Pt[] = [];
+  const at = (i: number) => control[((i % n) + n) % n]!;
+  for (let i = 0; i < n; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    const t01 = Math.sqrt(Math.max(1e-6, dist(p0, p1)));
+    const t12 = Math.sqrt(Math.max(1e-6, dist(p1, p2)));
+    const t23 = Math.sqrt(Math.max(1e-6, dist(p2, p3)));
+    // Tangentes de Catmull-Rom centripète, ramenées au segment p1 → p2.
+    const m1 = mul(add(sub(mul(sub(p1, p0), 1 / t01), mul(sub(p2, p0), 1 / (t01 + t12))), mul(sub(p2, p1), 1 / t12)), t12);
+    const m2 = mul(add(sub(mul(sub(p2, p1), 1 / t12), mul(sub(p3, p1), 1 / (t12 + t23))), mul(sub(p3, p2), 1 / t23)), t12);
+    for (let k = 0; k < samples; k++) {
+      const t = k / samples;
+      const t2 = t * t, t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+      out.push(add(add(mul(p1, h00), mul(m1, h10)), add(mul(p2, h01), mul(m2, h11))));
+    }
+  }
+  return out;
+}
+
+/**
+ * Un segment du corps par son profil : ses largeurs devant et derrière l'os,
+ * réparties de `a` à `b`. « Devant », c'est le côté vers lequel l'os tourne de
+ * 90° — l'avant de la cuisse, le tibia, le biceps. Les bouts s'arrondissent
+ * sur le rayon de l'articulation : deux segments voisins s'y recouvrent.
+ */
+function profile(a: Pt, b: Pt, front: readonly number[], back: readonly number[]): { pts: Pt[]; shade: [Pt, Pt] } {
+  const d = unit(sub(b, a));
+  const f = rot(d, 90);
+  const len = dist(a, b);
+  const n = front.length - 1;
+  const along = (i: number) => add(a, mul(d, (len * i) / n));
+  const frontSide = front.map((w, i) => add(along(i), mul(f, w)));
+  const backSide = back.map((w, i) => add(along(i), mul(f, -w))).reverse();
+  const rb = (front[n]! + back[n]!) / 2;
+  const ra = (front[0]! + back[0]!) / 2;
+  const capB = add(add(b, mul(f, (front[n]! - back[n]!) / 2)), mul(d, rb * 0.95));
+  const capA = add(add(a, mul(f, (front[0]! - back[0]!) / 2)), mul(d, -ra * 0.95));
+  const mid = along(n / 2);
+  const wMid = Math.max(...front, ...back);
+  return {
+    pts: smoothClosed([...frontSide, capB, ...backSide, capA]),
+    shade: [add(mid, mul(f, -wMid)), add(mid, mul(f, wMid))],
+  };
+}
+
+/**
+ * Les parties d'un corps : chacune nommée, dans l'ordre où elle se
  * dessine. `tone` dit comment : `far` le côté opposé, `near` le nôtre,
  * `cast` le plâtre, `sling` l'écharpe.
  */
@@ -404,39 +460,68 @@ export interface Part {
   name: string;
   tone: 'far' | 'near' | 'cast' | 'cast-far' | 'sling';
   pts: Pt[];
+  /**
+   * Le modelé : de l'ombre à la lumière, à travers la partie. La lumière vient
+   * de devant et d'en haut — l'avant d'un membre est plus clair que son dos.
+   */
+  shade?: [Pt, Pt];
 }
 
+/**
+ * La jambe de profil, aux galbes d'une jambe de coureur : le droit fémoral et
+ * le vaste devant, les ischio-jambiers derrière ; le tibia presque droit, le
+ * mollet haut et plein ; la cheville fine. Largeurs en unités (1,8 cm), de la
+ * hanche au genou, puis du genou à la cheville.
+ */
+const THIGH = { front: [4.7, 5.0, 4.8, 4.2, 3.4, 3.0], back: [5.6, 5.0, 4.5, 3.9, 3.2, 3.0] } as const;
+const SHANK = { front: [2.9, 2.6, 2.3, 2.0, 1.7, 1.6], back: [3.0, 4.0, 3.7, 2.7, 1.9, 1.7] } as const;
+
 const leg = (side: string, l: LegPts, tone: Part['tone']): Part[] => {
-  const d = unit(sub(l.knee, l.hip));
-  const front = rot(d, 90);
-  const s = unit(sub(l.ankle, l.knee));
-  const sFront = rot(s, 90);
-  const n = rot([0, 1], l.sole);
+  const thigh = profile(l.hip, l.knee, THIGH.front, THIGH.back);
+  const shank = profile(l.knee, l.ankle, SHANK.front, SHANK.back);
   return [
-    {
-      name: `${side}.thigh`, tone,
-      pts: blob([{ c: l.hip, r: 5.3 }, { c: add(lerp(l.hip, l.knee, 0.42), mul(front, 0.5)), r: 4.7 }, { c: l.knee, r: 3.2 }]),
-    },
-    {
-      name: `${side}.shank`, tone,
-      pts: blob([{ c: l.knee, r: 3.1 }, { c: add(lerp(l.knee, l.ankle, 0.3), mul(sFront, -1.2)), r: 3.3 }, { c: l.ankle, r: 1.9 }]),
-    },
-    {
-      name: `${side}.foot`, tone,
-      pts: blob([
-        { c: l.ankle, r: 2 },
-        { c: add(l.heel, mul(n, 1.9)), r: 1.9 },
-        { c: add(l.ball, mul(n, 1.5)), r: 1.5 },
-        { c: add(l.toe, mul(n, 0.8)), r: 0.8 },
-      ]),
-    },
+    { name: `${side}.thigh`, tone, ...thigh },
+    { name: `${side}.shank`, tone, ...shank },
+    { name: `${side}.foot`, tone, ...shoe(l) },
   ];
 };
+
+/**
+ * Le pied dans sa chaussure de course : la semelle à plat du talon aux orteils
+ * — c'est elle qui touche le sol —, la pointe relevée, le cou-de-pied, le
+ * contrefort du talon.
+ */
+function shoe(l: LegPts): { pts: Pt[]; shade: [Pt, Pt] } {
+  const fwd = unit(sub(l.toe, l.heel));
+  const up = rot(fwd, 90);
+  const on = (p: Pt, f: number, u: number): Pt => add(add(p, mul(fwd, f)), mul(up, u));
+  const pts = smoothClosed([
+    on(l.heel, -1.1, 1.7),
+    on(l.heel, -1.25, 0.6),
+    on(l.heel, -0.5, 0.02),
+    on(l.heel, 1.5, 0),
+    lerp(l.heel, l.ball, 0.55),
+    on(l.ball, 0, 0),
+    on(l.toe, -0.6, 0.05),
+    on(l.toe, 0.5, 0.75),
+    on(l.toe, -0.4, 1.7),
+    on(lerp(l.ball, l.ankle, 0.45), 0, 1.6),
+    on(l.ankle, 1.5, 0.4),
+    on(l.ankle, 0.2, 1.7),
+    on(l.ankle, -1.9, 0.6),
+    on(l.heel, -0.8, 3.0),
+  ], 4);
+  return { pts, shade: [on(l.heel, 0, 0), on(l.heel, 0, 4)] };
+}
 
 const limb = (name: string, a: Pt, b: Pt, ra: number, rb: number, tone: Part['tone'], bulge = 0): Part => ({
   name, tone,
   pts: blob([{ c: a, r: ra }, { c: lerp(a, b, 0.4), r: Math.max(ra, rb) * (1 + bulge) - 0.2 }, { c: b, r: rb }]),
 });
+
+/** Le bras : le deltoïde en haut, le biceps devant, le triceps derrière ; l'avant-bras plein près du coude. */
+const UPPER_ARM = { front: [3.0, 2.6, 2.4, 2.2, 1.9], back: [3.0, 2.7, 2.5, 2.1, 1.9] } as const;
+const FOREARM = { front: [2.0, 2.2, 1.8, 1.5, 1.3], back: [2.0, 2.0, 1.7, 1.4, 1.3] } as const;
 
 const armParts = (side: 'free' | 'cast', a: ArmPts, tone: Part['tone']): Part[] => {
   if (tone === 'cast' || tone === 'cast-far') {
@@ -448,10 +533,18 @@ const armParts = (side: 'free' | 'cast', a: ArmPts, tone: Part['tone']): Part[] 
       { name: `${side}.cast-fore`, tone, pts: blob([{ c: a.elbow, r: 3.1 }, { c: a.wrist, r: 2.6 }, { c: knuckles, r: 2.2 }]) },
     ];
   }
+  // Vu de face, raccourci vers nous : le profil n'a plus de sens, l'enveloppe reste.
+  if (a.projected) {
+    return [
+      limb(`${side}.upper`, a.shoulder, a.elbow, 2.8, 2.1, tone, 0.08),
+      limb(`${side}.fore`, a.elbow, a.wrist, 2.1, 1.5, tone, 0.08),
+      { name: `${side}.hand`, tone, pts: blob([{ c: a.wrist, r: 1.5 }, { c: lerp(a.wrist, a.tip, 0.5), r: 1.8 }, { c: a.tip, r: 1 }]) },
+    ];
+  }
   return [
-    limb(`${side}.upper`, a.shoulder, a.elbow, 2.8, 2.1, tone, 0.08),
-    limb(`${side}.fore`, a.elbow, a.wrist, 2.1, 1.5, tone, 0.08),
-    { name: `${side}.hand`, tone, pts: blob([{ c: a.wrist, r: 1.5 }, { c: lerp(a.wrist, a.tip, 0.5), r: 1.8 }, { c: a.tip, r: 1 }]) },
+    { name: `${side}.upper`, tone, ...profile(a.shoulder, a.elbow, UPPER_ARM.front, UPPER_ARM.back) },
+    { name: `${side}.fore`, tone, ...profile(a.elbow, a.wrist, FOREARM.front, FOREARM.back) },
+    { name: `${side}.hand`, tone, pts: blob([{ c: a.wrist, r: 1.4 }, { c: lerp(a.wrist, a.tip, 0.5), r: 1.7 }, { c: a.tip, r: 0.95 }]) },
   ];
 };
 
@@ -474,22 +567,51 @@ function sideParts(k: Skeleton, p: SidePose): Part[] {
   const up = unit(sub(shoulder, hip));
   const front = rot(up, -90);
   const at = (h: number, f: number): Pt => add(add(hip, mul(up, h)), mul(front, f));
+  // Le buste de profil, des fessiers aux épaules : le ventre plat, la poitrine,
+  // la cambrure des lombaires, le dos rond des omoplates. Les appuis — le sacrum
+  // couché sur le dos, la poitrine face au sol — gardent les mesures d'avant.
   const trunk: Part = {
     name: 'trunk', tone: 'near',
-    pts: blob([
-      { c: at(-0.6, -1), r: 6 },
-      { c: at(10.5, 0.6), r: 5.3 },
-      { c: at(20.5, -0.2), r: 6.3 },
-      { c: at(SEG.trunk - 1.2, -1.4), r: 5 },
+    pts: smoothClosed([
+      at(-5.6, 1.2),
+      at(-3.2, 4.4),
+      at(1.5, 5.2),
+      at(7.5, 5.0),
+      at(12.5, 5.0),
+      at(17.5, 5.9),
+      at(21.0, 6.1),
+      at(25.0, 5.0),
+      at(28.6, 3.4),
+      at(31.4, 0.8),
+      at(32.4, -2.0),
+      at(31.5, -4.7),
+      at(28.8, -6.2),
+      at(25.0, -6.4),
+      at(18.5, -6.3),
+      at(13.0, -5.2),
+      at(8.5, -4.7),
+      at(4.0, -5.6),
+      at(0.4, -7.0),
+      at(-3.6, -6.2),
     ]),
+    shade: [at(14, -6.5), at(14, 6.5)],
   };
   const hu = unit(sub(head, shoulder));
   const face = rot(hu, -90);
+  // La tête de profil : le crâne, le front, le nez, les lèvres, le menton, la
+  // mâchoire — un visage, pas un œuf. Repère : `face` devant, `hu` en haut.
+  const hp = (f: number, u: number): Pt => add(add(head, mul(face, f)), mul(hu, u));
   const headPart: Part = {
     name: 'head', tone: 'near',
-    pts: hull([...ring({ c: head, r: 5.9 }), add(add(head, mul(face, 7.1)), mul(hu, -0.4))]),
+    pts: smoothClosed([
+      hp(-5.7, 0.6), hp(-4.6, 4.2), hp(-1.4, 6.3), hp(2.6, 5.6), hp(4.9, 3.0), hp(5.4, 1.3),
+      hp(6.6, -0.6), hp(5.6, -1.4), hp(5.9, -2.4), hp(5.4, -3.4), hp(5.1, -4.6), hp(3.0, -5.6),
+      hp(0.6, -4.8), hp(-2.4, -4.6), hp(-5.0, -2.6),
+    ], 4),
+    shade: [hp(-6, 0), hp(6, 0)],
   };
-  const neck: Part = { name: 'neck', tone: 'near', pts: blob([{ c: at(SEG.trunk + 0.5, 0.3), r: 2.6 }, { c: head, r: 2.6 }]) };
+  // Un cou d'homme : une douzaine de centimètres de large, pas une tige.
+  const neck: Part = { name: 'neck', tone: 'near', pts: blob([{ c: at(SEG.trunk + 0.5, -0.4), r: 3.4 }, { c: lerp(at(SEG.trunk + 0.5, 0.3), head, 0.7), r: 3.0 }]) };
   const freeSide = p.freeSide ?? 'near';
   const castOver = typeof p.cast === 'object' && p.cast.over === true;
   const castTone: Part['tone'] = freeSide === 'near' ? 'cast-far' : 'cast';
@@ -520,24 +642,33 @@ function frontParts(k: Skeleton, p: FrontPose): Part[] {
   const up = rot(dir(180 + (p.tilt ?? 0)), turn);
   const right = rot(up, -90);
   const at = (h: number, s: number): Pt => add(add(o, mul(up, h)), mul(right, s));
+  // De face : les hanches, la taille marquée, le grand dorsal, les deltoïdes.
+  const half = (s: 1 | -1): Pt[] => [
+    at(-3.5, s * 9.6), at(1.5, s * 10.3), at(7.0, s * 8.6), at(11.5, s * 8.3), at(17.0, s * 9.6),
+    at(21.5, s * 10.4), at(25.0, s * 12.0), at(28.4, s * 11.8), at(30.2, s * 8.6), at(30.2, s * 3.4),
+  ];
   const trunk: Part = {
     name: 'trunk', tone: 'near',
-    pts: blob([
-      { c: at(0.5, -6.3), r: 4 }, { c: at(0.5, 6.3), r: 4 },
-      { c: at(11, -5.6), r: 3.2 }, { c: at(11, 5.6), r: 3.2 },
-      { c: at(21, -6.4), r: 4.1 }, { c: at(21, 6.4), r: 4.1 },
-      { c: at(26.6, -9.4), r: 3.2 }, { c: at(26.6, 9.4), r: 3.2 },
-    ]),
+    pts: smoothClosed([...half(1), ...half(-1).reverse(), at(-5.2, -3.5), at(-5.6, 0), at(-5.2, 3.5)]),
+    shade: [at(14, -10), at(14, 10)],
   };
   const head = j.head!;
   const headPart: Part = { name: 'head', tone: 'near', pts: ellipse(head, 4.7, 6.1, turn + (p.tilt ?? 0)) };
-  const neck: Part = { name: 'neck', tone: 'near', pts: blob([{ c: at(SEG.trunk - 1, 0), r: 2.6 }, { c: head, r: 2.6 }]) };
+  const neck: Part = { name: 'neck', tone: 'near', pts: blob([{ c: at(SEG.trunk - 1, 0), r: 3.6 }, { c: lerp(at(SEG.trunk - 1, 0), head, 0.7), r: 3.2 }]) };
   const legParts = (side: 'left' | 'right'): Part[] => {
     const l = k.legs[side]!;
     const out = side === 'left' ? -1 : 1;
     return [
-      { name: `${side}.thigh`, tone: 'near', pts: blob([{ c: l.hip, r: 5.1 }, { c: lerp(l.hip, l.knee, 0.4), r: 4.4 }, { c: l.knee, r: 3.1 }]) },
-      { name: `${side}.shank`, tone: 'near', pts: blob([{ c: l.knee, r: 3 }, { c: lerp(l.knee, l.ankle, 0.3), r: 3.1 }, { c: l.ankle, r: 1.8 }]) },
+      // De face, le vaste externe galbe le dehors de la cuisse, les adducteurs son dedans ;
+      // le mollet déborde des deux côtés, plus au dedans.
+      {
+        name: `${side}.thigh`, tone: 'near',
+        ...profile(l.hip, l.knee, out === 1 ? [5.0, 4.7, 4.3, 3.7, 3.0] : [4.6, 4.6, 3.9, 3.4, 3.0], out === 1 ? [4.6, 4.6, 3.9, 3.4, 3.0] : [5.0, 4.7, 4.3, 3.7, 3.0]),
+      },
+      {
+        name: `${side}.shank`, tone: 'near',
+        ...profile(l.knee, l.ankle, out === 1 ? [3.0, 3.1, 2.5, 1.9, 1.7] : [3.0, 3.4, 2.7, 1.9, 1.7], out === 1 ? [3.0, 3.4, 2.7, 1.9, 1.7] : [3.0, 3.1, 2.5, 1.9, 1.7]),
+      },
       { name: `${side}.foot`, tone: 'near', pts: ellipse(add(l.ankle, rot([out * 0.8, -1.9], turn)), 2.7, 2, turn) },
     ];
   };

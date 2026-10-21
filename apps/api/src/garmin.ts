@@ -174,6 +174,26 @@ export class GarminLoop {
     };
   }
 
+  /**
+   * Un passage tout de suite, à la demande : « Envoyer à la montre ». Il ne
+   * contourne que l'attente — le prochain tour, l'espacement après un échec —,
+   * jamais une session morte : seul Pierre peut la rétablir, sur le Mac.
+   * `null` quand un passage est déjà en cours.
+   */
+  async runNow(): Promise<GarminRun | null> {
+    if (this.running) return null;
+    const session = this.opts.session ?? new SessionFile();
+    const now = this.opts.now ?? Date.now;
+    this.running = true;
+    try {
+      const run = await syncGarmin(this.opts.athleteId, { session, now: () => new Date(now()) });
+      this.opts.log?.(run.outcome === 'ok' ? 'info' : 'warn', `Garmin, à la demande : ${run.message}`);
+      return run;
+    } finally {
+      this.running = false;
+    }
+  }
+
   async tick(): Promise<GarminRun | null> {
     if (this.running) return null;
     const session = this.opts.session ?? new SessionFile();
@@ -220,6 +240,15 @@ export function startGarminLoop(opts: ConstructorParameters<typeof GarminLoop>[0
 export function stopGarminLoop(): void {
   active?.stop();
   active = null;
+}
+
+/**
+ * La liaison du service, pour un envoi à la demande. `null` hors du service
+ * installé — `npm run dev` la coupe : deux réconciliateurs sur le même compte se
+ * marcheraient dessus.
+ */
+export function activeGarminLoop(): GarminLoop | null {
+  return active?.enabled ? active : null;
 }
 
 export function garminLoopStatus() {

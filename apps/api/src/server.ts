@@ -16,7 +16,7 @@ import {
   formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
 } from '@cairn/physiology';
 import { coachAvailable, env, missingConfig } from './env.js';
-import { garminLoopStatus, garminPlanView } from './garmin.js';
+import { activeGarminLoop, garminLoopStatus, garminPlanView } from './garmin.js';
 import { activityPollerStatus } from './poller.js';
 import { lastDeploy, runningVersion } from './release.js';
 import { backfill, ingestActivity, processPendingWebhooks, stravaClientFor } from './sync.js';
@@ -447,6 +447,21 @@ export async function buildServer() {
       // Flux sous-échantillonnés : suffisant pour tracer, sans envoyer 3 Mo au navigateur.
       streams: streams ? downsample(streams.streams, 900) : null,
     };
+  });
+
+  /**
+   * « Envoyer à la montre » : un passage de la liaison tout de suite, puis l'état
+   * de chaque séance relu sur Garmin. Rien ne s'envoie hors du service installé.
+   */
+  app.post('/api/garmin/envoyer', async (_req, reply) => {
+    const loop = activeGarminLoop();
+    if (!loop) {
+      return reply.code(409).send({ error: 'La liaison Garmin ne tourne que dans le service installé.' });
+    }
+    const run = await loop.runNow();
+    if (!run) return reply.code(409).send({ error: 'Un envoi est déjà en cours : réessaie dans une minute.' });
+    const view = await garminPlanView(A).catch(() => null);
+    return { outcome: run.outcome, message: run.message, bySession: view?.bySession ?? {}, overview: view?.overview ?? null };
   });
 
   app.get('/api/plan', async (req) => {

@@ -25,6 +25,7 @@ import { Glossed, Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
 import { HomeForm, Itinerary } from '@/components/Itinerary';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { WatchLine } from '@/components/Watch';
 import { ChargeLine, Figures, SessionFlow, sessionFigures } from '@/components/Today';
 
 /**
@@ -316,11 +317,11 @@ function WorkoutEntry({ session, sessions }: { session: SessionRow; sessions: Se
       <SessionFlow parts={parts} />
       <ChargeLine session={session} sessions={sessions} />
       <div className="m-cta">
-        <GarminLine status={session.garmin} quiet />
         <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary" transitionTypes={['nav-forward']}>
           <span>Commencer la séance</span>
           <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
         </Link>
+        <WatchLine sessionId={session.id} status={session.garmin} />
       </div>
     </section>
   );
@@ -397,8 +398,8 @@ function Session({
       <SessionMap blocks={session.blocks} route={session.route} />
 
       {/* Ce que la montre porte de cette séance, relu sur Garmin : jamais
-          « envoyée » sans relecture. */}
-      <GarminLine status={session.garmin} />
+          « envoyée » sans relecture — et le bouton qui l'y envoie s'il le faut. */}
+      <WatchLine sessionId={session.id} status={session.garmin} />
 
       <div className="m-session-foot">
         <span className="m-faint">

@@ -56,3 +56,35 @@ export function probeWorkout(): WatchWorkout {
   if (!p.sendable) throw new Error(`Séance de test non envoyable : ${p.reason}`);
   return { ...p.workout, name: PROBE_NAME };
 }
+
+/**
+ * La même séance jetable, en Cardio — le 21/10, l'escalier, la marche et les
+ * montées sans course partent sous ce sport. Elle couvre ce que le Cardio
+ * porte en plus : la montée au plafond cardiaque, la série au bouton, le repos
+ * minuté, le maintien chronométré, l'effort guidé, le bloc annexe.
+ */
+export function probeCardioWorkout(): WatchWorkout {
+  const p = prescribe({
+    type: 'strength',
+    title: 'Test de liaison, cardio 30 min + souplesse 5 min',
+    intent: "Séance jetable : créée, relue, comparée puis supprimée par `npm run garmin -- test`. Jamais planifiée.",
+    blocks: [
+      { label: 'Échauffement', zone: 'Z1', durationS: 360 },
+      {
+        label: "Montées faciles dans l'escalier", zone: 'Z2', durationS: 1200, hrRange: [141, 155],
+        elevationGainM: 140, elevationLossM: 140, notes: 'Sans le sac, en parlant ; la descente toujours au pas.',
+      },
+      {
+        label: 'Pont sur une jambe, au sol', zone: 'Z3', durationS: 45, repeat: 4, reps: 15, sides: 'jambe',
+        tempo: '1 s pour monter, 2 s serrées en haut', effort: "Jusqu'à la brûlure",
+        recovery: { durationS: 30, zone: 'Z1', active: false, betweenReps: true },
+      },
+      { label: 'Gainage sur le côté', zone: 'Z2', durationS: 45, repeat: 2, effort: 'Tenir sans trembler',
+        recovery: { durationS: 45, zone: 'Z1', active: false, betweenReps: true } },
+      { label: 'Serrage de coussin', zone: 'Z3', durationS: 120, reps: 6, pulse: { workS: 10, restS: 10 }, effort: 'Serre à fond' },
+      { label: 'Souplesse', zone: 'Z1', durationS: 300, kind: 'mobility' },
+    ],
+  });
+  if (!p.sendable) throw new Error(`Séance de test cardio non envoyable : ${p.reason}`);
+  return { ...p.workout, name: `${PROBE_NAME} (cardio)` };
+}

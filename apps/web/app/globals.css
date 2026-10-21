@@ -46,8 +46,13 @@
   --k-mobi: #9AA48C;
 
   /* Les schémas d'exercices : le corps à l'encre, son côté opposé en grège. */
-  --fig-near: #1C1915;
-  --fig-far: #B7AD9E;
+  --fig-near: #3B3630;
+  --fig-far: #BDB3A4;
+  --fig-shade-dark: #000;
+  --fig-shade-dark-a: 0.38;
+  --fig-shade-light: #FFF;
+  --fig-shade-light-a: 0.16;
+  --fig-contact: rgba(28, 25, 21, 0.22);
   --fig-muscle: #B8452A;
   --fig-sling: #B9AE98;
   --fig-mat: #E6DFD3;
@@ -126,8 +131,13 @@
   --k-cardio: #C9A27A;
   --k-renfo: #B4532F;
   --k-mobi: #7E8A72;
-  --fig-near: #EDE7DC;
+  --fig-near: #E6DFD3;
   --fig-far: #6B635A;
+  --fig-shade-dark: #000;
+  --fig-shade-dark-a: 0.42;
+  --fig-shade-light: #FFF;
+  --fig-shade-light-a: 0.22;
+  --fig-contact: rgba(0, 0, 0, 0.45);
   --fig-muscle: #E58A6A;
   --fig-sling: #7A705F;
   --fig-mat: #2C2823;
@@ -1359,13 +1369,20 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xf-key { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 8px; align-items: start; }
 .xf-key::before { content: ''; width: 16px; height: 0; margin-top: 0.7em; border-top: 2px solid var(--fig-near); }
 .xf-key-ghost::before { border-top: 2px dashed var(--text-faint); }
-.xf .fg-part { stroke: var(--bg-elev); stroke-width: 0.7; stroke-linejoin: round; }
+.xf .fg-part { stroke: var(--bg-elev); stroke-width: 1.1; stroke-linejoin: round; }
+.xf .fg-fill { stroke: none; }
+/* Le modelé : l'ombre au dos des volumes, la lumière devant. */
+.xf .fg-shade { stroke: none; pointer-events: none; }
+.xf .fg-shade-dark { stop-color: var(--fig-shade-dark); stop-opacity: var(--fig-shade-dark-a); }
+.xf .fg-shade-mid { stop-color: var(--fig-shade-dark); stop-opacity: 0; }
+.xf .fg-shade-light { stop-color: var(--fig-shade-light); stop-opacity: var(--fig-shade-light-a); }
+.xf .fg-contact { fill: var(--fig-contact); stroke: none; }
 .xf .fg-near { fill: var(--fig-near); }
 .xf .fg-far { fill: var(--fig-far); }
 .xf .fg-cast { fill: var(--cast); stroke: var(--cast-ink); stroke-width: 0.5; }
 .xf .fg-cast-far { fill: var(--cast-far); stroke: var(--cast-ink); stroke-width: 0.4; }
 .xf .fg-sling { fill: var(--fig-sling); }
-.xf .fg-muscle { fill: var(--fig-muscle); opacity: 0.95; stroke: none; }
+.xf .fg-muscle { fill: var(--fig-muscle); opacity: 0.92; stroke: none; }
 .xf .fg-ghost-edge { fill: none; stroke: var(--text-faint); stroke-width: 1.1; stroke-dasharray: 1.6 1.4; }
 .xf .fg-ghost-fill { fill: var(--bg-elev); stroke: none; }
 .xf .fg-ground line { stroke: var(--border-strong); stroke-width: 0.6; }
@@ -1698,6 +1715,18 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .d-hero-side .t-charge-line { font-size: 13px; }
 .main > .t-flow { margin-top: 0; }
 .main > .t-countdown + * { margin-top: 48px; }
+
+/* ── La séance et la montre (`components/Watch.tsx`) ───────────────────── */
+.watch { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.watch-line { flex: 1 1 220px; display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 12px; line-height: 1.45; color: var(--text); }
+.watch-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); transform: translateY(-1px); }
+.watch[data-tone="good"] .watch-dot { background: var(--good); }
+.watch[data-tone="warn"] .watch-dot { background: var(--watch); }
+.watch[data-tone="mute"] .watch-line { color: var(--text-faint); }
+.watch-hint { color: var(--text-faint); }
+.watch-send { min-height: 44px; }
+.watch-error { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--warn); }
+.d-hero-main .watch { margin-top: 20px; max-width: 560px; }
 
 /* ── Le plan : la semaine en barres (`app/plan/page.tsx`) ──────────────── */
 .plan-bars { margin: 4px 0 20px; }

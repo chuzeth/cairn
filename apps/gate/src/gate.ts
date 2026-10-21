@@ -43,6 +43,12 @@ export interface GateOptions {
   origin: () => string | null;
   /** SimpleWebAuthn côté navigateur, servi sous `/connexion/webauthn.js`. */
   browserScript: string;
+  /**
+   * Les polices de l'app — Bodoni Moda, Inter Tight —, servies sous
+   * `/connexion/polices/` : sans session, la page de connexion n'en joint pas
+   * d'autres, et elle doit avoir le style de l'app.
+   */
+  fonts?: { serif: Buffer; sans: Buffer };
   now?: () => number;
   /** Tentatives de connexion admises dans la fenêtre, toutes origines confondues. */
   limit?: { max: number; windowMs: number };
@@ -79,6 +85,7 @@ class Limiter {
 
 const PUBLIC_ROUTES = new Set([
   'GET /connexion', 'GET /connexion/webauthn.js', 'GET /connexion/etat',
+  'GET /connexion/polices/serif.woff2', 'GET /connexion/polices/sans.woff2',
   'POST /connexion/options', 'POST /connexion/verifier',
   'POST /connexion/enregistrement/options', 'POST /connexion/enregistrement/verifier',
   'POST /connexion/journal',
@@ -177,7 +184,7 @@ export function createGate(opts: GateOptions): Server {
     const nonce = randomBytes(16).toString('base64');
     send(res, status, 'text/html; charset=utf-8', loginPage(safeSuite(suite), nonce), {
       'Content-Security-Policy': [
-        "default-src 'none'", `script-src 'self' 'nonce-${nonce}'`, "style-src 'unsafe-inline'",
+        "default-src 'none'", `script-src 'self' 'nonce-${nonce}'`, "style-src 'unsafe-inline'", "font-src 'self'",
         "connect-src 'self'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
       ].join('; '),
     });
@@ -198,6 +205,12 @@ export function createGate(opts: GateOptions): Server {
       }
       case 'GET /connexion/webauthn.js':
         return send(res, 200, 'text/javascript; charset=utf-8', opts.browserScript);
+      case 'GET /connexion/polices/serif.woff2':
+      case 'GET /connexion/polices/sans.woff2': {
+        const font = opts.fonts?.[route.endsWith('serif.woff2') ? 'serif' : 'sans'];
+        if (!font) return send(res, 404, 'text/plain; charset=utf-8', '');
+        return send(res, 200, 'font/woff2', font, { 'Cache-Control': 'public, max-age=604800' });
+      }
       // L'app la demande à chaque ouverture et toutes les trente secondes : c'est
       // ce qui garde la session ouverte tant qu'elle sert, et ce qui lui dit si
       // Face ID vient d'avoir lieu — sur la page de connexion, par exemple.
@@ -233,7 +246,7 @@ export function createGate(opts: GateOptions): Server {
     const origin = opts.origin();
     if (!origin) {
       log(`connexion impossible : adresse publique inconnue (${device})`);
-      return json(res, 503, { error: 'Adresse publique inconnue : la connexion est indisponible.' });
+      return json(res, 503, { error: 'Adresse publique inconnue\u00a0: la connexion est indisponible.' });
     }
     const rpID = new URL(origin).hostname;
     const body = await readJson(req);
@@ -247,7 +260,7 @@ export function createGate(opts: GateOptions): Server {
         const passkeys = opts.store.passkeys();
         if (passkeys.length === 0) {
           log(`connexion impossible : aucune clé d'accès enregistrée (${device})`);
-          return json(res, 409, { error: 'Aucune clé d\'accès enregistrée : commence par « Nouvel appareil ».' });
+          return json(res, 409, { error: 'Aucune clé d\u2019accès enregistrée\u00a0: commence par «\u00a0Nouvel appareil\u00a0».' });
         }
         const options = await generateAuthenticationOptions({
           rpID,
@@ -262,7 +275,7 @@ export function createGate(opts: GateOptions): Server {
         const ceremony = end(req, 'login');
         if (!ceremony) {
           log(`connexion refusée : cérémonie absente ou expirée (${device})`);
-          return json(res, 400, { error: 'Cérémonie expirée : recommence.' });
+          return json(res, 400, { error: 'Cérémonie expirée\u00a0: recommence.' });
         }
         const response = body as AuthenticationResponseJSON;
         const passkey = typeof response?.id === 'string' ? opts.store.passkey(response.id) : null;
@@ -313,7 +326,7 @@ export function createGate(opts: GateOptions): Server {
 
       case 'POST /connexion/enregistrement/verifier': {
         const ceremony = end(req, 'register');
-        if (!ceremony?.code) return json(res, 400, { error: 'Cérémonie expirée : recommence.' });
+        if (!ceremony?.code) return json(res, 400, { error: 'Cérémonie expirée\u00a0: recommence.' });
         const result = await verifyRegistrationResponse({
           response: body as RegistrationResponseJSON,
           expectedChallenge: ceremony.challenge,
@@ -324,7 +337,7 @@ export function createGate(opts: GateOptions): Server {
         if (!result?.verified) return json(res, 401, { error: 'Enregistrement refusé.' });
         // Le code se consomme ici, et seulement ici : s'il a expiré ou été
         // brûlé pendant la cérémonie, la clé n'entre pas.
-        if (!opts.store.consumeCode(ceremony.code, now())) return json(res, 403, { error: 'Code expiré : redemande-le au Mac.' });
+        if (!opts.store.consumeCode(ceremony.code, now())) return json(res, 403, { error: 'Code expiré\u00a0: redemande-le au Mac.' });
         const { credential } = result.registrationInfo;
         opts.store.addPasskey({
           id: credential.id, publicKey: new Uint8Array(credential.publicKey), counter: credential.counter,
@@ -444,7 +457,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
  * Toute réponse de la porte elle-même : jamais en cache, et marquée — la page
  * et le service worker y reconnaissent une réponse de connexion, pas l'app.
  */
-function send(res: ServerResponse, status: number, type: string, body: string, headers: OutgoingHttpHeaders = {}): void {
+function send(res: ServerResponse, status: number, type: string, body: string | Buffer, headers: OutgoingHttpHeaders = {}): void {
   res.writeHead(status, {
     'Content-Type': type,
     'Cache-Control': 'no-store',

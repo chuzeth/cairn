@@ -1,10 +1,12 @@
 /**
  * La page de connexion : seule page que la porte sert sans session.
  *
- * Tout y est en ligne — style, script, dessin — sauf SimpleWebAuthn, servi par
- * la porte elle-même sous `/connexion/webauthn.js` : sans session, rien de
- * l'app n'est joignable, pas même une feuille de style. Les polices sont celles
- * du téléphone : New York pour le titre, comme l'Instrument Serif de l'app.
+ * Tout y est en ligne — style, script, dessin — sauf SimpleWebAuthn et les deux
+ * polices de l'app, servis par la porte elle-même sous `/connexion/` : sans
+ * session, rien de l'app n'est joignable, pas même une feuille de style. Depuis
+ * le 21/10, elle a le style de l'app — Bodoni, papier chaud, angles droits — et
+ * s'ouvre dans le thème qu'on y a choisi : la porte et l'app partagent l'origine,
+ * donc le `localStorage` où il est gardé.
  *
  * Le 14/10, Pierre : « une petite page de chargement et un petit Face ID ».
  * La page est l'écran d'ouverture de l'app — le papier, les courbes de niveau,
@@ -26,50 +28,65 @@ export function loginPage(suite: string, nonce: string): string {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#F4F2EE">
+<meta name="theme-color" content="#F7F3EC">
 <title>Cairn</title>
+<script nonce="${nonce}">
+(function () {
+  var t = 'light';
+  try { if (localStorage.getItem('cairn:theme') === 'dark') t = 'dark'; } catch (e) {}
+  document.documentElement.dataset.theme = t;
+  if (t === 'dark') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#13110F');
+})();
+</script>
 <style>
-  :root { color-scheme: light; --paper:#F4F2EE; --ink:#15181B; --ink2:#3B4046; --muted:#6B7177;
-          --line:#DCD7CF; --glacier:#2C5D7C; --vermillon:#A63A1F; }
+  @font-face { font-family:"Bodoni Moda"; font-style:normal; font-weight:400 900; font-display:swap;
+               src:url("/connexion/polices/serif.woff2") format("woff2"); }
+  @font-face { font-family:"Inter Tight"; font-style:normal; font-weight:100 900; font-display:swap;
+               src:url("/connexion/polices/sans.woff2") format("woff2"); }
+  :root { color-scheme:light; --paper:#F7F3EC; --ink:#1C1915; --ink2:#4A433B; --muted:#6B6359;
+          --line:#E2DACD; --field:#FBF8F3; --accent:#A8432A; --topo:#E2DACD; }
+  [data-theme="dark"] { color-scheme:dark; --paper:#13110F; --ink:#F1ECE3; --ink2:#CFC7BB; --muted:#A69D90;
+          --line:#2E2A25; --field:#1A1815; --accent:#E58A6A; --topo:#2E2A25; }
   * { box-sizing:border-box; }
   html, body { margin:0; height:100%; background:var(--paper); color:var(--ink);
-               font:16px/1.5 -apple-system, system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+               font:15px/1.5 "Inter Tight", "Helvetica Neue", system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
   body { display:flex; flex-direction:column; min-height:100%;
          padding:calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 24px); overflow:hidden; }
   .topo { position:fixed; left:-10%; bottom:-6%; width:120%; height:62%; pointer-events:none; }
-  .topo path { fill:none; stroke:#D9D3C8; stroke-width:1; }
+  .topo path { fill:none; stroke:var(--topo); stroke-width:1; }
   .topo g { animation:drift 26s ease-in-out infinite alternate; transform-origin:50% 50%; }
   @keyframes drift { from { transform:translate3d(-2%,0,0); } to { transform:translate3d(2%,-1.5%,0); } }
   main { position:relative; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
          text-align:center; max-width:360px; width:100%; margin:0 auto; }
-  h1 { font-family:ui-serif, "New York", Georgia, serif; font-weight:400; font-size:64px; line-height:1;
-       letter-spacing:-0.02em; margin:0; animation:rise .9s cubic-bezier(.2,.8,.2,1) both; }
+  h1 { font-family:"Bodoni Moda", "Bodoni 72", Didot, Georgia, serif; font-weight:500; font-size:52px; line-height:1;
+       letter-spacing:.14em; text-transform:uppercase; margin:0; animation:rise .9s cubic-bezier(.2,.8,.2,1) both; }
   .sub { margin:10px 0 0; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
          animation:rise .9s .12s cubic-bezier(.2,.8,.2,1) both; }
   @keyframes rise { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
   .face { margin-top:56px; min-height:92px; width:100%; display:flex; flex-direction:column; align-items:center; gap:14px; }
-  .glyph { width:40px; height:40px; color:var(--glacier); }
+  .glyph { width:40px; height:40px; color:var(--accent); }
   .waiting .glyph { animation:breathe 1.6s ease-in-out infinite; }
   @keyframes breathe { 50% { opacity:.35; transform:scale(.92); } }
   .status { font-size:14px; color:var(--muted); min-height:1.5em; }
   button.primary { display:none; align-items:center; justify-content:center; gap:10px; width:100%; height:54px;
-                   border:0; border-radius:999px; background:var(--ink); color:var(--paper); font:inherit; font-weight:500; }
+                   border:0; border-radius:0; background:var(--ink); color:var(--paper); font:inherit; font-size:12px;
+                   font-weight:500; letter-spacing:.16em; text-transform:uppercase; }
   button.primary svg { width:20px; height:20px; }
   .failed button.primary { display:flex; }
   .failed .glyph { display:none; }
-  #message { min-height:1.5em; margin:14px 0 0; font-size:14px; color:var(--vermillon); }
+  #message { min-height:1.5em; margin:14px 0 0; font-size:14px; color:var(--accent); }
   footer { position:relative; text-align:center; }
-  .link { background:none; border:0; padding:8px; font:inherit; font-size:13px; color:var(--muted);
-          text-decoration:underline; text-underline-offset:3px; text-decoration-color:var(--line); }
+  .link { background:none; border:0; padding:12px 8px; font:inherit; font-size:11px; letter-spacing:.14em;
+          text-transform:uppercase; color:var(--muted); }
   #device { display:none; max-width:360px; margin:8px auto 0; text-align:left; }
   #device.open { display:block; }
   #device p { margin:0 0 12px; font-size:14px; color:var(--ink2); }
   code { font:13px ui-monospace, Menlo, monospace; }
-  input { width:100%; margin:0 0 10px; padding:13px 14px; border:1px solid var(--line); border-radius:14px;
-          background:#FBFAF7; color:var(--ink); font:20px/1.2 ui-monospace, Menlo, monospace;
+  input { width:100%; margin:0 0 10px; padding:13px 14px; border:1px solid var(--ink); border-radius:0;
+          background:var(--field); color:var(--ink); font:20px/1.2 ui-monospace, Menlo, monospace;
           letter-spacing:.12em; text-transform:uppercase; }
-  button.secondary { width:100%; height:48px; border:1px solid var(--ink); border-radius:999px; background:transparent;
-                     color:var(--ink); font:inherit; font-weight:500; }
+  button.secondary { width:100%; height:54px; border:1px solid var(--ink); border-radius:0; background:transparent;
+                     color:var(--ink); font:inherit; font-size:12px; font-weight:500; letter-spacing:.16em; text-transform:uppercase; }
   button:disabled { opacity:.5; }
   @media (prefers-reduced-motion: reduce) { * { animation:none !important; } }
 </style></head><body>

@@ -61,10 +61,19 @@ export interface WatchRepeat {
 
 export type WatchItem = WatchStep | WatchRepeat;
 
+/**
+ * Le sport sous lequel la montre lance la séance. La course, et — depuis le
+ * 21/10 — le Cardio : l'escalier, la marche, les montées sans course, que la
+ * montre guide au cœur et enregistre sous une activité qui se rattache à la
+ * séance. Absent : la course.
+ */
+export type WatchSport = 'running' | 'cardio';
+
 export interface WatchWorkout {
   name: string;
   description: string;
   items: WatchItem[];
+  sport?: WatchSport;
 }
 
 export type Prescription =
@@ -154,12 +163,28 @@ function targetFor(rule: AlarmRule, hr: [number, number] | undefined): WatchTarg
  * montre sache compter : elle n'est pas envoyée, et elle le dit.
  */
 const NOT_ON_WATCH: Partial<Record<SessionType, string>> = {
-  strength: 'renforcement\u00a0: la montre ne sait pas en exécuter les mouvements, la séance reste dans Cairn',
   mobility: 'mobilité : rien que la montre sache exécuter, la séance reste dans Cairn',
-  cross_training: "hors course à pied : Cairn n'envoie que des séances de course",
   race: "jour de course : le plan d'allure reste dans Cairn",
   rest: 'jour de repos',
 };
+
+/**
+ * Le renforcement et le hors-course partent en Cardio quand la montre y guide
+ * quelque chose : un bloc qui se tient au cœur, chronométré. Sans lui — une
+ * séance sur le tapis —, le téléphone guide mieux, et la montre n'a qu'à
+ * enregistrer : la séance reste dans Cairn, et dit comment l'enregistrer pour
+ * qu'elle se coche d'elle-même (une Musculation se rattache au renforcement).
+ */
+const ON_THE_MAT =
+  'renforcement sur le tapis\u00a0: le téléphone le guide, la séance reste dans Cairn — lance «\u00a0Musculation\u00a0» ' +
+  'sur ta montre pour l\u2019enregistrer, Cairn la cochera';
+const RUN_FREE_TYPES: readonly SessionType[] = ['strength', 'cross_training'];
+
+/** Un bloc que la montre guide : une cible cardiaque à tenir, une durée qui sonne — pas une série qu'on compte. */
+const watchGuided = (b: SessionBlock): boolean => !b.kind && !b.circuit && !!b.hrRange && b.hrRange[1] > 0 && !b.reps;
+
+/** Une série d'exercice : elle se compte en répétitions, et finit au bouton. */
+const isSet = (b: SessionBlock): boolean => !b.kind && !b.circuit && !b.hrRange && !!b.reps && !b.pulse;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Séance → montre
@@ -180,6 +205,8 @@ export function prescribe(session: Pick<PlannedSession, 'type' | 'title' | 'inte
   const refused = NOT_ON_WATCH[session.type];
   if (refused) return { sendable: false, reason: refused };
   if (session.blocks.length === 0) return { sendable: false, reason: 'séance sans contenu' };
+  const cardio = RUN_FREE_TYPES.includes(session.type);
+  if (cardio && !session.blocks.some(watchGuided)) return { sendable: false, reason: ON_THE_MAT };
   const { items, overflow } = fitNotes(session.blocks.flatMap((b) => itemsOf(b, session.type)));
   const abridged: string[] = [];
   let description = text([sentence(session.title), session.intent, ...overflow].filter(Boolean).join(' '));
@@ -187,7 +214,8 @@ export function prescribe(session: Pick<PlannedSession, 'type' | 'title' | 'inte
     description = `${cut(description, DESCRIPTION_MAX - DESCRIPTION_CUT.length)[0]}${DESCRIPTION_CUT}`;
     abridged.push('description abrégée à la limite de Garmin, le texte complet est dans Cairn');
   }
-  return { sendable: true, workout: { name: workoutName(session.title), description, items }, abridged };
+  const workout: WatchWorkout = { name: workoutName(session.title), description, items };
+  return { sendable: true, workout: cardio ? { ...workout, sport: 'cardio' } : workout, abridged };
 }
 
 /**
@@ -222,20 +250,25 @@ function cut(s: string, max: number): [string, string] {
  * titre entier ouvre la description.
  */
 function workoutName(title: string): string {
-  const head = text(title.split(' — ')[0] ?? title);
-  return `${WORKOUT_PREFIX}${head || 'séance'}`;
+  let head = title.split(' — ')[0] ?? title;
+  // « Escalier, hanches et tronc 1 h 19 + souplesse et respiration 30 min · 276 m D+ » :
+  // le nom est avant l'annexe, sans sa durée.
+  if (head.includes(' + ')) head = head.split(' + ')[0]!.replace(/\s+\d+\s*(?:h(?:\s*\d+)?|min)$/u, '');
+  return `${WORKOUT_PREFIX}${text(head) || 'séance'}`;
 }
 
 function itemsOf(block: SessionBlock, type: SessionType): WatchItem[] {
   const times = Math.max(1, Math.round(block.repeat ?? 1));
   if (block.circuit) return circuitItems(block, times);
   const steps: WatchStep[] = [mainStep(block, type)];
-  if (block.recovery) steps.push(recoveryStep(block, type));
+  // Une récupération de zéro seconde n'en est pas une : la montre n'a rien à décompter.
+  const recovers = !!block.recovery && block.recovery.durationS > 0;
+  if (recovers) steps.push(recoveryStep(block, type));
   // Une récupération qui sépare les répétitions n'en suit pas la dernière : la
   // montre répète le couple une fois de moins, et la dernière répétition se
   // tient seule après le groupe. Sans quoi la montre demanderait de remonter
   // une descente que la séance redescend.
-  if (block.recovery?.betweenReps && times > 1) {
+  if (recovers && block.recovery?.betweenReps && times > 1) {
     const solo = mainStep(block, type);
     return times > 2 ? [{ kind: 'repeat', times: times - 1, items: steps }, solo] : [...steps, solo];
   }
@@ -257,6 +290,25 @@ function mainStep(block: SessionBlock, type: SessionType): WatchStep {
   // Un bloc annexe — souplesse, respiration — ne se court pas : il se chronomètre.
   if (block.kind) {
     return { kind: 'step', type: 'other', end, target: { type: 'none' }, note: note(block.label, [], block.notes) };
+  }
+  // Un maintien, un effort guidé — la chaise, le gainage, le serrage — se
+  // chronomètre, sa consigne dans la note : « 6 fois 10 s à fond, 10 s relâché ».
+  if (RUN_FREE_TYPES.includes(type) && !block.hrRange && !isSet(block)) {
+    const pulse = block.pulse && block.reps
+      ? [`${block.reps} fois ${block.pulse.workS} s à fond, ${block.pulse.restS} s relâché`]
+      : [];
+    return { kind: 'step', type: roleOf(block.label), end, target: { type: 'none' }, note: note(block.label, pulse, exerciseSaid(block)) };
+  }
+  // Une série d'exercice finit quand elle est faite, au bouton : sa durée n'est
+  // qu'une estimation, et une montre qui sonne au milieu d'une série dérange.
+  if (isSet(block)) {
+    return {
+      kind: 'step',
+      type: 'interval',
+      end: { type: 'lap' },
+      target: { type: 'none' },
+      note: note(block.label, setDose(block), exerciseSaid(block)),
+    };
   }
   const target = targetFor(alarmRule(type, block, 'work'), block.hrRange);
   const extra = end.type === 'distance' && block.durationS ? [`environ ${sessionDuration(block.durationS)}`] : [];
@@ -344,6 +396,18 @@ function circuitItems(block: SessionBlock, times: number): WatchItem[] {
   return rounds > 1 ? [intro, { kind: 'repeat', times: rounds, items: exercises }] : [intro, ...exercises];
 }
 
+/** La dose d'une série : « 15 répétitions par côté ». */
+function setDose(block: SessionBlock): string[] {
+  const reps = `${block.reps} répétition${(block.reps ?? 0) > 1 ? 's' : ''}`;
+  return [block.sides ? `${reps} par ${block.sides}` : reps];
+}
+
+/** Ce qu'un exercice demande au-delà de sa dose — tempo, effort, conseils —, chaque phrase finie. */
+function exerciseSaid(block: SessionBlock): string | undefined {
+  const parts = [block.tempo && `Tempo : ${block.tempo}`, block.effort, block.notes].filter((x): x is string => !!x);
+  return parts.length > 0 ? parts.map(sentence).join(' ') : undefined;
+}
+
 /** Une étape nommée « échauffement » en est un ; « retour au calme » aussi. Le reste se court. */
 function roleOf(label: string): WatchStepType {
   if (/^\s*échauffement/iu.test(label)) return 'warmup';
@@ -412,15 +476,20 @@ const TARGETS = {
   pace: { workoutTargetTypeId: 6, workoutTargetTypeKey: 'pace.zone', displayOrder: 6 },
 } as const;
 
-const RUNNING = { sportTypeId: 1, sportTypeKey: 'running', displayOrder: 1 } as const;
+/** Les sports de Garmin Connect, tels que son service de séances les numérote. */
+const SPORTS = {
+  running: { sportTypeId: 1, sportTypeKey: 'running', displayOrder: 1 },
+  cardio: { sportTypeId: 6, sportTypeKey: 'cardio_training', displayOrder: 6 },
+} as const;
+type GarminSport = (typeof SPORTS)[WatchSport];
 
 /** Le corps qu'attend `POST /workout-service/workout`. */
 export interface GarminWorkoutPayload {
   workoutName: string;
   description: string | null;
-  sportType: typeof RUNNING;
+  sportType: GarminSport;
   estimatedDurationInSecs: number;
-  workoutSegments: { segmentOrder: number; sportType: typeof RUNNING; workoutSteps: Record<string, unknown>[] }[];
+  workoutSegments: { segmentOrder: number; sportType: GarminSport; workoutSteps: Record<string, unknown>[] }[];
 }
 
 export function encodeWorkout(w: WatchWorkout): GarminWorkoutPayload {
@@ -455,12 +524,13 @@ export function encodeWorkout(w: WatchWorkout): GarminWorkoutPayload {
         ...encodeTarget(item.target),
       };
     });
+  const sport = SPORTS[w.sport ?? 'running'];
   return {
     workoutName: w.name,
     description: w.description || null,
-    sportType: RUNNING,
+    sportType: sport,
     estimatedDurationInSecs: timedSeconds(w.items),
-    workoutSegments: [{ segmentOrder: 1, sportType: RUNNING, workoutSteps: encode(w.items, null) }],
+    workoutSegments: [{ segmentOrder: 1, sportType: sport, workoutSteps: encode(w.items, null) }],
   };
 }
 
@@ -520,11 +590,13 @@ export function decodeWorkout(raw: unknown): WatchWorkout {
   const w = (raw ?? {}) as Record<string, unknown>;
   const segments = Array.isArray(w.workoutSegments) ? (w.workoutSegments as Record<string, unknown>[]) : [];
   const steps = segments.flatMap((s) => (Array.isArray(s.workoutSteps) ? (s.workoutSteps as Record<string, unknown>[]) : []));
-  return {
+  const decoded: WatchWorkout = {
     name: text(typeof w.workoutName === 'string' ? w.workoutName : ''),
     description: text(typeof w.description === 'string' ? w.description : ''),
     items: decodeItems(steps),
   };
+  // La course est le sport par défaut : seul un autre se dit.
+  return keyOf(w.sportType, 'sportTypeKey') === SPORTS.cardio.sportTypeKey ? { ...decoded, sport: 'cardio' } : decoded;
 }
 
 function decodeItems(steps: Record<string, unknown>[]): WatchItem[] {
@@ -589,7 +661,7 @@ const keyOf = (v: unknown, field: string): string => {
 export interface Discrepancy {
   /** « nom », « séance », « étape 3 », « étape 3.2 » (deuxième étape de la répétition 3). */
   at: string;
-  field: 'nom' | 'description' | 'structure' | 'type' | 'fin' | 'alarme' | 'cible' | 'note' | 'répétitions';
+  field: 'nom' | 'sport' | 'description' | 'structure' | 'type' | 'fin' | 'alarme' | 'cible' | 'note' | 'répétitions';
   expected: string;
   actual: string;
   /** La phrase qu'on montre : ce que Garmin porte, au lieu de ce que Cairn prescrit. */
@@ -597,9 +669,14 @@ export interface Discrepancy {
 }
 
 /** Compare la prescription à ce que Garmin a relu, étape par étape, dans les unités de l'athlète. */
+const SPORT_LABEL: Record<WatchSport, string> = { running: 'course à pied', cardio: 'cardio' };
+
 export function compareWorkouts(expected: WatchWorkout, actual: WatchWorkout): Discrepancy[] {
   const out: Discrepancy[] = [];
   if (expected.name !== actual.name) out.push(differ('nom', 'nom', quote(expected.name), quote(actual.name)));
+  if ((expected.sport ?? 'running') !== (actual.sport ?? 'running')) {
+    out.push(differ('séance', 'sport', SPORT_LABEL[expected.sport ?? 'running'], SPORT_LABEL[actual.sport ?? 'running']));
+  }
   if (expected.description !== actual.description) {
     out.push(differ('description', 'description', '', textChange(expected.description, actual.description)));
   }
