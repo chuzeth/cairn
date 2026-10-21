@@ -32,6 +32,11 @@ import {
  * compare le dernier jour au premier.
  */
 
+/** La zone d'un exercice, dite en mots : « Zone 1 · facile ». */
+const ZONE_WORD: Record<string, string> = {
+  Z1: 'Zone 1 · facile', Z2: 'Zone 2 · endurance', Z3: 'Zone 3 · tempo', Z4: 'Zone 4 · seuil', Z5: 'Zone 5 · maximal',
+};
+
 // ── Le son ───────────────────────────────────────────────────────────────────
 
 let audio: AudioContext | null = null;
@@ -221,7 +226,8 @@ export function WorkoutView({
               setPlaying(true);
             }}
           >
-            {started && done < steps.length ? `▶ Reprendre — exercice ${resumeAt + 1}` : '▶ Commencer la séance'}
+            <span>{started && done < steps.length ? `Reprendre — exercice ${resumeAt + 1}` : 'Commencer la séance'}</span>
+            <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
           </button>
           <span className="w-start-note">
             {done > 0 ? `${done} exercice${done > 1 ? 's' : ''} sur ${steps.length} fait${done > 1 ? 's' : ''}` : 'Un exercice à la fois, en grand, les repos minutés.'}
@@ -301,7 +307,7 @@ function Sommaire({ parts, finished: isFinished }: { parts: Part[]; finished: (s
               return (
                 <li key={s.index} data-done={finished}>
                   <a href={`#etape-${s.n}`}>
-                    <span className="w-toc-n">{finished ? '✓' : s.n}</span>
+                    <span className="w-toc-n">{finished ? '✓' : String(s.n).padStart(2, '0')}</span>
                     <span className="w-toc-name">{s.name}</span>
                     <span className="w-toc-rx">{stepRx(s)}</span>
                   </a>
@@ -356,9 +362,14 @@ function Details({ step }: { step: Step }) {
       {step.sheet && step.sheet.cues.length > 0 && (
         <div className="w-cues-box">
           <span className="w-what-label">Les repères</span>
-          <ul className="w-cues">
-            {step.sheet.cues.map((c, i) => <li key={i}>{nbsp(c)}</li>)}
-          </ul>
+          <ol className="w-cues">
+            {step.sheet.cues.map((c, i) => (
+              <li key={i}>
+                <span className="w-cue-n">{String(i + 1).padStart(2, '0')}</span>
+                <span>{nbsp(c)}</span>
+              </li>
+            ))}
+          </ol>
         </div>
       )}
       {step.details.length > 0 && (
@@ -749,18 +760,30 @@ function Player({
 
   const remaining = run && run.kind !== 'watch' ? Math.max(0, Math.ceil((run.endsAt - now) / 1000)) : 0;
   const totalSets = steps.reduce((a, s) => a + Math.min(s.sets, progress.sets[s.index] ?? 0), 0);
-  const pct = finished ? 100 : Math.round((at / steps.length) * 100);
 
   return (
     <div className="w-player" role="dialog" aria-modal="true" aria-label={`${title}, pas à pas`} ref={dialog} tabIndex={-1}>
       <header className="w-p-top">
-        <button type="button" className="w-p-close" onClick={onClose} aria-label="Fermer le pas à pas">✕</button>
-        <div className="w-p-where">
-          <span className="w-p-title">{title}</span>
-          {!finished && <span className="w-p-part">{part.name}</span>}
+        {/* Un segment par exercice : ce qui est fait à l'encre, celui du moment en terracotta. */}
+        <div className="w-p-segs" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }} aria-hidden>
+          {steps.map((s, i) => (
+            <span
+              key={s.index}
+              data-state={finished || stepFinished(s, progress, tests.entries) ? 'done' : i === at ? 'now' : 'todo'}
+            />
+          ))}
         </div>
-        <span className="w-p-count">{finished ? 'Fini' : `${at + 1} / ${steps.length}`}</span>
-        <div className="w-p-bar"><span style={{ width: `${pct}%` }} /></div>
+        <div className="w-p-row">
+          <button type="button" className="w-p-close" onClick={onClose} aria-label="Fermer le pas à pas">
+            <svg width="14" height="14" viewBox="0 0 14 14" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M1 1l12 12M13 1 1 13" /></svg>
+          </button>
+          <div className="w-p-where">
+            <span className="w-p-title">{title}</span>
+          </div>
+          <span className="w-p-count" aria-label={finished ? 'Séance finie' : `Exercice ${at + 1} sur ${steps.length}`}>
+            {finished ? 'Fini' : `${at + 1}/${steps.length}`}
+          </span>
+        </div>
       </header>
 
       {finished ? (
@@ -785,10 +808,17 @@ function Player({
           )}
           <div className="w-p-info">
             <div className="w-p-kicker">
-              {part.name} · {part.steps.indexOf(step) + 1} sur {part.steps.length}
+              <span>{part.name} · {part.steps.indexOf(step) + 1} sur {part.steps.length}</span>
+              {/* La zone d'un exercice de force est un niveau d'effort, pas un cœur à tenir :
+                  elle ne se dit que pour ce qui se pilote au cœur, et pour le facile. */}
+              {(step.block.hrRange || (step.block.zone === 'Z1' && !step.block.reps && !step.block.kind)) && (
+                <span>{ZONE_WORD[step.block.zone] ?? step.block.zone}</span>
+              )}
             </div>
-            <h2 className="w-p-name">{step.name}</h2>
-            <Main step={step} big />
+            <div className="w-p-headline">
+              <h2 className="w-p-name">{step.name}</h2>
+              <Main step={step} big />
+            </div>
             <Details step={step} />
 
             <div className="w-p-action">
@@ -825,21 +855,30 @@ function Player({
                   <SetDots step={step} done={done} onDone={(n) => onProgress({ ...progress, sets: { ...progress.sets, [step.index]: n } })} big />
                 )
               )}
-              <button type="button" className="btn w-p-primary" data-variant="primary" onClick={primary.act}>
-                {primary.label}
-              </button>
             </div>
           </div>
         </main>
       )}
 
+      {/* L'action du moment entre les deux flèches, toujours au même endroit,
+          sous le pouce — jamais par-dessus la consigne qu'on est en train de lire. */}
       {!finished && (
         <footer className="w-p-nav">
-          <button type="button" className="btn" onClick={() => go(at - 1)} disabled={at === 0}>← Précédent</button>
-          <span className="w-p-keys">Espace : l’action en orange · ← → : changer d’exercice · Échap : fermer</span>
-          <button type="button" className="btn" onClick={() => (at + 1 < steps.length ? go(at + 1) : setFinished(true))}>
-            {at + 1 < steps.length ? 'Suivant →' : 'Fin →'}
+          <button type="button" className="btn w-p-arrow" onClick={() => go(at - 1)} disabled={at === 0} aria-label="Exercice précédent">
+            <svg width="20" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M22 5H1M6 0.5 1 5l5 4.5" /></svg>
           </button>
+          <button type="button" className="btn w-p-primary" data-variant="primary" onClick={primary.act}>
+            {primary.label}
+          </button>
+          <button
+            type="button"
+            className="btn w-p-arrow"
+            onClick={() => (at + 1 < steps.length ? go(at + 1) : setFinished(true))}
+            aria-label={at + 1 < steps.length ? 'Exercice suivant' : 'Finir la séance'}
+          >
+            <svg width="20" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
+          </button>
+          <span className="w-p-keys">Espace : l’action du moment · ← → : changer d’exercice · Échap : fermer</span>
         </footer>
       )}
     </div>

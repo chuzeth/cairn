@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  PLAN_URL, blockDuration, duration, frDate, getStamped, num, todayIso,
+  PLAN_URL, blockDuration, duration, frDate, getStamped, num, spelledDuration, todayIso,
   type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
@@ -17,6 +17,7 @@ import { Itinerary } from '@/components/Itinerary';
 import { onForeground } from '@/lib/version';
 import { followsPace } from '@cairn/core/blocks';
 import { isWorkout } from '@/lib/workout';
+import { held, thresholdMinutes, weekStartOf } from '@/lib/today';
 
 /**
  * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
@@ -52,10 +53,34 @@ const GARMIN_TONE = { good: 'done', warn: 'off', mute: 'mute' } as const;
 const DOW_SHORT = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 const DOW_LONG = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'];
 
-function weekStartOf(date: string): string {
-  const d = new Date(`${date}T00:00:00Z`);
-  const dow = d.getUTCDay();
-  return new Date(d.getTime() + (dow === 0 ? -6 : 1 - dow) * 86_400_000).toISOString().slice(0, 10);
+/**
+ * La semaine en barres : la charge prévue de chaque jour, à l'échelle de la
+ * plus lourde. Faite à l'encre, aujourd'hui en terracotta, à venir en sable.
+ * La forme de la semaine se lit avant ses lignes.
+ */
+function WeekBars({ days, sessions, today }: { days: string[]; sessions: SessionRow[]; today: string }) {
+  const loads = days.map((d) => sessions.filter((s) => s.date === d && held(s)).reduce((a, s) => a + s.plannedLoad, 0));
+  const max = Math.max(1, ...loads);
+  const state = (d: string) => {
+    const daily = sessions.filter((s) => s.date === d && held(s));
+    if (daily.some((s) => s.status === 'completed' || s.status === 'replaced')) return 'done';
+    return d === today ? 'today' : d < today ? 'past' : 'planned';
+  };
+  return (
+    <figure className="plan-bars" role="img" aria-label={`Charge prévue par jour : ${loads.map((l, i) => `${DOW_LONG[i]} ${l}`).join(', ')} points`}>
+      <div className="plan-bars-cols">
+        {days.map((d, i) => (
+          <div key={d} className="plan-bars-col">
+            <span className="plan-bars-n">{loads[i] ? num(loads[i]!) : ''}</span>
+            <span className="plan-bars-bar" data-state={state(d)} style={{ height: `${Math.round((loads[i]! / max) * 100)}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className="plan-bars-days" aria-hidden>
+        {days.map((d, i) => <span key={d} data-today={d === today}>{DOW_SHORT[i]}</span>)}
+      </div>
+    </figure>
+  );
 }
 
 export default function PlanPage() {
@@ -150,10 +175,13 @@ export default function PlanPage() {
         {weeks.map(([weekStart, sessions]) => {
           // Une séance retirée ou annulée ne pèse plus rien : la compter dans le
           // total de la semaine ferait lire une charge que personne n'attend plus.
-          const held = sessions.filter((s) => s.status !== 'withdrawn' && s.status !== 'cancelled');
-          const total = held.reduce((a, s) => a + s.plannedLoad, 0);
-          const totalTime = held.reduce((a, s) => a + s.plannedDurationS, 0);
-          const totalVert = held.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
+          const kept = sessions.filter(held);
+          const total = kept.reduce((a, s) => a + s.plannedLoad, 0);
+          const totalTime = kept.reduce((a, s) => a + s.plannedDurationS, 0);
+          const totalVert = kept.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
+          // « pas sur la montre » sur chaque ligne ne disait qu'une chose, sept
+          // fois : elle se dit une fois, sous la semaine.
+          const unsent = kept.filter((s) => s.garmin?.state === 'not_sent');
           const isCurrent = weekStart === weekStartOf(today);
           const days = Array.from({ length: 7 }, (_, i) =>
             new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + i * 86_400_000).toISOString().slice(0, 10),
@@ -162,11 +190,16 @@ export default function PlanPage() {
           return (
             <Card
               key={weekStart}
-              style={isCurrent ? { borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)' } : undefined}
               title={`Semaine du ${frDate(weekStart, { long: true })}`}
-              hint={<>{num(total)} <Term k="points">points de charge</Term> · {duration(totalTime)} · {num(totalVert)} m D+</>}
+              hint={
+                <>
+                  {num(total)} <Term k="points">points de charge</Term>, l&apos;effort de {spelledDuration(thresholdMinutes(total) * 60)} à
+                  ton seuil · {duration(totalTime)} · {num(totalVert)} m D+
+                </>
+              }
               action={isCurrent ? <Badge tone="good">en cours</Badge> : undefined}
             >
+              <WeekBars days={days} sessions={sessions} today={today} />
               <div className="plan-week">
                 {days.map((date, i) => {
                   const daily = sessions.filter((s) => s.date === date);
@@ -205,7 +238,7 @@ export default function PlanPage() {
                               {/* Annulée par les règles : un jour qui ne protège plus rien, ou une
                                   séance dont il ne restait rien. */}
                               {s.status === 'cancelled' && <span className="plan-status" data-tone="mute">annulée</span>}
-                              {s.garmin && (
+                              {s.garmin && s.garmin.state !== 'not_sent' && (
                                 <div className="plan-status plan-garmin" data-tone={GARMIN_TONE[s.garmin.tone]} title={s.garmin.label}>
                                   {s.garmin.short}
                                 </div>
@@ -232,6 +265,21 @@ export default function PlanPage() {
                   );
                 })}
               </div>
+
+              {unsent.length > 0 && (
+                <p className="garmin-note plan-unsent" title={[...new Set(unsent.map((s) => s.garmin?.detail).filter(Boolean))].join(' · ')}>
+                  {unsent.length === kept.length
+                    ? 'Aucune séance de la semaine n’est sur la montre'
+                    : unsent.length === 1
+                      ? 'Une séance de la semaine n’est pas sur la montre'
+                      : `${num(unsent.length)} séances de la semaine ne sont pas sur la montre`}
+                  {/* La raison n'est dite que si elle vaut pour toutes : le renforcement et
+                      le hors-course ne restent pas dans Cairn pour la même raison. */}
+                  {new Set(unsent.map((s) => s.garmin?.detail)).size === 1 && unsent[0]!.garmin?.detail
+                    ? ` — ${unsent[0]!.garmin.detail}.`
+                    : '.'}
+                </p>
+              )}
 
               {sessions.filter((s) => s.id === open).map((s) => (
                 <div key={s.id} style={{ marginTop: 14, padding: 14, background: 'var(--bg-inset)', borderRadius: 8, border: '1px solid var(--border)' }}>

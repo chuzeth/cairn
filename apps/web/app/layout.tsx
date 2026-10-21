@@ -1,31 +1,33 @@
 import type { Metadata, Viewport } from 'next';
-import { Instrument_Sans, Instrument_Serif } from 'next/font/google';
+import { Bodoni_Moda, Inter_Tight } from 'next/font/google';
+import { DeskFoot } from '@/components/DeskFoot';
 import { Lock } from '@/components/Lock';
 import { Nav } from '@/components/Nav';
 import { Offline } from '@/components/Offline';
 import { TermSheet } from '@/components/Term';
+import { THEME_BG, THEME_SCRIPT } from '@/lib/theme';
 import './globals.css';
 
 /**
- * Instrument Serif pour les titres et les grands nombres, Instrument Sans pour
- * le reste — la direction « Altitude », choisie par Pierre le 14/10.
+ * Bodoni Moda pour les titres et les grands nombres, Inter Tight pour le reste
+ * — la refonte du 21/10, inspirée de Zara : le papier chaud, l'encre, un filet,
+ * une seule couleur d'accent.
  *
  * `next/font` télécharge les polices à la construction et les sert depuis le
  * site : l'application installée s'ouvre sans un seul appel vers Google, y
  * compris hors réseau.
  */
-const sans = Instrument_Sans({
+const sans = Inter_Tight({
   subsets: ['latin'],
-  axes: ['wdth'],
   display: 'swap',
-  variable: '--font-instrument-sans',
+  variable: '--font-sans',
 });
-const serif = Instrument_Serif({
+const serif = Bodoni_Moda({
   subsets: ['latin'],
-  weight: '400',
+  axes: ['opsz'],
   style: ['normal', 'italic'],
   display: 'swap',
-  variable: '--font-instrument-serif',
+  variable: '--font-serif',
 });
 
 export const metadata: Metadata = {
@@ -41,7 +43,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#F4F2EE',
+  themeColor: THEME_BG.light,
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
@@ -49,7 +51,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" className={`${sans.variable} ${serif.variable}`}>
+    // `data-theme` est posé par le script du `<head>`, avant hydratation : React
+    // ne doit pas s'en étonner.
+    <html lang="fr" className={`${sans.variable} ${serif.variable}`} data-theme="light" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         <Offline />
         {/* Face ID à chaque ouverture : rien de l'app avant lui (`components/Lock.tsx`). */}
@@ -57,6 +64,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="app">
             <Nav />
             <main className="main">{children}</main>
+            <DeskFoot />
           </div>
           <TermSheet />
         </Lock>

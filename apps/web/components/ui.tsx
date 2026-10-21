@@ -349,8 +349,16 @@ export function ReadinessBasis({ readiness, before }: { readiness: Readiness; be
  * attente, injoignable. Rien quand l'API n'en dit rien — hors des sept jours,
  * ou liaison jamais établie : l'écran n'affirme que ce qui a été relu.
  */
-export function GarminLine({ status }: { status?: GarminStatus | null }) {
-  if (!status) return null;
+export function GarminLine({ status, quiet = false }: {
+  status?: GarminStatus | null;
+  /**
+   * Taire « pas envoyée à la montre » : sur l'écran du matin, un renforcement
+   * qui ne part jamais sur la montre le redisait chaque jour. Le plan le dit,
+   * une fois par semaine.
+   */
+  quiet?: boolean;
+}) {
+  if (!status || (quiet && status.state === 'not_sent')) return null;
   return (
     <p className="garmin-line" data-tone={status.tone}>
       {status.label}

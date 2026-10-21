@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next';
+import { THEME_BG } from '@/lib/theme';
 
 /**
  * Cairn s'installe sur l'écran d'accueil et s'ouvre sans l'interface du
@@ -13,8 +14,8 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: '/',
     scope: '/',
     display: 'standalone',
-    background_color: '#F4F2EE',
-    theme_color: '#F4F2EE',
+    background_color: THEME_BG.light,
+    theme_color: THEME_BG.light,
     icons: [{ src: '/icon', sizes: '512x512', type: 'image/png' }],
   };
 }

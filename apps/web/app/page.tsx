@@ -17,6 +17,9 @@ import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
 import { Morning } from '@/components/Morning';
 import { ActivityCard } from '@/components/ActivityCard';
 import { Term } from '@/components/Term';
+import { ChargeLine, Countdown, Figures, SessionFlow, sessionFigures } from '@/components/Today';
+import { firstSentence, sessionHeadline } from '@/lib/sessions';
+import { isWorkout, workoutOf } from '@/lib/workout';
 
 interface Health {
   stravaConnected: boolean;
@@ -190,22 +193,18 @@ export default function Dashboard() {
       {recordedAt && <Stale recordedAt={recordedAt} />}
       <Waiting />
 
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">Tableau de bord</h1>
-          <p className="page-sub">
-            {frDate(today.date, { weekday: true, year: true, long: true })} · modèle physiologique du{' '}
-            {frDate(state.model.asOf, { long: true, year: true })}
-            {' · '}confiance {num(state.model.confidence * 100)} %
-          </p>
-        </div>
-        <div className="row">
-          <button className="btn" onClick={runSync} disabled={syncing || !health?.stravaConnected}>
-            {syncing ? <><span className="spinner" /> Import…</> : 'Synchroniser Strava'}
-          </button>
-          <Link href="/coach" className="btn" data-variant="primary">Parler au coach</Link>
-        </div>
-      </div>
+      <TodayHero
+        state={state}
+        plan={plan}
+        actions={
+          <>
+            <button className="btn" onClick={runSync} disabled={syncing || !health?.stravaConnected}>
+              {syncing ? <><span className="spinner" /> Import…</> : 'Synchroniser Strava'}
+            </button>
+            <Link href="/coach" className="btn" data-variant="ghost">Parler au coach</Link>
+          </>
+        }
+      />
 
       {state.pendingNotes.length > 0 && (
         <div className="banner" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
@@ -476,3 +475,72 @@ export default function Dashboard() {
     </>
   );
 }
+
+/**
+ * Le haut de l'écran de l'ordinateur : la séance du jour, comme au téléphone,
+ * avec la place de tout dire d'un regard — son titre, ses chiffres expliqués,
+ * son déroulé sur toute la largeur, et les jours qui mènent à la course. La
+ * console d'analyse suit, en dessous.
+ */
+function TodayHero({ state, plan, actions }: { state: StateResponse; plan: PlanResponse; actions: React.ReactNode }) {
+  const today = state.today.date;
+  const session = plan.sessions.find(
+    (s) => s.date === today && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled',
+  );
+  const race = state.upcomingRaces[0];
+  const done = session != null && (session.status === 'completed' || session.status === 'replaced');
+  const workout = session && isWorkout(session) ? workoutOf(session) : null;
+
+  return (
+    <>
+      <section className="d-hero">
+        <div className="d-hero-main">
+          <div className="d-eyebrow">
+            <span>{frDate(today, { weekday: true, long: true })}</span>
+            {race && <span className="d-eyebrow-race">J−{num(race.daysUntil ?? 0)} · {race.name}</span>}
+          </div>
+          <h1 className="d-title">
+            {done ? 'C’est fait.' : session ? sessionHeadline(session) : 'Rien au programme'}
+          </h1>
+          {session && !done && session.intent && <p className="d-intent">{nbsp(firstSentence(session.intent))}</p>}
+          {session && done && (
+            <p className="d-intent">
+              {session.status === 'replaced'
+                ? 'Pas la séance prévue, mais elle est faite et elle compte.'
+                : 'Séance du jour faite et rattachée au plan.'}
+            </p>
+          )}
+          <div className="d-actions">
+            {session && !done && (
+              <Link
+                href={workout ? `/seance?d=${session.date}` : '/plan'}
+                className="btn d-go"
+                data-variant="primary"
+                transitionTypes={['nav-forward']}
+              >
+                <span>{workout ? 'Commencer la séance' : 'Voir la séance'}</span>
+                <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
+              </Link>
+            )}
+            {actions}
+          </div>
+          <p className="d-model">
+            Modèle physiologique du {frDate(state.model.asOf, { long: true, year: true })} · confiance{' '}
+            {num(state.model.confidence * 100)} %
+          </p>
+        </div>
+        {session && (
+          <div className="d-hero-side">
+            <Figures className="d-figures" items={sessionFigures(session, { notes: true })} />
+            <ChargeLine session={session} sessions={plan.sessions} />
+          </div>
+        )}
+      </section>
+
+      {workout && !done && <SessionFlow parts={workout} wide />}
+
+      {race && <Countdown today={today} race={race} sessions={plan.sessions} />}
+    </>
+  );
+}
+

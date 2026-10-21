@@ -30,6 +30,12 @@ export const TYPE_COLORS: Record<string, string> = {
 };
 
 /**
+ * La première phrase de l'intention suffit à ouvrir la journée ; le paragraphe
+ * entier se lit sous « pourquoi cette séance », pour qui veut la lire.
+ */
+export const firstSentence = (text: string) => /^.*?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text;
+
+/**
  * Ce qu'on annonce en haut de l'écran du matin, en trois mots.
  *
  * Une séance répétée se dit par sa structure — « 8 côtes de 90″ » — parce que

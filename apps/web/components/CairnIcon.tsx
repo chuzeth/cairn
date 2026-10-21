@@ -6,11 +6,11 @@
  */
 export function CairnIcon({ size }: { size: number }) {
   return (
-    <div style={{ width: size, height: size, display: 'flex', background: '#F4F2EE' }}>
+    <div style={{ width: size, height: size, display: 'flex', background: '#F7F3EC' }}>
       <svg width={size} height={size} viewBox="0 0 100 100">
-        <ellipse cx="50" cy="68.5" rx="30" ry="11" fill="#15181B" />
-        <ellipse cx="48" cy="46" rx="21" ry="9" fill="#15181B" />
-        <ellipse cx="51" cy="27.5" rx="13" ry="7" fill="#15181B" />
+        <ellipse cx="50" cy="68.5" rx="30" ry="11" fill="#1C1915" />
+        <ellipse cx="48" cy="46" rx="21" ry="9" fill="#1C1915" />
+        <ellipse cx="51" cy="27.5" rx="13" ry="7" fill="#1C1915" />
       </svg>
     </div>
   );

@@ -9,12 +9,13 @@ import {
 import { QUESTIONS } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
 import {
-  CRITERION_LABELS, RUN_FREE, blockTargets, effortHead, originLabel, recoveryText, runAndAnnex, sessionHeadline,
-  slopeOf,
+  CRITERION_LABELS, RUN_FREE, blockTargets, effortHead, firstSentence, originLabel, recoveryText, runAndAnnex,
+  sessionHeadline, slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import { loadFigures } from '@/lib/figures';
-import { isWorkout, partSummary, stairsEstimated, workoutOf } from '@/lib/workout';
+import { isWorkout, stairsEstimated, workoutOf } from '@/lib/workout';
+import { thresholdMinutes } from '@/lib/today';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale,
   unweighed, Waiting, WhereLine,
@@ -23,6 +24,8 @@ import { CountUp } from '@/components/CountUp';
 import { Glossed, Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
 import { HomeForm, Itinerary } from '@/components/Itinerary';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { ChargeLine, Figures, SessionFlow, sessionFigures } from '@/components/Today';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -62,12 +65,6 @@ const isTomorrow = (date: string, today: string) =>
  */
 const blockLabel = (label: string) => label.replace(/\s*\((?:\d+\s*(?:min|s|h))\)\s*$/, '');
 
-/**
- * La première phrase de l'intention suffit à ouvrir la journée ; le paragraphe
- * entier se lit sous « pourquoi cette séance », pour qui veut la lire.
- */
-const firstSentence = (text: string) => /^.*?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text;
-
 export function Morning({
   state, plan, stravaConnected, recordedAt, onReload, onFileNote, filing,
 }: {
@@ -105,6 +102,12 @@ export function Morning({
 
   return (
     <div className="morning">
+      {/* Le nom, et la bascule clair / sombre là où on la cherche : en haut à droite. */}
+      <div className="m-brand">
+        <span className="m-wordmark">CAIRN</span>
+        <ThemeToggle />
+      </div>
+
       <div className="m-top">
         <span>{longDate(today)}</span>
         {race && <span className="m-goal">J−{race.daysUntil} · {shortRace(race.name)}</span>}
@@ -118,7 +121,7 @@ export function Morning({
       <Headline session={session} absence={absence} done={doneToday} early={early} />
 
       {work && (isWorkout(work)
-        ? <WorkoutEntry session={work} />
+        ? <WorkoutEntry session={work} sessions={plan.sessions} />
         : <Session session={work} home={plan.home ?? null} onReload={onReload} />)}
 
       {early && (
@@ -159,7 +162,7 @@ export function Morning({
           {isWorkout(openNext)
             ? <Link href={`/seance?d=${openNext.date}`} className="m-link" transitionTypes={['nav-forward']}>Voir la séance →</Link>
             : <Trace session={openNext} />}
-          <GarminLine status={openNext.garmin} />
+          <GarminLine status={openNext.garmin} quiet />
         </section>
       )}
 
@@ -188,7 +191,7 @@ export function Morning({
             {'\u00a0: '}{lowerFirst(sessionHeadline(next))}
             {next.plannedDurationS > 0 && <>, {prime(next.plannedDurationS)}</>}.
           </p>
-          <GarminLine status={next.garmin} />
+          <GarminLine status={next.garmin} quiet />
         </>
       )}
 
@@ -245,6 +248,9 @@ function Headline({
     );
   }
   if (session && session.type === 'rest') return head('Repos complet', nbsp(firstSentence(session.intent)));
+  // Une séance de renforcement dit ses chiffres juste dessous : la ligne de
+  // durée y ferait doublon, et c'est son intention qui ouvre la journée.
+  if (session && isWorkout(session) && session.intent) return head(sessionHeadline(session), nbsp(firstSentence(session.intent)));
   if (session) return head(sessionHeadline(session), subline(session));
   if (absence) {
     return head(
@@ -298,27 +304,23 @@ function subline(session: SessionRow): string {
  *
  * Le 09/10, Pierre : « je clique sur la séance, et j'ai, exercice après
  * exercice, le petit schéma, combien de séries, combien de répétitions ». Le
- * tracé d'une séance de force ne dit rien — c'est un plat. L'écran du matin en
- * donne les parties, et le bouton qui l'ouvre (`/seance`).
+ * tracé d'une séance de force ne dit rien — c'est un plat. Le 21/10, la liste
+ * des parties devient une forme : ses chiffres, son déroulé à l'échelle du
+ * temps, sa charge traduite, puis le bouton qui l'ouvre (`/seance`).
  */
-function WorkoutEntry({ session }: { session: SessionRow }) {
+function WorkoutEntry({ session, sessions }: { session: SessionRow; sessions: SessionRow[] }) {
   const parts = workoutOf(session);
   return (
-    <section className="m-session">
-      <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary" transitionTypes={['nav-forward']}>
-        Ouvrir la séance →
-      </Link>
-      <div className="m-toc">
-        {parts.map((p, i) => (
-          <div className="m-toc-part" key={`${p.name}-${i}`}>
-            <strong>{p.name}</strong>
-            <span>{partSummary(p)}</span>
-            {/* « Échauffement », sous « Échauffement », ne dit rien de plus. */}
-            {!(p.steps.length === 1 && p.steps[0]!.name === p.name) && (
-              <p>{nbsp(p.steps.map((step) => step.name).join('\u00a0· '))}</p>
-            )}
-          </div>
-        ))}
+    <section className="m-session m-workout">
+      <Figures items={sessionFigures(session)} />
+      <SessionFlow parts={parts} />
+      <ChargeLine session={session} sessions={sessions} />
+      <div className="m-cta">
+        <GarminLine status={session.garmin} quiet />
+        <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary" transitionTypes={['nav-forward']}>
+          <span>Commencer la séance</span>
+          <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
+        </Link>
       </div>
     </section>
   );
@@ -400,7 +402,8 @@ function Session({
 
       <div className="m-session-foot">
         <span className="m-faint">
-          {num(session.plannedLoad)} <Term k="points">points de charge</Term>
+          {num(session.plannedLoad)} <Term k="points">points de charge</Term>, l&apos;effort de{' '}
+          {spelledDuration(thresholdMinutes(session.plannedLoad) * 60)} à ton seuil
           {session.plannedMechanicalLoad > 0 && (
             <> · {num(session.plannedMechanicalLoad)} de <Term k="mecanique">charge mécanique</Term></>
           )}
