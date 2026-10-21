@@ -1,0 +1,31 @@
+{
+  "three": {
+    "name": "three.js 0.186.1 (ce que la vignette en tire)",
+    "min": 656134,
+    "gzip": 168017,
+    "br": 138120
+  },
+  "proto": {
+    "name": "code 3D du prototype (rig, muscles, scène)",
+    "min": 25825,
+    "gzip": 9259,
+    "br": 8366
+  },
+  "vector": {
+    "name": "schéma vectoriel en service (composant + poses)",
+    "min": 77916,
+    "gzip": 22009,
+    "br": 19424
+  },
+  "model": {
+    "min": 162448,
+    "gzip": 110625,
+    "br": 102943
+  },
+  "raw": {
+    "min": 775360,
+    "gzip": 527957,
+    "br": 295354
+  },
+  "added": 287901
+}

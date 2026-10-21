@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="fr" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Schémas 3D — planche</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,500&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./globals.css">
+<style>
+  :root { --font-sans: "Inter Tight"; --font-serif: "Bodoni Moda"; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); margin: 0; }
+  .b { max-width: 1120px; margin: 0 auto; padding: calc(28px + var(--safe-top)) 16px 64px; }
+  .b-cap { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint); font-weight: 500; }
+  .b-rule { border-top: 1px solid var(--text); padding-top: 10px; }
+  .b-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px 24px; align-items: end; margin-bottom: 36px; }
+  .b-head .b-theme { justify-self: start; }
+  @media (min-width: 720px) { .b-head { grid-template-columns: minmax(0, 1fr) auto; } .b-head .b-theme { justify-self: end; } }
+  .b-head h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(38px, 6vw, 64px); line-height: 1; letter-spacing: -0.01em; margin: 10px 0 14px; }
+  .b-lede { max-width: 62ch; margin: 0; font-size: 15px; line-height: 1.5; color: var(--text-dim); }
+  .b-theme { display: flex; border: 1px solid var(--border-strong); }
+  .b-theme button { font: inherit; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; padding: 8px 14px; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
+  .b-theme button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .b-ex { margin-top: 44px; }
+  .b-ex h2 { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin: 0 0 16px; font-family: var(--serif); font-weight: 400; font-size: 28px; line-height: 1.15; }
+  .b-ex h2 .b-cap { font-family: var(--font); }
+  .b-pair { display: grid; grid-template-columns: 1fr; gap: 20px; }
+  @media (min-width: 760px) { .b-pair { grid-template-columns: 1fr 1fr; } }
+  .b-col > .b-cap { display: block; margin-bottom: 8px; }
+  .b-col .xf-panels { margin: 0; }
+  .b-3d { display: block; width: 100%; height: 300px; max-height: 380px; cursor: pointer; }
+  .b-note { margin: 12px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); max-width: 70ch; }
+  .b-note strong { color: var(--text); font-weight: 600; }
+  .b-section { margin-top: 64px; }
+  .b-section h2 { font-family: var(--serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 8px 0 20px; }
+  .b-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 24px; }
+  .b-figure { border-top: 1px solid var(--text); padding: 10px 0 20px; }
+  .b-figure .b-num { font-family: var(--serif); font-size: 44px; line-height: 1; margin: 10px 0 8px; font-variant-numeric: lining-nums; }
+  .b-figure .b-num small { font-family: var(--font); font-size: 14px; color: var(--text-dim); margin-left: 4px; }
+  .b-figure p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
+  .b-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .b-table th, .b-table td { text-align: left; padding: 9px 12px 9px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .b-table th { font-weight: 500; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-faint); border-bottom-color: var(--text); }
+  .b-table td.n { text-align: right; padding-right: 0; white-space: nowrap; }
+  .b-scroll { overflow-x: auto; }
+  .b-verdict { border-top: 3px solid var(--accent); padding-top: 14px; }
+  .b-verdict p.b-big { font-family: var(--serif); font-size: clamp(24px, 3.2vw, 32px); line-height: 1.25; margin: 6px 0 18px; max-width: 34ch; }
+  .b-verdict ul, .b-section ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.55; color: var(--text-dim); max-width: 78ch; }
+  .b-verdict li + li, .b-section li + li { margin-top: 6px; }
+  .b-verdict li strong, .b-section li strong { color: var(--text); font-weight: 600; }
+  .b-foot { margin-top: 64px; font-size: 12px; line-height: 1.6; color: var(--text-faint); max-width: 90ch; }
+  .b-foot a { color: inherit; }
+</style>
+</head>
+<body>
+<main class="b">
+  <div class="b-cap b-rule">Prototype · 21 octobre · hors de l'app</div>
+  <header class="b-head">
+    <div>
+      <h1>Les schémas, en 3D</h1>
+      <p class="b-lede">Trois exercices. Pour chacun, le schéma vectoriel en service, puis un mannequin 3D posé par les mêmes angles, au même tempo, dans le même cadre. Les poses n'ont pas été réécrites : le mannequin les lit. Toucher la 3D la fige sur la position dessinée.</p>
+    </div>
+    <div class="b-theme" role="group" aria-label="Thème">
+      <button type="button" data-theme-to="light">Clair</button>
+      <button type="button" data-theme-to="dark">Sombre</button>
+    </div>
+  </header>
+
+  <section class="b-ex" data-ex="split-squat-bulgare">
+    <h2>Fente bulgare <span class="b-cap">3 s pour descendre · 1 s pour remonter</span></h2>
+    <div class="b-pair">
+      <div class="b-col"><span class="b-cap">Vecteur · en service</span><div class="b-vector"></div></div>
+      <div class="b-col"><span class="b-cap">3D · prototype</span><figure class="xf-panel"><canvas class="b-3d" aria-label="Fente bulgare en 3D"></canvas><figcaption class="xf-caption"><span class="xf-key xf-key-solid">Quadriceps et fessier de la jambe avant, en terracotta ; le bras plâtré en écharpe</span></figcaption></figure></div>
+    </div>
+    <p class="b-note"><strong>La 3D voit ce que le profil cache.</strong> En bas, le tibia arrière entre de 6&nbsp;cm dans le bord du banc. Le dessin a le même recouvrement (3,41 unités contre 3,50 pour la 3D) : c'est la pose qui est à reprendre — la cheville arrière plus loin sur le banc —, pas le mannequin.</p>
+  </section>
+
+  <section class="b-ex" data-ex="step-up">
+    <h2>Montée sur un banc <span class="b-cap">1 s pour monter · 3 s pour redescendre</span></h2>
+    <div class="b-pair">
+      <div class="b-col"><span class="b-cap">Vecteur · en service</span><div class="b-vector"></div></div>
+      <div class="b-col"><span class="b-cap">3D · prototype</span><figure class="xf-panel"><canvas class="b-3d" aria-label="Montée sur un banc en 3D"></canvas><figcaption class="xf-caption"><span class="xf-key xf-key-solid">Quadriceps et fessier de la jambe du haut ; la caisse décalée sous le pied d'appui</span></figcaption></figure></div>
+    </div>
+    <p class="b-note">Centrée, la caisse était traversée par la jambe restée au sol, au départ et pendant la montée : le dessin ne dit pas sa largeur. Décalée sous le pied d'appui (54&nbsp;cm de large), plus rien ne la traverse.</p>
+  </section>
+
+  <section class="b-ex" data-ex="dead-bug">
+    <h2>Dead bug <span class="b-cap">3 s pour descendre · 2 s pour revenir</span></h2>
+    <div class="b-pair">
+      <div class="b-col"><span class="b-cap">Vecteur · en service</span><div class="b-vector"></div></div>
+      <div class="b-col"><span class="b-cap">3D · prototype</span><figure class="xf-panel"><canvas class="b-3d" aria-label="Dead bug en 3D"></canvas><figcaption class="xf-caption"><span class="xf-key xf-key-solid">Le grand droit, du pubis au sternum ; le bras plâtré posé sur le ventre</span></figcaption></figure></div>
+    </div>
+    <p class="b-note">Le bras plâtré posé sur le ventre, comme le dit la consigne ; la main valide à plat au sol. Dressé, son pouce passait 4&nbsp;cm sous le sol : la vérification l'a trouvé, le poignet l'a corrigé.</p>
+  </section>
+
+  <section class="b-section">
+    <div class="b-cap b-rule">Ce que le profil cache</div>
+    <h2>Le même mannequin, tourné</h2>
+    <div class="b-pair">
+      <figure class="xf-panel"><canvas class="b-3d b-turned" data-turned="split-squat-bulgare" data-yaw="35" data-elev="10" aria-label="Fente bulgare de trois-quarts"></canvas><figcaption class="xf-caption"><span class="xf-key xf-key-solid">Fente bulgare, tournée de 35° : l'avant-bras en écharpe, la jambe arrière</span></figcaption></figure>
+      <figure class="xf-panel"><canvas class="b-3d b-turned" data-turned="dead-bug" data-yaw="35" data-elev="22" aria-label="Dead bug de trois-quarts"></canvas><figcaption class="xf-caption"><span class="xf-key xf-key-solid">Dead bug vu d'en haut, de trois-quarts : le plâtre posé sur le ventre</span></figcaption></figure>
+    </div>
+    <p class="b-note">Les poses sont les mêmes ; seule la caméra a tourné. Un dessin de profil ne peut pas montrer ça ; une seule ligne change pour la 3D.</p>
+  </section>
+
+  <section class="b-section">
+    <div class="b-cap b-rule">Mesures · 21 octobre</div>
+    <h2>Ce que ça coûte</h2>
+    <div class="b-figures">
+      <div class="b-figure"><div class="b-cap">Poids ajouté</div><div class="b-num">281,2<small>Ko compressés</small></div><p>three.js 164 Ko, le mannequin 108 Ko, le code 9 Ko. Le schéma vectoriel pèse 21,5 Ko : treize fois moins. Gardé hors ligne, rien ne se recharge ensuite.</p></div>
+      <div class="b-figure"><div class="b-cap">Fluidité</div><div class="b-num">60<small>images/s</small></div><p>Simulateur iPhone 17 Pro, iOS 26.1, Safari : les six vignettes tiennent 60 images par seconde, 1,2 à 2 ms de calcul par image, prêtes en 0,2 s (0,5 s la première fois). Le processeur graphique est celui du Mac : un vrai iPhone reste à mesurer.</p></div>
+      <div class="b-figure"><div class="b-cap">Hors ligne</div><div class="b-num">Oui</div><p>Serveur coupé, la vignette se recharge et s'anime depuis le cache, dans Chrome et dans Safari du simulateur. Dans Cairn, il faudra ranger le mannequin et le code 3D dès l'installation : le service worker actuel ne garde pas un fichier de <code>/public</code>, ni un fragment chargé à la demande jamais ouvert.</p></div>
+      <div class="b-figure"><div class="b-cap">Garanties</div><div class="b-num">0<small>défaut</small></div><p>Sur 15 instants (3 exercices, 5 temps du geste) : segments aux longueurs de Winter, hanches, genoux, chevilles et épaule sur le dessin (écart 0,000), talons et avant-pieds sur leurs appuis (≤ 0,1), rien sous le sol, rien dans le décor — sauf le banc, que le dessin traverse déjà.</p></div>
+    </div>
+    <div class="b-scroll">
+      <table class="b-table">
+        <thead><tr><th>Simulateur, 10 s d'animation</th><th>Thème</th><th class="n">Images/s</th><th class="n">Intervalle p95</th><th class="n">Calcul moy. / p95</th><th class="n">Prêt</th></tr></thead>
+        <tbody><tr><td>Fente bulgare</td><td>clair</td><td class="n">60</td><td class="n">20 ms</td><td class="n">1,63 / 3 ms</td><td class="n">501 ms</td></tr><tr><td>Fente bulgare</td><td>sombre</td><td class="n">60</td><td class="n">18 ms</td><td class="n">1,34 / 3 ms</td><td class="n">206 ms</td></tr><tr><td>Montée sur un banc</td><td>clair</td><td class="n">60</td><td class="n">18 ms</td><td class="n">1,56 / 3 ms</td><td class="n">197 ms</td></tr><tr><td>Montée sur un banc</td><td>sombre</td><td class="n">59,8</td><td class="n">20 ms</td><td class="n">2,04 / 4 ms</td><td class="n">207 ms</td></tr><tr><td>Dead bug</td><td>clair</td><td class="n">60</td><td class="n">19 ms</td><td class="n">1,58 / 4 ms</td><td class="n">211 ms</td></tr><tr><td>Dead bug</td><td>sombre</td><td class="n">59,4</td><td class="n">20 ms</td><td class="n">1,21 / 3 ms</td><td class="n">198 ms</td></tr></tbody>
+      </table>
+    </div>
+    <div class="b-scroll" style="margin-top:24px">
+      <table class="b-table">
+        <thead><tr><th>Poids</th><th class="n">Minifié</th><th class="n">gzip</th><th class="n">brotli</th></tr></thead>
+        <tbody><tr><td>three.js 0.186.1, ce que la vignette en tire</td><td class="n">640,8 Ko</td><td class="n">164,1 Ko</td><td class="n">134,9 Ko</td></tr><tr><td>Mannequin (meshopt)</td><td class="n">158,6 Ko</td><td class="n">108,0 Ko</td><td class="n">100,5 Ko</td></tr><tr><td>Code 3D du prototype</td><td class="n">25,2 Ko</td><td class="n">9,0 Ko</td><td class="n">8,2 Ko</td></tr><tr><td>Pour comparer : le schéma vectoriel en service</td><td class="n">76,1 Ko</td><td class="n">21,5 Ko</td><td class="n">19,0 Ko</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="b-section b-verdict">
+    <div class="b-cap">Avis</div>
+    <p class="b-big">Généraliser, oui — par étapes, et en gardant le calque vectoriel par‑dessus la 3D pour les consignes.</p>
+    <ul>
+      <li><strong>Ce que la 3D gagne.</strong> Un vrai corps : des volumes, de la lumière, des muscles posés sur leur anatomie plutôt que des ellipses, l'écharpe et le plâtre tels qu'ils sont. Elle vérifie aussi mieux : elle a trouvé deux défauts de pose que le profil cachait.</li>
+      <li><strong>Ce qu'elle coûte au téléphone.</strong> 281 Ko compressés, une fois, et 60 images par seconde sur le simulateur. À brider à 30, comme le vecteur, pour la batterie.</li>
+      <li><strong>Ce qu'elle ne sait pas encore faire.</strong> Les consignes, les angles, les flèches et le pointillé du départ : le cadre 3D est exactement celui du dessin, le calque vectoriel s'y superpose tel quel — reste à le brancher. Restent aussi les 10 vues de face et la vue de dessus, les 11 machines dessinées point par point, 15 des 18 muscles, les 18 bras en raccourci, les élastiques et les poignées.</li>
+      <li><strong>Le travail.</strong> Cinq à six sessions comme celle-ci. D'abord les 36 exercices tout de profil au décor simple (muscles, meubles, bras en raccourci, calque des consignes, intégration, service worker, vérification en test), puis les vues de face et les machines. Le vecteur reste pour un téléphone sans WebGL et pour « réduire les animations ».</li>
+      <li><strong>À reprendre en chemin.</strong> Le bras de MakeHuman est court (13,6 pour 18,6) : il est étiré de 37 % pour tomber sur Winter, ses propres cibles de longueur (CC0) le feraient sans étirer la peau. Les pieds sont nus, quand le dessin chausse des chaussures de course.</li>
+    </ul>
+  </section>
+
+  <footer class="b-foot">
+    Mannequin : maillage de base, squelette « default » et poids de MakeHuman — <a href="https://github.com/makehumancommunity/makehuman">github.com/makehumancommunity/makehuman</a> (<code>data/3dobjs/base.obj</code>, <code>data/rigs/default.mhskel</code>, <code>default_weights.mhw</code>, cibles <code>macrodetails</code> : homme jeune, muscle 0,8, poids 0,3). Licence CC0 1.0 : <code>LICENSE.md</code> §C (« These assets have been released under CC0 1.0 Universal »), <code>LICENSE.ASSETS.md</code>, et l'en-tête de chaque fichier. three.js 0.186.1 (MIT), embarqué, rien depuis un CDN. Prototype dans <code>prototypes/figure-3d</code>, hors de l'app livrée ; rien n'est déployé.
+  </footer>
+</main>
+<script type="module" src="./board.js"></script>
+</body>
+</html>

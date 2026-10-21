@@ -1,0 +1,24 @@
+{
+  "name": "cairn-figure-3d-prototype",
+  "private": true,
+  "type": "module",
+  "description": "Prototype : les schémas d'exercices en 3D. Hors de l'app livrée, rien ici n'est servi par Cairn.",
+  "scripts": {
+    "model": "node build-model.mjs",
+    "build": "node build.mjs",
+    "check": "tsx check.mts",
+    "serve": "node serve.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "@types/three": "0.186.0",
+    "esbuild": "0.28.2",
+    "meshoptimizer": "1.3.0"
+  }
+}
