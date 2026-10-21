@@ -1,4 +1,4 @@
-import { num, signed } from './api';
+import { nbsp, num, signed } from './api';
 import type { GlossaryKey, StateResponse } from './api';
 
 /**
@@ -46,4 +46,22 @@ export function loadFigures(t: StateResponse['today']): LoadFigure[] {
     { key: 'mechanicalTsb', ...LOAD_WORDS.mechanicalTsb, value: signed(t.mechanicalTsb), note: 'ce que la descente a abîmé' },
     { key: 'acwr', ...LOAD_WORDS.acwr, value: num(t.acwr, 2), note: t.acwrLabel },
   ];
+}
+
+/**
+ * Ce que les chiffres du jour doivent à des séances faites sans mesure, en une
+ * phrase : la provenance d'une estimation se dit là où elle pèse. `null` quand
+ * tout ce qui pèse est mesuré.
+ */
+export function estimateNote(e: StateResponse['loadEstimate'], ctl: number): string | null {
+  if (!e || e.sessions.length === 0) return null;
+  const n = e.sessions.length;
+  const first = e.sessions[0]!.date;
+  const last = e.sessions[n - 1]!.date;
+  const day = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  return nbsp(
+    `Ces chiffres comptent ${n === 1 ? 'une séance faite' : `${n} séances faites`} sans mesure ` +
+    `(${first === last ? `le ${day(first)}` : `du ${day(first)} au ${day(last)}`}) sur leur charge prévue, ` +
+    `soit ${num(e.ctl)} des ${num(ctl)} points de forme de fond : une valeur par défaut, pas une mesure.`
+  );
 }

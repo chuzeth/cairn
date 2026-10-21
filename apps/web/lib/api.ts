@@ -350,6 +350,20 @@ export function markdown(src: string): string {
 
 // ── Types partagés avec l'API ────────────────────────────────────────────────
 
+/** Une séance faite sans mesure, comptée sur sa charge prévue : une valeur par défaut. */
+export interface EstimatedLoadRow {
+  date: string; sessionId: string; title: string; metabolic: number; mechanical: number;
+  /** Part de la charge prévue retenue, de 0 à 1. */
+  share: number;
+  basis: 'duration' | 'planned' | 'partial';
+  provenance: 'default';
+}
+
+/** Un jour où le plan dépasse le seuil de ratio d'une filière, avec sa phrase. */
+export interface LoadRatioAlertRow {
+  date: string; channel: 'metabolic' | 'mechanical'; value: number; limit: number; text: string;
+}
+
 export interface StateResponse {
   athlete: {
     id: string; name: string; constraints: Record<string, unknown>;
@@ -380,6 +394,16 @@ export interface StateResponse {
     date: string; ctl: number; atl: number; tsb: number; mechanicalTsb: number;
     acwr: number; rampRate: number; monotony: number;
     tsbLabel: string; acwrLabel: string; acwrRisk: string;
+  };
+  /**
+   * Ce que les chiffres du jour doivent à des séances faites sans mesure :
+   * leurs points de forme de fond et de fraîcheur. Absent d'un état gardé
+   * avant qu'il existe.
+   */
+  loadEstimate?: {
+    provenance: 'field' | 'default';
+    sessions: EstimatedLoadRow[];
+    ctl: number; tsb: number; mechanicalTsb: number;
   };
   readiness: Readiness;
   checkIn: CheckIn | null;
@@ -575,6 +599,12 @@ export interface PlanResponse {
   completedByDate: Record<string, { id: string; name: string }>;
   /** Le domicile, par son adresse : `null` tant que l'athlète ne l'a pas donné. */
   home?: { address: string } | null;
+  /**
+   * Les jours où le plan dépasse un seuil de ratio de charge, et d'où vient la
+   * charge de référence (`source`, quand des estimations y pèsent). `null` :
+   * illisibles, et l'écran n'affirme aucun pic.
+   */
+  loadRatios?: { alerts: LoadRatioAlertRow[]; provenance: 'field' | 'default'; source: string | null } | null;
 }
 
 /** D'où vient une consigne : le document, sa date, l'extrait littéral. */

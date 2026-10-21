@@ -5,8 +5,8 @@ import { EXERCISES, directivesFor, isExerciseKey } from '@cairn/core';
 import {
   CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, describeAdjustments,
   describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, isQualitySession, labGaps,
-  loadAthleteState, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, routeBasis, routeUpcoming, summarizeWeek,
-  type SessionState,
+  loadAthleteState, loadRatioView, projectPlanRatios, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, routeBasis,
+  routeUpcoming, summarizeWeek, type SessionState,
 } from '@cairn/coach';
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
@@ -352,6 +352,8 @@ export async function buildServer() {
           hrProvenance: hrProvenanceOf(z),
         })),
         today: s.today,
+        // Ce que les chiffres du jour doivent à des séances faites sans mesure.
+        loadEstimate: s.loadEstimate,
         readiness: s.readiness,
         checkIn: s.todayCheckIn ?? null,
         // Ce que Pierre a écrit et dont rien n'a encore été fait. Le tableau de
@@ -487,6 +489,13 @@ export async function buildServer() {
     const home = await db.getHome(A);
     const routes = home ? await db.getSessionRoutes(sessions.map((s) => s.id)) : new Map();
     const model = routes.size > 0 ? await currentModel(A) : null;
+    // Les ratios de charge que le plan produira d'ici la veille de sa course,
+    // sur le réalisé et ce qu'on attend encore. Illisibles, ils ne coûtent pas
+    // le plan : l'écran n'affirme alors aucun pic.
+    const ratios = await projectPlanRatios(A, iso(new Date())).catch((e) => {
+      req.log.warn({ err: e }, 'ratios de charge illisibles');
+      return null;
+    });
     const routeOf = (s: PlannedSession) => {
       const r = routes.get(s.id);
       return r && home && model && r.basis === routeBasis(s, home, model) ? r.route : null;
@@ -506,6 +515,7 @@ export async function buildServer() {
       })),
       home: home ? { address: home.address } : null,
       garmin: garmin?.overview ?? null,
+      loadRatios: ratios ? loadRatioView(ratios) : null,
       absences,
       completedByDate: Object.fromEntries(
         activities.map((a) => [a.startDateLocal.slice(0, 10), { id: a.id, name: a.name }]),

@@ -13,12 +13,12 @@ import {
   sessionHeadline, slopeOf,
 } from '@/lib/sessions';
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
-import { loadFigures } from '@/lib/figures';
+import { estimateNote, loadFigures } from '@/lib/figures';
 import { isWorkout, stairsEstimated, workoutOf } from '@/lib/workout';
 import { thresholdMinutes } from '@/lib/today';
 import {
-  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, ReadinessBasis, SessionHistory, Stale,
-  unweighed, Waiting, WhereLine,
+  ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, RatioAlerts, ReadinessBasis, SessionHistory,
+  Stale, unweighed, Waiting, WhereLine,
 } from '@/components/ui';
 import { CountUp } from '@/components/CountUp';
 import { Glossed, Term } from '@/components/Term';
@@ -120,6 +120,15 @@ export function Morning({
       <Waiting />
 
       <Headline session={session} absence={absence} done={doneToday} early={early} />
+
+      {/* Un pic de charge que le plan produit aujourd'hui se lit avant la séance qui le produit. */}
+      {work && (
+        <RatioAlerts
+          alerts={(plan.loadRatios?.alerts ?? []).filter((a) => a.date === today)}
+          source={plan.loadRatios?.source ?? null}
+          className="m-alerts"
+        />
+      )}
 
       {work && (isWorkout(work)
         ? <WorkoutEntry session={work} sessions={plan.sessions} />
@@ -771,6 +780,9 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
               </div>
             ))}
           </div>
+          {estimateNote(state.loadEstimate, state.today.ctl) && (
+            <p className="m-after">{estimateNote(state.loadEstimate, state.today.ctl)}</p>
+          )}
           <p className="m-after">Modèle physiologique du {frDate(state.model.asOf, { long: true, year: true })}.</p>
           <Link href="/point" className="m-link">Le point du jour en entier →</Link>
         </div>

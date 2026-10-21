@@ -81,7 +81,17 @@ function Seance() {
   return (
     <>
       {recordedAt && <Stale recordedAt={recordedAt} />}
-      <WorkoutView session={session} tests={tests} prev={prev} next={next} back={back} />
+      <WorkoutView
+        session={session}
+        tests={tests}
+        prev={prev}
+        next={next}
+        back={back}
+        ratio={{
+          alerts: (plan.loadRatios?.alerts ?? []).filter((a) => a.date === date),
+          source: plan.loadRatios?.source ?? null,
+        }}
+      />
     </>
   );
 }

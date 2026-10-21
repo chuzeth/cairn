@@ -62,6 +62,8 @@ vi.mock('@cairn/db', () => ({
   listActivities: async () => [],
   listCheckIns: async () => [],
   getDailyLoads: async () => [],
+  listAnalysedActivityIds: async () => new Set(),
+  getActivity: async () => null,
   getAnalyses: async () => new Map(),
   updateSession: async (id: string, patch: Partial<PlannedSession>) => {
     store.updates.push({ id, patch });

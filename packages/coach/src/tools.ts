@@ -3,7 +3,7 @@ import type {
   RaceGoal, SessionBlock, SessionType,
 } from '@cairn/core';
 import {
-  anchorRelativeDates, localDate, sessionDuration, signedDecimal, courseFromLapFormat, courseHasUnknown,
+  anchorRelativeDates, decimal, localDate, sessionDuration, signedDecimal, courseFromLapFormat, courseHasUnknown,
   describeLapFormat, directivesFor, isLapCourse, lapsForHours, targetLaps,
 } from '@cairn/core';
 import * as db from '@cairn/db';
@@ -36,7 +36,7 @@ import {
 } from './sessionLibrary.js';
 import {
   currentCriticalSpeed, currentModel, fitnessAtPlanStart, knownLoadsBefore, loadAthleteState,
-  projectPlanRatios, rebuildPhysiologyModel,
+  projectPlanRatios, rebuildPhysiologyModel, type EstimatedSessionLoad,
 } from './state.js';
 
 /**
@@ -616,12 +616,20 @@ export async function executeTool(
 
     case 'get_fitness_state': {
       const state = await loadAthleteState(athleteId);
+      const estimate = state.loadEstimate;
       return {
         summary:
           `Forme de fond ${Math.round(state.today.ctl)} · fraîcheur ${signedTsb(Math.round(state.today.tsb))} · ` +
-          `disponibilité ${state.readiness.score}/100`,
+          `disponibilité ${state.readiness.score}/100` +
+          (estimate.sessions.length
+            ? ` — dont ${decimal(estimate.ctl)} points de forme de fond estimés sur ${estimate.sessions.length} séance(s) faite(s) sans mesure`
+            : ''),
         content: {
           date: state.today.date,
+          charge_realisee: {
+            ...estimateContent(estimate.sessions),
+            part_estimee: { ctl: estimate.ctl, tsb: estimate.tsb, tsb_mecanique: estimate.mechanicalTsb },
+          },
           metabolique: {
             ctl: state.today.ctl,
             atl: state.today.atl,
@@ -1341,6 +1349,7 @@ export async function executeTool(
           du: ratioCheck.from,
           au: ratioCheck.to,
           jours_de_charge_connus_avant_le_plan: ratioCheck.historyDays,
+          charge_de_reference: estimateContent(state.loadEstimate.sessions),
         },
         // Le plafond horaire est tenu par construction ; ce qui se dit ici,
         // c'est la place qu'il reste et ce qu'elle coûte.
@@ -1614,6 +1623,7 @@ export async function executeTool(
               du: ratios.from,
               au: ratios.to,
               depassements_avant_modification: ratioContent(ratios.before).depassements,
+              charge_de_reference: estimateContent(ratios.estimated),
             },
           }
         : {};
@@ -1949,6 +1959,31 @@ function ratioContent(exceedances: readonly LoadRatioExceedance[]) {
       ratio: e.value,
       seuil: e.limit,
     })),
+  };
+}
+
+/**
+ * Ce que la charge réalisée doit à des séances faites sans mesure : leur
+ * provenance, nommée, comme celle de tout paramètre. `field` : tout ce qui
+ * pèse est mesuré.
+ */
+function estimateContent(estimated: readonly EstimatedSessionLoad[]) {
+  if (estimated.length === 0) return { provenance: 'field' as const };
+  return {
+    provenance: 'default' as const,
+    seances_estimees: estimated.map((e) => ({
+      date: e.date,
+      titre: e.title,
+      charge: e.metabolic,
+      charge_mecanique: e.mechanical,
+      part_de_la_charge_prevue: e.share,
+      base: e.basis,
+    })),
+    note:
+      'Séances faites sans flux (saisies à la main, ou dites faites sans activité) : elles comptent leur charge ' +
+      'prévue, au prorata de la durée saisie quand une activité les tient (`duration`), entière faute de durée ' +
+      "(`planned`), à moitié pour une séance partielle sans durée (`partial`). C'est une estimation : un ratio qui " +
+      "repose dessus n'est pas une mesure.",
   };
 }
 

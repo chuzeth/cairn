@@ -3,11 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Link from 'next/link';
 import type { StrengthTestResult } from '@cairn/core';
 import { usesDoorKit } from '@cairn/core/exercises';
-import { blockDuration, clock, frDate, nbsp, type SessionRow } from '@/lib/api';
+import { blockDuration, clock, frDate, nbsp, type LoadRatioAlertRow, type SessionRow } from '@/lib/api';
 import { sendOrQueue } from '@/lib/offline';
 import { planName } from '@/lib/sessions';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
 import { WatchLine } from '@/components/Watch';
+import { RatioAlerts } from '@/components/ui';
 import {
   measureText, parseMeasure, partDuration, partSummary, setLabel, stepRx, stepsOf, workoutOf, workoutSummary, type Part, type Step,
 } from '@/lib/workout';
@@ -122,7 +123,7 @@ const fieldText = (v: number | undefined) => (v == null ? '' : String(v).replace
 // ── La vue ───────────────────────────────────────────────────────────────────
 
 export function WorkoutView({
-  session, tests, prev, next, back,
+  session, tests, prev, next, back, ratio,
 }: {
   session: SessionRow;
   /** Les résultats des tests, tous jours confondus. */
@@ -132,6 +133,8 @@ export function WorkoutView({
   next?: string;
   /** D'où l'on vient : l'écran du matin, ou le plan. */
   back: { href: string; label: string };
+  /** Les ratios de charge que le plan dépasse ce jour-là, et d'où vient leur référence. */
+  ratio?: { alerts: LoadRatioAlertRow[]; source: string | null };
 }) {
   const parts = useMemo(() => workoutOf(session), [session]);
   const steps = useMemo(() => stepsOf(parts), [parts]);
@@ -214,6 +217,7 @@ export function WorkoutView({
         <div className="w-date">{frDate(session.date, { weekday: true, long: true })}</div>
         <h1 className="w-title">{planName(session)}</h1>
         <p className="w-summary">{workoutSummary(parts, session.plannedDurationS, session.plannedElevationGainM ?? 0)}</p>
+        {ratio && session.status !== 'completed' && <RatioAlerts alerts={ratio.alerts} source={ratio.source} className="w-alerts" />}
         {session.status === 'completed' && <p className="w-done">✓ Faite, et rattachée à la séance de ta montre.</p>}
         <div className="w-start">
           <button

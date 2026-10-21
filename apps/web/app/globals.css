@@ -1739,7 +1739,20 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .plan-bars-bar[data-state="past"] { background: var(--border-strong); }
 .plan-bars-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; padding-top: 8px; font-size: 11px; letter-spacing: 0.06em; text-align: center; color: var(--text-faint); }
 .plan-bars-days [data-today="true"] { color: var(--text); font-weight: 600; }
+/* Un ratio de charge au-delà de son seuil : un trait en tête de barre, le chiffre et le jour en alerte. */
+.plan-bars-bar[data-alert="true"] { box-shadow: inset 0 3px 0 var(--warn); }
+.plan-bars-n[data-alert="true"], .plan-bars-days [data-alert="true"] { color: var(--warn); font-weight: 600; }
+.plan-alerts { margin: -8px 0 18px; }
 .plan-unsent { margin-top: 12px; }
+
+/* Un ratio de charge projeté au-delà de son seuil (`RatioAlerts`) : la phrase
+ * contre un filet d'alerte, la provenance de la référence en dessous. */
+.ratio-alerts { display: grid; gap: 6px; }
+.ratio-alert { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text); padding-left: 10px; border-left: 2px solid var(--warn); }
+.ratio-alert-day { color: var(--warn); font-weight: 600; }
+.ratio-alert-source { margin: 2px 0 0; font-size: 12px; line-height: 1.45; color: var(--text-faint); }
+.w-alerts { margin-top: 4px; }
+.m-alerts { margin: 0 0 18px; }
 
 /* ── Le passage d'un écran à l'autre (`app/template.tsx`) ───────────────────
  * L'écran qui part s'efface en 140 ms, celui qui arrive monte de dix pixels en

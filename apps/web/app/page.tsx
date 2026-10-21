@@ -5,7 +5,7 @@ import {
   PLAN_URL, activitiesUrl, duration, frDate, get, getStamped, nbsp, num, post, shortDate,
   type ActivityRow, type InsightRow, type PlanResponse, type PmcResponse, type StateResponse,
 } from '@/lib/api';
-import { LOAD_WORDS, loadFigures, plainWord, type LoadFigure } from '@/lib/figures';
+import { LOAD_WORDS, estimateNote, loadFigures, plainWord, type LoadFigure } from '@/lib/figures';
 import { useOutbox } from '@/lib/offline';
 import { onForeground } from '@/lib/version';
 import { useIsDesk } from '@/lib/viewport';
@@ -280,6 +280,9 @@ export default function Dashboard() {
           </Card>
         ))}
       </div>
+      {estimateNote(state.loadEstimate, today.ctl) && (
+        <p className="tiny faint" style={{ margin: '-4px 0 14px' }}>{estimateNote(state.loadEstimate, today.ctl)}</p>
+      )}
 
       <div className="dash-row dash-main">
         <Card

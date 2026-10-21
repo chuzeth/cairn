@@ -33,6 +33,8 @@ vi.mock('@cairn/db', () => ({
   getLatestModel: async () => db.model,
   getAthlete: async () => db.athlete,
   getDailyLoads: async () => db.dailyLoads,
+  listAnalysedActivityIds: async () => new Set(),
+  getActivity: async () => null,
   listAbsences: async () => [],
   listActivities: async () => [],
 }));

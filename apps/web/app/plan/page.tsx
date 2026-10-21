@@ -3,13 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   PLAN_URL, blockDuration, duration, frDate, getStamped, num, spelledDuration, todayIso,
-  type PlanResponse, type SessionRow,
+  type LoadRatioAlertRow, type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
   circuitText, CRITERION_LABELS, originLabel, planName, provenanceText, recoveryText, TYPE_COLORS,
 } from '@/lib/sessions';
 import {
-  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, SessionHistory, Stale, WhereLine,
+  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, RatioAlerts, SessionHistory, Stale, WhereLine,
 } from '@/components/ui';
 import { Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
@@ -56,9 +56,12 @@ const DOW_LONG = ['lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.', 'dim.'];
 /**
  * La semaine en barres : la charge prévue de chaque jour, à l'échelle de la
  * plus lourde. Faite à l'encre, aujourd'hui en terracotta, à venir en sable.
- * La forme de la semaine se lit avant ses lignes.
+ * La forme de la semaine se lit avant ses lignes. Un jour où le plan dépasse
+ * un seuil de ratio de charge porte un trait d'alerte : la phrase est dessous.
  */
-function WeekBars({ days, sessions, today }: { days: string[]; sessions: SessionRow[]; today: string }) {
+function WeekBars({
+  days, sessions, today, alerts,
+}: { days: string[]; sessions: SessionRow[]; today: string; alerts: LoadRatioAlertRow[] }) {
   const loads = days.map((d) => sessions.filter((s) => s.date === d && held(s)).reduce((a, s) => a + s.plannedLoad, 0));
   const max = Math.max(1, ...loads);
   const state = (d: string) => {
@@ -66,18 +69,27 @@ function WeekBars({ days, sessions, today }: { days: string[]; sessions: Session
     if (daily.some((s) => s.status === 'completed' || s.status === 'replaced')) return 'done';
     return d === today ? 'today' : d < today ? 'past' : 'planned';
   };
+  const alerted = (d: string) => alerts.some((a) => a.date === d);
+  const label = loads
+    .map((l, i) => `${DOW_LONG[i]} ${l}${alerted(days[i]!) ? ' (ratio de charge au-delà du seuil)' : ''}`)
+    .join(', ');
   return (
-    <figure className="plan-bars" role="img" aria-label={`Charge prévue par jour : ${loads.map((l, i) => `${DOW_LONG[i]} ${l}`).join(', ')} points`}>
+    <figure className="plan-bars" role="img" aria-label={`Charge prévue par jour : ${label} points`}>
       <div className="plan-bars-cols">
         {days.map((d, i) => (
           <div key={d} className="plan-bars-col">
-            <span className="plan-bars-n">{loads[i] ? num(loads[i]!) : ''}</span>
-            <span className="plan-bars-bar" data-state={state(d)} style={{ height: `${Math.round((loads[i]! / max) * 100)}%` }} />
+            <span className="plan-bars-n" data-alert={alerted(d)}>{loads[i] ? num(loads[i]!) : alerted(d) ? '·' : ''}</span>
+            <span
+              className="plan-bars-bar"
+              data-state={state(d)}
+              data-alert={alerted(d)}
+              style={{ height: `${Math.round((loads[i]! / max) * 100)}%` }}
+            />
           </div>
         ))}
       </div>
       <div className="plan-bars-days" aria-hidden>
-        {days.map((d, i) => <span key={d} data-today={d === today}>{DOW_SHORT[i]}</span>)}
+        {days.map((d, i) => <span key={d} data-today={d === today} data-alert={alerted(d)}>{DOW_SHORT[i]}</span>)}
       </div>
     </figure>
   );
@@ -186,6 +198,7 @@ export default function PlanPage() {
           const days = Array.from({ length: 7 }, (_, i) =>
             new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + i * 86_400_000).toISOString().slice(0, 10),
           );
+          const weekAlerts = (data.loadRatios?.alerts ?? []).filter((a) => days.includes(a.date));
 
           return (
             <Card
@@ -199,7 +212,8 @@ export default function PlanPage() {
               }
               action={isCurrent ? <Badge tone="good">en cours</Badge> : undefined}
             >
-              <WeekBars days={days} sessions={sessions} today={today} />
+              <WeekBars days={days} sessions={sessions} today={today} alerts={weekAlerts} />
+              <RatioAlerts alerts={weekAlerts} source={data.loadRatios?.source ?? null} withDay className="plan-alerts" />
               <div className="plan-week">
                 {days.map((date, i) => {
                   const daily = sessions.filter((s) => s.date === date);

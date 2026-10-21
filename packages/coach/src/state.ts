@@ -98,6 +98,19 @@ export interface AthleteState {
    * circuit, donc ses tours. Zéro, il n'en a jamais fait.
    */
   eccentricCircuitsDone: number;
+  /**
+   * Ce que la charge réalisée doit à des estimations (`realizedLoads`) : les
+   * séances faites sans mesure des six dernières semaines, et les points de
+   * forme de fond et de fraîcheur qui viennent d'elles. `default` dès qu'une
+   * seule pèse ; `field` quand tout le réalisé qui pèse est mesuré.
+   */
+  loadEstimate: {
+    provenance: 'field' | 'default';
+    sessions: EstimatedSessionLoad[];
+    ctl: number;
+    tsb: number;
+    mechanicalTsb: number;
+  };
 }
 
 /**
@@ -455,7 +468,8 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   if (!model) throw new Error("Aucun modèle physiologique disponible : importe d'abord un test d'effort.");
 
   const today = iso(new Date());
-  const loads = await realizedDailyLoads(athleteId, daysAgo(400), today);
+  const realized = await realizedLoads(athleteId, daysAgo(400), today);
+  const loads = realized.loads;
   const eccentricCircuitsDone = await countEccentricCircuits(athleteId, daysAgo(400), today);
   const pmc = buildPmcSeries(loads, loads[0]?.date ?? daysAgo(90), today);
   const checkIns = await db.listCheckIns(athleteId, daysAgo(60));
@@ -543,6 +557,31 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     vamCurve,
     weeklyTotals: computeWeeklyTotals(recentActivities, analyses),
     eccentricCircuitsDone,
+    loadEstimate: loadEstimateOf(realized, pmc, loads[0]?.date ?? daysAgo(90), today),
+  };
+}
+
+/**
+ * Ce que les chiffres du jour doivent aux estimations : la même série PMC sans
+ * elles, retranchée de la série complète.
+ */
+function loadEstimateOf(
+  realized: RealizedLoads,
+  pmc: PmcSeries,
+  from: string,
+  today: string,
+): AthleteState['loadEstimate'] {
+  const sessions = weighing(realized.estimated, today);
+  if (sessions.length === 0) return { provenance: 'field', sessions, ctl: 0, tsb: 0, mechanicalTsb: 0 };
+  const without = buildPmcSeries(realized.measured, from, today);
+  const last = <T>(arr: T[]): T | undefined => arr[arr.length - 1];
+  const part = (a: number | undefined, b: number | undefined) => tenth((a ?? 0) - (b ?? 0));
+  return {
+    provenance: 'default',
+    sessions,
+    ctl: part(last(pmc.metabolic)?.ctl, last(without.metabolic)?.ctl),
+    tsb: part(last(pmc.metabolic)?.tsb, last(without.metabolic)?.tsb),
+    mechanicalTsb: part(last(pmc.mechanical)?.tsb, last(without.mechanical)?.tsb),
   };
 }
 
@@ -623,20 +662,104 @@ export async function fitnessAtPlanStart(
 }
 
 /**
- * Charges quotidiennes réalisées, sur les deux filières, jusqu'à `to` inclus.
+ * Charge d'une séance faite qu'aucun flux n'a mesurée.
+ *
+ * Depuis le coude cassé du 03/10, la force et l'escalier se saisissent à la
+ * main sur Strava : ni flux ni analyse. Le réalisé valait zéro chaque jour — la
+ * forme de fond baissait, la fraîcheur montait, et les ratios projetés voyaient
+ * dix pics du 22 au 29/10 qui n'étaient que ce trou. Une séance faite pèse donc
+ * sa charge prévue, au prorata de la durée saisie quand une activité la tient.
+ * C'est une estimation, pas une mesure : sa provenance est `default`, et elle
+ * se dit partout où elle pèse.
+ */
+export interface EstimatedSessionLoad extends DailyLoad {
+  sessionId: string;
+  title: string;
+  /** Part de la charge prévue retenue, de 0 à 1. */
+  share: number;
+  /**
+   * D'où vient la part : `duration`, la durée saisie sur la durée prévue ;
+   * `planned`, la séance entière, faute de durée ; `partial`, la moitié d'une
+   * séance dite partielle, faute de durée.
+   */
+  basis: 'duration' | 'planned' | 'partial';
+  provenance: 'default';
+}
+
+export interface RealizedLoads {
+  /** Le mesuré, l'excentrique hors flux et les estimations, jour par jour. */
+  loads: DailyLoad[];
+  /** Le mesuré et l'excentrique hors flux seuls : `loads` sans les estimations. */
+  measured: DailyLoad[];
+  /** Les estimations seules, de la plus ancienne à la plus récente. */
+  estimated: EstimatedSessionLoad[];
+}
+
+/** Séances qui ont eu lieu, en tout ou en partie : elles ont produit une charge. */
+const REALIZED_STATUSES = new Set<PlannedSession['status']>(['completed', 'replaced', 'partial']);
+
+const tenth = (x: number) => Math.round(x * 10) / 10;
+
+/**
+ * Charges quotidiennes réalisées, sur les deux filières, jusqu'à `to` inclus,
+ * et ce qu'elles doivent à des estimations.
  *
  * Le flux d'activité ne voit pas un circuit de renforcement : la filière
  * mécanique ignorait tout l'excentrique hors course, et un palier de trois
- * tours ne pesait rien le soir où il avait été fait. Une séance faite y compte
- * ce que son circuit prescrivait — c'est tout ce qui existe de ce travail-là.
+ * tours ne pesait rien le soir où il avait été fait. Une séance faite que tient
+ * une activité mesurée y compte ce que son circuit prescrivait — c'est tout ce
+ * qui existe de ce travail-là.
+ *
+ * Une séance faite qu'aucune mesure ne tient compte sa charge prévue, sur les
+ * deux filières — l'excentrique de son circuit y est déjà (`mechanicalFor`).
+ * La part suit la durée saisie, sans dépasser la séance : au-delà, on prêterait
+ * l'intensité prescrite à un contenu inconnu, et un réalisé sous-estimé fait
+ * sonner les ratios plus tôt, pas plus tard. Elle ne compte qu'une fois :
+ * rien ne s'estime pour une séance que tient une activité analysée, ni pour
+ * une séance sans activité un jour où une mesure existe — c'est elle, alors,
+ * qui l'a réalisée.
  */
-export async function realizedDailyLoads(athleteId: string, from: string, to: string): Promise<DailyLoad[]> {
+export async function realizedLoads(athleteId: string, from: string, to: string): Promise<RealizedLoads> {
   const measured = (await db.getDailyLoads(athleteId, from)).filter((l) => l.date <= to);
-  const strength = (await db.listPlannedSessions(athleteId, from, to))
-    .filter((s) => s.status === 'completed')
-    .map((s) => ({ date: s.date, metabolic: 0, mechanical: eccentricStrengthOf(s.blocks) }))
-    .filter((l) => l.mechanical > 0);
-  return [...measured, ...strength].sort((a, b) => a.date.localeCompare(b.date));
+  const measuredDays = new Set(measured.filter((l) => l.metabolic > 0 || l.mechanical > 0).map((l) => l.date));
+  const done = (await db.listPlannedSessions(athleteId, from, to)).filter((s) => REALIZED_STATUSES.has(s.status));
+  const held = done.map((s) => s.completedActivityId).filter((id): id is string => id != null);
+  const analysed = await db.listAnalysedActivityIds(held);
+
+  const strength: DailyLoad[] = [];
+  const estimated: EstimatedSessionLoad[] = [];
+  for (const s of done) {
+    const activityId = s.completedActivityId;
+    if (activityId != null && analysed.has(activityId)) {
+      const ecc = s.status === 'completed' ? eccentricStrengthOf(s.blocks) : 0;
+      if (ecc > 0) strength.push({ date: s.date, metabolic: 0, mechanical: ecc });
+      continue;
+    }
+    if (activityId == null && measuredDays.has(s.date)) continue;
+    const activity = activityId != null ? await db.getActivity(activityId) : null;
+    const { share, basis } =
+      activity && activity.movingTimeS > 0 && s.plannedDurationS > 0
+        ? { share: Math.min(1, activity.movingTimeS / s.plannedDurationS), basis: 'duration' as const }
+        : s.status === 'partial'
+          ? { share: 0.5, basis: 'partial' as const }
+          : { share: 1, basis: 'planned' as const };
+    const load = { date: s.date, metabolic: tenth(s.plannedLoad * share), mechanical: tenth(s.plannedMechanicalLoad * share) };
+    if (load.metabolic <= 0 && load.mechanical <= 0) continue;
+    estimated.push({ ...load, sessionId: s.id, title: s.title, share: Math.round(share * 100) / 100, basis, provenance: 'default' });
+  }
+
+  const byDate = (a: DailyLoad, b: DailyLoad) => a.date.localeCompare(b.date);
+  const sure = [...measured, ...strength].sort(byDate);
+  return {
+    loads: [...sure, ...estimated.map(({ date, metabolic, mechanical }) => ({ date, metabolic, mechanical }))].sort(byDate),
+    measured: sure,
+    estimated: estimated.sort(byDate),
+  };
+}
+
+/** Charges quotidiennes réalisées, estimations comprises : `realizedLoads` sans le détail. */
+export async function realizedDailyLoads(athleteId: string, from: string, to: string): Promise<DailyLoad[]> {
+  return (await realizedLoads(athleteId, from, to)).loads;
 }
 
 /**
@@ -685,7 +808,22 @@ export interface RatioProjection {
   to: string;
   before: LoadRatioExceedance[];
   after: LoadRatioExceedance[];
+  /** `default` dès qu'une estimation pèse sur la charge chronique dont partent les ratios. */
+  provenance: 'field' | 'default';
+  /** Les séances faites sans mesure qui y pèsent, comptées sur leur charge prévue. */
+  estimated: EstimatedSessionLoad[];
 }
+
+/**
+ * Jours pendant lesquels une charge pèse encore sur une charge chronique : six
+ * semaines. Au-delà, il en reste 5 % dans le ratio (EWMA sur 28 jours), et le
+ * dire serait citer une séance qui ne change plus rien.
+ */
+const ESTIMATE_WEIGHING_DAYS = 42;
+
+/** Les estimations qui pèsent encore au soir de `today`. */
+const weighing = (estimated: readonly EstimatedSessionLoad[], today: string) =>
+  estimated.filter((e) => e.date > addDays(today, -ESTIMATE_WEIGHING_DAYS) && e.date <= today);
 
 /**
  * Ce que le plan actif produit comme ratios de charge d'aujourd'hui à la veille
@@ -708,14 +846,22 @@ export async function projectPlanRatios(
   if (to < today) return null;
 
   const absences = await db.listAbsences(athleteId, { from: today });
-  const realized = await realizedDailyLoads(athleteId, addDays(today, -400), today);
+  const realized = await realizedLoads(athleteId, addDays(today, -400), today);
   const exceedances = (list: readonly PlannedSession[]) =>
-    ratioExceedances(projectLoadRatios(realized, expected(list, absences).map(plannedLoadOf), today, to));
+    ratioExceedances(projectLoadRatios(realized.loads, expected(list, absences).map(plannedLoadOf), today, to));
 
   const modified = change
     ? sessions.map((s) => (s.id === change.sessionId ? { ...s, ...change.patch } : s))
     : sessions;
-  return { from: today, to, before: exceedances(sessions), after: exceedances(modified) };
+  const estimated = weighing(realized.estimated, today);
+  return {
+    from: today,
+    to,
+    before: exceedances(sessions),
+    after: exceedances(modified),
+    provenance: estimated.length > 0 ? 'default' : 'field',
+    estimated,
+  };
 }
 
 function computeWeeklyTotals(

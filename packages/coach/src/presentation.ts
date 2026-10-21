@@ -4,7 +4,7 @@ import type {
 import { anchorRelativeDates, decimal, sessionDuration, signedDecimal, writtenOn } from '@cairn/core';
 import {
   CS_FIT_MAX_S, CS_FIT_MIN_S, DURABILITY_MEASURABLE, READINESS_VERDICT, TAU_MECHANICAL, TAU_METABOLIC, VMA_EFFORT_S,
-  buildZones, vmaSources,
+  buildZones, vmaSources, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { firstDescentNote } from './eccentric.js';
 import { locateVertical } from './plausibility.js';
@@ -835,4 +835,53 @@ export function onTerrain(sessions: readonly PlannedSession[], ctx: TerrainConte
     }
     return s;
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ratios de charge projetés
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Un jour où le plan dépasse le seuil de ratio d'une filière, tel que l'écran le dit. */
+export interface LoadRatioAlert extends LoadRatioExceedance {
+  text: string;
+}
+
+const RATIO_CHANNEL = {
+  metabolic: { name: 'Charge métabolique', past: 'le risque de blessure augmente nettement' },
+  mechanical: { name: 'Charge mécanique', past: 'les tissus lâchent avant les jambes' },
+} as const;
+
+/**
+ * Les jours où le plan dépasse un seuil de ratio de charge, et d'où vient la
+ * charge de référence.
+ *
+ * Chaque alerte dit sa filière, son ratio et son seuil. Quand des séances
+ * faites sans mesure pèsent sur les quatre semaines de référence, `source` le
+ * dit : un ratio posé sur une estimation n'en est pas une mesure. Rien ici ne
+ * décide — les règles de charge (`adapt.ts`) ne jugent que le réalisé.
+ */
+export function loadRatioView(p: {
+  before: readonly LoadRatioExceedance[];
+  provenance: 'field' | 'default';
+  estimated: readonly { date: string; basis: 'duration' | 'planned' | 'partial' }[];
+}): { alerts: LoadRatioAlert[]; provenance: 'field' | 'default'; source: string | null } {
+  const alerts = p.before.map((e) => ({
+    ...e,
+    text:
+      `${RATIO_CHANNEL[e.channel].name} à ${decimal(e.value, 2)} fois tes quatre dernières semaines, pour un ` +
+      `seuil de ${decimal(e.limit, 1)} : au-delà, ${RATIO_CHANNEL[e.channel].past}.`,
+  }));
+  const n = p.estimated.length;
+  const first = p.estimated[0];
+  const last = p.estimated[n - 1];
+  const day = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  const source =
+    n === 0 || !first || !last
+      ? null
+      : `Tes quatre dernières semaines comptent ${n === 1 ? 'une séance faite' : `${n} séances faites`} sans mesure ` +
+        `(${first.date === last.date ? `le ${day(first.date)}` : `du ${day(first.date)} au ${day(last.date)}`}), ` +
+        `sur ${n === 1 ? 'sa' : 'leur'} charge prévue` +
+        `${p.estimated.some((e) => e.basis === 'duration') ? ', au prorata de la durée saisie' : ''} : ` +
+        `une valeur par défaut, pas une mesure.`;
+  return { alerts, provenance: p.provenance, source };
 }

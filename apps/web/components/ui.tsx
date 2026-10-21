@@ -1,10 +1,10 @@
 'use client';
 import type { ReactNode } from 'react';
 import { groundText, itinerary } from '@cairn/core/terrain';
-import { frDate, frStamp, num } from '@/lib/api';
+import { frDate, frStamp, nbsp, num } from '@/lib/api';
 import type {
-  DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, Readiness, ReadinessComponent, ReadinessSource,
-  SessionRow,
+  DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, LoadRatioAlertRow, Readiness, ReadinessComponent,
+  ReadinessSource, SessionRow,
 } from '@/lib/api';
 import type { LoadWord } from '@/lib/figures';
 import { useOutbox } from '@/lib/offline';
@@ -204,6 +204,32 @@ export const ABSENCE_KIND_LABEL: Record<DeclaredAbsence['kind'], string> = {
   injury: 'Blessure',
   unavailable: 'Indisponibilité',
 };
+
+/**
+ * Les jours où le plan dépasse un seuil de ratio de charge : la filière, le
+ * ratio et son seuil — puis, une fois, d'où vient la charge de référence quand
+ * elle repose sur des estimations. Le plan les dit sous les barres de la
+ * semaine, avec le jour ; la séance et le matin, en tête du jour concerné.
+ */
+export function RatioAlerts({
+  alerts, source, withDay = false, className,
+}: { alerts: LoadRatioAlertRow[]; source: string | null; withDay?: boolean; className?: string }) {
+  if (alerts.length === 0) return null;
+  // « au-delà » ne se coupe pas à son trait d'union.
+  const said = (t: string) => nbsp(t).replace(/-/g, '\u2011');
+  return (
+    <div className={`ratio-alerts${className ? ` ${className}` : ''}`}>
+      {alerts.map((a) => (
+        <p key={`${a.date}-${a.channel}`} className="ratio-alert">
+          {withDay && <span className="ratio-alert-day">{frDate(a.date, { weekday: true })}</span>}
+          {withDay && ' '}
+          {said(a.text)}
+        </p>
+      ))}
+      {source && <p className="ratio-alert-source">{said(source)}</p>}
+    </div>
+  );
+}
 
 /**
  * Une absence déclarée, telle qu'elle doit se lire : sa période, les mots de

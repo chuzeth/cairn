@@ -346,6 +346,16 @@ export async function getAnalyses(activityIds: string[]): Promise<Map<string, Ac
   return new Map(rows.map((r) => [r.activityId, r.data as ActivityAnalysis]));
 }
 
+/** Celles de ces activités qu'une analyse mesure : les autres sont des saisies sans flux. */
+export async function listAnalysedActivityIds(activityIds: string[]): Promise<Set<string>> {
+  if (activityIds.length === 0) return new Set();
+  const rows = await getDb()
+    .select({ id: t.activityAnalyses.activityId })
+    .from(t.activityAnalyses)
+    .where(inArray(t.activityAnalyses.activityId, activityIds));
+  return new Set(rows.map((r) => r.id));
+}
+
 /** Charges quotidiennes agrégées — entrée directe du PMC. */
 export async function getDailyLoads(
   athleteId: string,
