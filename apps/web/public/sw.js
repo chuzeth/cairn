@@ -33,6 +33,10 @@
  *   écriture   rien ici. Une file tenue par un service worker ne peut pas dire
  *              « en attente d'envoi » à l'athlète : c'est la page qui la tient
  *              (`lib/offline.ts`), et qui le dit.
+ *   mannequin  le corps des schémas 3D (`lib/figure3d`) est rangé dès
+ *              l'installation, à part des pages, et sort du cache avant tout
+ *              réseau : il porte son empreinte dans son nom. three.js, lui, est
+ *              un fragment des écrans qui montrent un schéma, gardé avec eux.
  *
  * Écrit à la main, sans dépendance ni étape de construction : le fichier qui
  * s'exécute sur le téléphone est celui qui se relit ici.
@@ -77,6 +81,16 @@ const KEPT = [
   '/api/pmc', '/api/insights', '/api/chat/history', '/api/tests',
 ];
 
+/**
+ * Le mannequin des schémas 3D, nommé par son empreinte : le même nom que
+ * `MODEL_URL` (`lib/figure3d/model.ts`), ce que vérifie
+ * `tests/exercise-figures-3d.test.ts`. À part des pages : rangé avec elles, il
+ * tomberait sous leur purge (`trim`), qui prend pour une page tout ce qui n'est
+ * pas un fragment de Next.
+ */
+const FIGURES = 'cairn-figures';
+const FIGURE_ASSETS = ['/figures/mannequin-603f2975.glb'];
+
 /** La date du relevé, portée du cache jusqu'à l'écran. */
 const RECORDED_AT = 'x-cairn-recorded-at';
 
@@ -108,6 +122,7 @@ self.addEventListener('install', (event) => {
       // Chacune pour elle-même : `addAll` échoue en bloc, et une route
       // manquante laisserait les autres hors cache.
       await Promise.all(SHELL_ROUTES.map((route) => keep(cache, route)));
+      await Promise.all(FIGURE_ASSETS.map((url) => figure(url)));
     })(),
   );
 });
@@ -123,7 +138,11 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name !== SHELL && name !== DATA) await caches.delete(name);
+        if (name !== SHELL && name !== DATA && name !== FIGURES) await caches.delete(name);
+      }
+      const figures = await caches.open(FIGURES);
+      for (const k of await figures.keys()) {
+        if (!FIGURE_ASSETS.includes(new URL(k.url).pathname)) await figures.delete(k);
       }
       // Première installation : la page déjà ouverte passe sous contrôle sans
       // attendre un rechargement.
@@ -143,6 +162,7 @@ self.addEventListener('fetch', (event) => {
   if (kept(url.pathname)) return event.respondWith(reserve(event));
   if (request.mode === 'navigate') return event.respondWith(shell(event));
   if (url.pathname.startsWith('/_next/static/')) return event.respondWith(fragment(request));
+  if (FIGURE_ASSETS.includes(url.pathname)) return event.respondWith(figure(url.pathname));
   // Un lien du menu demande à Next l'écran suivant en données. Sans réponse,
   // l'échec rapide lui fait recharger l'adresse — et c'est la page gardée qui
   // s'ouvre, au lieu d'un toucher qui ne fait rien.
@@ -264,6 +284,20 @@ async function fragment(request) {
   const res = await fetch(request);
   if (cacheable(res)) await put(cache, request, res.clone());
   return res;
+}
+
+/** Le mannequin : gardé, il sort du cache ; sinon il vient du réseau et se range. */
+async function figure(path) {
+  const cache = await caches.open(FIGURES);
+  const hit = await cache.match(path, { ignoreVary: true });
+  if (hit) return hit;
+  try {
+    const res = await fetch(path);
+    if (cacheable(res)) await cache.put(path, res.clone());
+    return res;
+  } catch {
+    return Response.error();
+  }
 }
 
 /**
