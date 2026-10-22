@@ -697,10 +697,17 @@ function topParts(k: Skeleton, p: TopPose): Part[] {
   return [...feet, body, ...armParts('cast', k.arms.cast, 'cast'), head, ...armParts('free', k.arms.free, 'near')];
 }
 
+const drawn = new WeakMap<Pose, { skeleton: Skeleton; parts: Part[] }>();
 export function parts(p: Pose): { skeleton: Skeleton; parts: Part[] } {
+  // Une pose de la fiche se dessine à chaque image du geste, et se lit pour cadrer et poser les textes :
+  // calculée une fois. Les poses d'un instant, elles, passent.
+  const known = drawn.get(p);
+  if (known) return known;
   const k = skeleton(p);
   const list = p.view === 'side' ? sideParts(k, p) : p.view === 'front' ? frontParts(k, p) : topParts(k, p);
-  return { skeleton: k, parts: list };
+  const made = { skeleton: k, parts: list };
+  drawn.set(p, made);
+  return made;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -927,6 +934,426 @@ export function resolve(ref: Ref, k: Skeleton): Pt {
   const p = k.joints[ref];
   if (!p) throw new Error(`Point inconnu sur le schéma : ${ref}`);
   return p;
+}
+
+/** Taille du texte, en unités du corps (100 = sa hauteur). */
+export const TEXT = 5.2;
+/** La chasse moyenne d'un caractère, en tailles de texte. */
+const CHAR = 0.56;
+
+export interface Box { x0: number; x1: number; y0: number; y1: number }
+export type Anchor = 'start' | 'middle' | 'end';
+
+/** Les lignes d'une consigne. */
+export const linesOf = (text: string) => text.split('\n');
+
+/** La place d'un texte dont la première ligne a son pied en `at`. */
+export function textBox(text: string, at: Pt, anchor: Anchor): Box {
+  const lines = linesOf(text);
+  const w = Math.max(...lines.map((l) => l.length)) * TEXT * CHAR;
+  const x0 = anchor === 'start' ? at[0] : anchor === 'end' ? at[0] - w : at[0] - w / 2;
+  return { x0, x1: x0 + w, y0: at[1] - (lines.length - 1) * TEXT * 1.15 - TEXT * 0.35, y1: at[1] + TEXT * 0.85 };
+}
+
+/** La place d'une étiquette d'une ligne centrée sur `at` : un angle, un tempo. */
+export const labelBox = (text: string, at: Pt): Box => textBox(text, [at[0], at[1] - TEXT * 0.35], 'middle');
+
+/**
+ * La chasse d'Inter Tight, en tailles de texte — mesurée dans le navigateur le
+ * 22/10. `textBox` prend large pour cadrer ; ce qui touche se mesure à l'encre.
+ */
+function advance(ch: string): number {
+  if (/[iljîïI|]/.test(ch)) return 0.19;
+  if (/[ .,:;'’!]/.test(ch)) return 0.24;
+  if (/[frt()/]/.test(ch)) return 0.32;
+  if (/[1]/.test(ch)) return 0.36;
+  if (/[-°]/.test(ch)) return 0.41;
+  if (/[s?]/.test(ch)) return 0.48;
+  if (/[kvxyz–7]/.test(ch)) return 0.51;
+  if (/[acehnuéèêàâçùû≈]/.test(ch)) return 0.54;
+  if (/[bdgopqô0-9]/.test(ch)) return 0.58;
+  if (/[w%]/.test(ch)) return 0.77;
+  if (/[m]/.test(ch)) return 0.82;
+  if (/[MW]/.test(ch)) return 0.88;
+  return 0.7;
+}
+
+/**
+ * Ce que l'encre d'un texte couvre : des jambages (0,22) aux capitales (0,74),
+ * première ligne au pied `at`. `bold` : en demi-gras, 6 % plus large.
+ */
+export function inkBox(text: string, at: Pt, anchor: Anchor, bold = false): Box {
+  const lines = linesOf(text);
+  const w = Math.max(...lines.map((l) => [...l].reduce((a, ch) => a + advance(ch), 0))) * TEXT * (bold ? 1.06 : 1);
+  const x0 = anchor === 'start' ? at[0] : anchor === 'end' ? at[0] - w : at[0] - w / 2;
+  return { x0, x1: x0 + w, y0: at[1] - (lines.length - 1) * TEXT * 1.15 - TEXT * 0.22, y1: at[1] + TEXT * 0.74 };
+}
+
+/** Les angles et les tempos s'écrivent en demi-gras, centrés sur leur point. */
+const labelInk = (text: string, at: Pt): Box => inkBox(text, [at[0], at[1] - TEXT * 0.35], 'middle', true);
+
+/**
+ * Un trait du décor, ou le contour d'une partie du corps. `solid` : rien ne
+ * s'écrit dedans — le corps, les hachures ; sur la face d'un meuble, on peut
+ * écrire son nom, pas en travers de ses bords.
+ */
+export interface Outline { name: string; pts: Pt[]; closed: boolean; solid?: boolean }
+
+/** L'escalier : ses marches, et sa rampe à 90 cm au-dessus des nez de marche, sur deux montants. */
+export function stairsOf(prop: Extract<Prop, { kind: 'stairs' }>): { steps: Pt[]; rail: [Pt, Pt]; posts: [Pt, Pt][] } {
+  const { rise, run } = FURNITURE.stair;
+  const steps: Pt[] = [[prop.x - 6, 0], [prop.x, 0]];
+  for (let i = 1; i <= prop.n; i++) steps.push([prop.x + (i - 1) * run, i * rise], [prop.x + i * run, i * rise]);
+  steps.push([prop.x + prop.n * run + 6, prop.n * rise], [prop.x + prop.n * run + 6, 0]);
+  const railY = (x: number) => 50 + rise + ((x - prop.x) / run) * rise;
+  const x0 = prop.x - 3;
+  const x1 = prop.x + prop.n * run + 3;
+  return {
+    steps,
+    rail: [[x0, railY(x0)], [x1, railY(x1)]],
+    posts: [[[prop.x + 1, rise], [prop.x + 1, railY(prop.x + 1)]], [[x1 - 5, prop.n * rise], [x1 - 5, railY(x1 - 5)]]],
+  };
+}
+
+/**
+ * Les traits du décor qu'un texte ne doit pas couper, aux mesures que la 3D
+ * leur donne (`lib/figure3d/props`) : une assise, un pied, un dossier, une
+ * rampe. Sur la face pleine d'un caisson ou d'un canapé, on peut écrire son nom.
+ */
+function decorOutlines(prop: Prop): Outline[] {
+  const rect = (name: string, x0: number, x1: number, y1: number, y0 = 0, solid = false): Outline =>
+    ({ name, pts: [[Math.min(x0, x1), y0], [Math.max(x0, x1), y0], [Math.max(x0, x1), y1], [Math.min(x0, x1), y1]], closed: true, solid });
+  const line = (name: string, a: Pt, b: Pt): Outline => ({ name, pts: [a, b], closed: false });
+  switch (prop.kind) {
+    // Le sol et le mur : leur trait, ses hachures, l'épaisseur que la 3D leur donne.
+    case 'floor':
+      return [rect('sol', -500, 500, 0, -2.2, true)];
+    case 'wall':
+      return [rect('mur', prop.x, prop.x - prop.face * 4, 500, 0, true)];
+    case 'jamb':
+      return [rect('chambranle', prop.x - 1.2, prop.x + 1.2, 500, 0, true)];
+    case 'stairs': {
+      const s = stairsOf(prop);
+      return [
+        { name: 'escalier', pts: s.steps, closed: true },
+        ...(prop.rail ? [line('rampe', ...s.rail), ...s.posts.map((q) => line('montant', ...q))] : []),
+      ];
+    }
+    case 'chair': {
+      const { seat, depth, back } = FURNITURE.chair;
+      const f = prop.face;
+      const b = prop.x - f * depth;
+      return [
+        rect('chaise', prop.x, b, seat, seat - 2, true),
+        line('chaise', [prop.x - f * 1.5, 0], [prop.x - f * 1.5, seat]),
+        line('chaise', [b + f * 1.5, 0], [b + f * 1.5, seat]),
+        ...(prop.back === false ? [] : [line('chaise', [b + f * 1.5, seat], [b - f * 0.5, back]), rect('chaise', b - f * 1.2, b + f * 0.6, back, back - 11, true)]),
+      ];
+    }
+    case 'sofa': {
+      const { seat, depth, back } = FURNITURE.sofa;
+      const b = prop.x - prop.face * depth;
+      return [rect('canapé', prop.x, b, seat), rect('canapé', b, b + prop.face * 6.5, back, seat - 6, true)];
+    }
+    case 'stool': {
+      const { seat, depth } = FURNITURE.stool;
+      const f = prop.face;
+      const b = prop.x - f * depth;
+      return [
+        rect('tabouret', prop.x, b, seat, seat - 3, true),
+        line('tabouret', [prop.x - f * 3, seat - 3], [prop.x - f * 1.2, 0]),
+        line('tabouret', [b + f * 3, seat - 3], [b + f * 1.2, 0]),
+      ];
+    }
+    case 'box':
+      return [rect('step', prop.x, prop.x - prop.face * prop.depth, prop.h)];
+    case 'bench':
+      return [
+        rect('banc', prop.from, prop.to, prop.h, prop.h - 2.6, true),
+        rect('banc', prop.from + 2.3, prop.from + 3.7, prop.h, 0, true),
+        rect('banc', prop.to - 3.7, prop.to - 2.3, prop.h, 0, true),
+      ];
+    case 'mat':
+      return [rect('tapis', prop.from, prop.to, FURNITURE.mat, 0, true)];
+    case 'towel':
+      return [rect('serviette', prop.x - prop.w / 2, prop.x + prop.w / 2, 0.8, 0, true)];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Le bras plâtré tel que la 3D le pose (`lib/figure3d/rig`), vu de profil.
+ * En écharpe, le bras pend 10° devant et l'avant-bras part à 40° de l'avant,
+ * un peu relevé ; posé sur le ventre, la main est sur la peau. Le dessin
+ * vectoriel le met ailleurs : le 22/10, « 1 s » tombait sur le plâtre de la 3D
+ * dans le pont. Un texte évite l'un et l'autre.
+ */
+function castIn3D(pose: SidePose, k: Skeleton, list: Part[]): Outline[] {
+  const R = 3.4;
+  const hip = k.joints.hip!;
+  const shoulder = k.joints['cast.shoulder'] ?? k.joints.shoulder!;
+  const up = unit(sub(shoulder, hip));
+  const fwd: Pt = [up[1], -up[0]];
+  const limb = (name: string, a: Pt, b: Pt): Outline => ({ name, pts: blob([{ c: a, r: R }, { c: b, r: R }]), closed: true, solid: true });
+  const cast = pose.cast;
+  if (cast === undefined || cast === 'sling' || cast === 'across') {
+    const elbow = add(shoulder, mul(rot(mul(up, -1), 10), Math.cos(8 * RAD) * SEG.upperArm));
+    const v = mul(add(mul(fwd, Math.cos(40 * RAD)), mul(up, 0.2)), 1 / Math.hypot(1, 0.2));
+    const wrist = add(elbow, mul(v, SEG.forearm));
+    return [limb('plâtre 3D', shoulder, elbow), limb('plâtre 3D', elbow, add(wrist, mul(v, SEG.hand * 0.7)))];
+  }
+  if (typeof cast === 'object' && cast.over && 'hand' in cast) {
+    const x = cast.hand[0];
+    const skin = Math.max(...list.filter((p) => !p.name.startsWith('cast')).flatMap((p) => p.pts.filter((q) => Math.abs(q[0] - x) < 2).map((q) => q[1])));
+    const hand: Pt = [x, (Number.isFinite(skin) ? skin : cast.hand[1]) + 2.4];
+    return [limb('plâtre 3D', k.joints['cast.elbow'] ?? shoulder, hand)];
+  }
+  return [];
+}
+
+/** Ce sur quoi rien ne s'écrit : le corps dessiné, celui du départ, le sac, le décor. */
+export function obstaclesOf(panel: Panel): Outline[] {
+  const pose = parts(panel.pose);
+  const carried = panel.carry ? carryShape(panel.carry, pose.skeleton) : null;
+  return [
+    ...pose.parts.map((p) => ({ name: p.name, pts: p.pts, closed: true, solid: true })),
+    ...(panel.pose.view === 'side' ? castIn3D(panel.pose, pose.skeleton, pose.parts) : []),
+    ...(panel.ghost ? parts(panel.ghost).parts.map((p) => ({ name: `départ ${p.name}`, pts: p.pts, closed: true, solid: true })) : []),
+    ...(carried ? [{ name: 'sac', pts: carried.pts, closed: true, solid: true }] : []),
+    ...panel.props.flatMap(decorOutlines),
+  ];
+}
+
+/** L'air qu'un texte garde autour de son encre, en unités (1,8 cm ; 2 à 6 px à l'écran). */
+const CLEAR = 1;
+
+const inside = (b: Box, [x, y]: Pt) => x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1;
+
+/** Le segment `p`–`q` traverse-t-il la boîte ? (Liang–Barsky) */
+function crosses(b: Box, p: Pt, q: Pt): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const d: Pt = [q[0] - p[0], q[1] - p[1]];
+  for (const [num, den] of [[p[0] - b.x0, -d[0]], [b.x1 - p[0], d[0]], [p[1] - b.y0, -d[1]], [b.y1 - p[1], d[1]]] as const) {
+    if (den === 0) {
+      if (num < 0) return false;
+      continue;
+    }
+    const t = num / den;
+    if (den < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+function inPolygon([x, y]: Pt, pts: Pt[]): boolean {
+  let within = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i]!;
+    const [xj, yj] = pts[j]!;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) within = !within;
+  }
+  return within;
+}
+
+/** L'encombrement d'un contour, calculé une fois : la plupart des essais s'arrêtent là. */
+const extents = new WeakMap<Outline, Box>();
+function extentOf(o: Outline): Box {
+  let e = extents.get(o);
+  if (!e) {
+    e = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+    for (const [x, y] of o.pts) {
+      e.x0 = Math.min(e.x0, x);
+      e.x1 = Math.max(e.x1, x);
+      e.y0 = Math.min(e.y0, y);
+      e.y1 = Math.max(e.y1, y);
+    }
+    extents.set(o, e);
+  }
+  return e;
+}
+
+/** L'encre d'un texte, avec son air, touche-t-elle ce trait ou ce contour ? */
+export function inkTouches(ink: Box, o: Outline): boolean {
+  const b = { x0: ink.x0 - CLEAR, x1: ink.x1 + CLEAR, y0: ink.y0 - CLEAR, y1: ink.y1 + CLEAR };
+  const e = extentOf(o);
+  if (e.x1 < b.x0 || e.x0 > b.x1 || e.y1 < b.y0 || e.y0 > b.y1) return false;
+  return (
+    o.pts.some((q) => inside(b, q)) ||
+    o.pts.some((q, i) => (o.closed || i < o.pts.length - 1) && crosses(b, q, o.pts[(i + 1) % o.pts.length]!)) ||
+    (o.solid === true && inPolygon([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], o.pts))
+  );
+}
+
+/** Deux encres, avec leur air, se touchent-elles ? */
+export const inksTouch = (a: Box, b: Box): boolean =>
+  !(a.x1 + CLEAR <= b.x0 || b.x1 + CLEAR <= a.x0 || a.y1 + CLEAR <= b.y0 || b.y1 + CLEAR <= a.y0);
+
+/** Une consigne : le point qu'elle désigne, et où elle s'écrit. */
+export function notePlace(n: Note, k: Skeleton): { target: Pt; pos: Pt; anchor: Anchor } {
+  const target = resolve(n.at, k);
+  return { target, pos: add(target, [n.dx, n.dy]), anchor: n.dx > 1 ? 'start' : n.dx < -1 ? 'end' : 'middle' };
+}
+
+function arcPoints(at: Pt, a: Pt, b: Pt, r: number): Pt[] {
+  const ua = unit(sub(a, at));
+  const ub = unit(sub(b, at));
+  const t0 = Math.atan2(ua[1], ua[0]);
+  let d = Math.atan2(ub[1], ub[0]) - t0;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return Array.from({ length: 13 }, (_, i) => {
+    const t = t0 + (d * i) / 12;
+    return add(at, [r * Math.cos(t), r * Math.sin(t)]);
+  });
+}
+
+/**
+ * Un angle : son arc de rayon `r`, et ses degrés écrits au-delà, sur la
+ * bissectrice tournée de `turn` degrés.
+ */
+export function anglePlace(a: AngleMark, k: Skeleton, r = a.r ?? 6, turn = 0): { pts: Pt[]; pos: Pt; label: string; open: number } {
+  const c = resolve(a.at, k);
+  const pa = resolve(a.a, k);
+  const pb = resolve(a.b, k);
+  const bis = unit(add(unit(sub(pa, c)), unit(sub(pb, c))));
+  const open = angleAt(pa, c, pb);
+  return {
+    pts: arcPoints(c, pa, pb, r),
+    pos: add(c, mul(rot(bis, turn), r + 4.4)),
+    label: a.label ?? `${Math.round(open)}°`,
+    open,
+  };
+}
+
+/**
+ * Un mouvement : de la position de départ (`ghost`) à la position dessinée
+ * (`k`), une courbe écartée du corps de `bend` ; son tempo s'écrit au-dessus
+ * de son sommet, du côté où elle s'écarte.
+ */
+export function motionPlace(m: Motion, k: Skeleton, ghost: Skeleton | null): { from: Pt; to: Pt; ctrl: Pt; apex: Pt; top: Pt; n: Pt } {
+  const from = m.joint && ghost ? resolve(m.joint, ghost) : resolve(m.from!, k);
+  const to = m.joint ? resolve(m.joint, k) : resolve(m.to!, k);
+  const mid = lerp(from, to, 0.5);
+  const n = rot(unit(sub(to, from)), 90);
+  const ctrl = add(mid, mul(n, m.bend ?? 0));
+  const apex = lerp(mid, ctrl, 0.5);
+  return { from, to, ctrl, apex, top: add(apex, mul(n, (m.bend ?? 0) >= 0 ? 4.2 : -4.2)), n };
+}
+
+/** Les écarts essayés, de `from` à douze unités plus loin, d'unité en unité : une étiquette reste contre ce qu'elle mesure. */
+const pushes = (from: number) => Array.from({ length: 13 }, (_, i) => from + i);
+
+/** La courbe d'une flèche, en points. */
+const quadPoints = (a: Pt, c: Pt, b: Pt): Pt[] =>
+  Array.from({ length: 13 }, (_, i) => {
+    const t = i / 12;
+    return add(add(mul(a, (1 - t) ** 2), mul(c, 2 * t * (1 - t))), mul(b, t * t));
+  });
+
+const circlePoints = (c: Pt, r: number): Pt[] =>
+  Array.from({ length: 12 }, (_, i) => add(c, [r * Math.cos((i * Math.PI) / 6), r * Math.sin((i * Math.PI) / 6)]));
+
+/** Un obstacle, et le texte à qui il appartient : le trait de rappel d'une consigne ne la gêne pas. */
+export type Obstacle = Outline & { owner?: string };
+
+/**
+ * Ce qui s'écrit sur une vignette, à la position dessinée, et ce qu'il évite.
+ *
+ * Les consignes sont posées à la main (sauf en vignette étroite, où elles se
+ * taisent). Les degrés d'un angle, puis le tempo d'une flèche, se posent au
+ * plus près de leur arc ou de leur flèche — dans l'axe d'abord, puis en
+ * tournant autour —, là où leur encre ne touche ni le corps, ni la silhouette
+ * de départ, ni le décor, ni un trait du schéma, ni un texte déjà posé. Le
+ * 22/10 : « 4 s » s'écrivait sur la fesse, « 90° » sur le tibia.
+ */
+export function placeTexts(panel: Panel, { compact = false } = {}) {
+  const k = skeleton(panel.pose);
+  const ghost = panel.ghost ? skeleton(panel.ghost) : null;
+
+  const notes = (compact ? [] : panel.notes ?? []).map((n, i) => {
+    const place = notePlace(n, k);
+    // Le trait de rappel part à 1,3 du point désigné et s'arrête au pied du texte.
+    const lead = add(place.target, mul(unit(sub(place.pos, place.target)), 1.3));
+    const tail: Pt = [place.pos[0] + (place.anchor === 'start' ? -0.8 : place.anchor === 'end' ? 0.8 : 0), place.pos[1] + TEXT * 0.3];
+    return { id: `note ${i}`, text: n.text, ...place, lead, tail, ink: inkBox(n.text, place.pos, place.anchor) };
+  });
+  const arrows = (panel.motions ?? []).map((m) => {
+    const place = motionPlace(m, k, ghost);
+    // Les extrémités s'écartent des points : la pointe ne les recouvre pas.
+    const { from, to, ctrl } = place;
+    const end = add(to, mul(unit(sub(ctrl, to)), Math.min(2, dist(to, ctrl) * 0.3)));
+    const start = add(from, mul(unit(sub(ctrl, from)), Math.min(1.4, dist(from, ctrl) * 0.2)));
+    return { ...place, start, end, label: m.label, joint: m.joint, bend: m.bend ?? 0, motion: m };
+  });
+  // Les numéros 1 et 2 marquent un déplacement qui se voit ; sur quelques centimètres, ils masqueraient le geste.
+  const first = ghost ? arrows.find((m) => m.joint && dist(m.start, m.end) > 12) : undefined;
+  const steps = first
+    ? [first.start, first.end].map((q, i) => ({ at: add(q, mul(first.n, first.bend >= 0 ? -4.2 : 4.2)), n: String(i + 1) }))
+    : [];
+
+  const obstacles: Obstacle[] = [
+    ...obstaclesOf(panel),
+    ...arrows.map((m) => ({ name: 'flèche', pts: quadPoints(m.start, m.ctrl, m.end), closed: false })),
+    ...steps.map((st) => ({ name: `numéro ${st.n}`, pts: circlePoints(st.at, 2.7), closed: true, solid: true })),
+    ...(panel.guides ?? []).map((g) => ({ name: 'alignement', pts: [resolve(g.from, k), resolve(g.to, k)], closed: false })),
+    ...(panel.bands ?? []).map((b) => ({ name: 'élastique', pts: [resolve(b.from, k), resolve(b.to, k)], closed: false })),
+    ...notes.map((n) => ({ name: 'trait de rappel', pts: [n.lead, n.tail], closed: false, owner: n.id })),
+  ];
+  const inks: Box[] = notes.map((n) => n.ink);
+  // D'abord là où l'encre ne touche rien ; à défaut, sur le pointillé fin du départ — jamais sur le corps ni le décor.
+  const clear = (ink: Box, ghostToo: boolean) =>
+    !obstacles.some((o) => (ghostToo || !o.name.startsWith('départ ')) && inkTouches(ink, o)) && !inks.some((b) => inksTouch(b, ink));
+  const firstClear = <T,>(tries: T[], inkOf: (t: T) => Box): T | undefined =>
+    tries.find((t) => clear(inkOf(t), true)) ?? tries.find((t) => clear(inkOf(t), false));
+  const TURNS = [0, -22.5, 22.5, -45, 45, -67.5, 67.5, -90, 90, -112.5, 112.5, -135, 135, -157.5, 157.5, 180];
+
+  // Les degrés restent dans l'angle, à moins d'un tiers de son ouverture de la bissectrice ; quand la chair
+  // remplit le creux — un genou fléchi —, l'arc s'agrandit avec eux jusqu'à en sortir. Un angle que le corps
+  // remplit les laisse déborder de vingt degrés au-delà d'un de ses côtés ; plein jusqu'au bout — le genou
+  // d'une montée sur le tabouret —, ils s'écrivent devant l'articulation, l'arc gardant sa place.
+  const angles = (panel.angles ?? []).map((a, i) => {
+    const base = anglePlace(a, k);
+    const within = (limit: number) =>
+      pushes(a.r ?? 6).flatMap((r) => TURNS.filter((t) => Math.abs(t) <= limit).map((turn) => anglePlace(a, k, r, turn)));
+    const vertex = resolve(a.at, k);
+    const outside = pushes((a.r ?? 6) + 4.4).flatMap((d) =>
+      TURNS.map((turn) => ({ ...base, pos: add(vertex, mul(rot(unit(sub(base.pos, vertex)), turn), d)) })));
+    const place =
+      firstClear(within(base.open / 3), (t) => labelInk(t.label, t.pos)) ??
+      firstClear(within(base.open / 2 + 20), (t) => labelInk(t.label, t.pos)) ??
+      firstClear(outside, (t) => labelInk(t.label, t.pos)) ??
+      base;
+    const ink = labelInk(place.label, place.pos);
+    inks.push(ink);
+    obstacles.push({ name: 'arc', pts: place.pts, closed: false, owner: `angle ${i}` });
+    return { id: `angle ${i}`, pts: place.pts, pos: place.pos, label: place.label, ink };
+  });
+  // Le tempo, contre sa flèche : au sommet d'abord, puis le long d'elle, vers son arrivée.
+  const motions = arrows.map((m, i) => {
+    if (!m.label) return { ...m, id: `motion ${i}`, ink: null };
+    const axis = mul(m.n, m.bend >= 0 ? 1 : -1);
+    const curve = quadPoints(m.start, m.ctrl, m.end);
+    const centers = [6, 9, 3, 12, 0].map((j) => curve[j]!);
+    const tries = pushes(4.2).flatMap((d) => centers.flatMap((c) => TURNS.map((deg) => add(c, mul(rot(axis, deg), d)))));
+    const top = firstClear(tries, (q) => labelInk(m.label!, q)) ?? m.top;
+    const ink = labelInk(m.label, top);
+    inks.push(ink);
+    return { ...m, id: `motion ${i}`, top, ink };
+  });
+  return { notes, angles, motions, steps, obstacles };
+}
+
+/** Les textes d'une vignette et l'encre de chacun, tels que `placeTexts` les pose. */
+export function panelTexts(panel: Panel, options: { compact?: boolean } = {}): { id: string; kind: 'note' | 'angle' | 'motion'; text: string; ink: Box }[] {
+  const { notes, angles, motions } = placeTexts(panel, options);
+  return [
+    ...notes.map((n) => ({ id: n.id, kind: 'note' as const, text: n.text, ink: n.ink })),
+    ...angles.map((a) => ({ id: a.id, kind: 'angle' as const, text: a.label, ink: a.ink })),
+    ...motions.flatMap((m) => (m.label && m.ink ? [{ id: m.id, kind: 'motion' as const, text: m.label, ink: m.ink }] : [])),
+  ];
 }
 
 /**

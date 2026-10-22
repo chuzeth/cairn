@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ExerciseKey } from '@cairn/core/exercises';
 import { FIGURES } from '@/lib/exerciseFigures';
 import {
-  FURNITURE, add, angleAt, between, carryShape, dist, doorHook, lerp, muscleShape, mul, parts, resolve, rot, sub, unit,
-  type Panel, type Part, type Pose, type Prop, type Pt, type Ref, type Skeleton,
+  FURNITURE, TEXT, add, between, carryShape, doorHook, labelBox, linesOf, muscleShape, mul, parts, placeTexts, resolve,
+  rot, stairsOf, sub, textBox, unit,
+  type Box, type Panel, type Part, type Pose, type Prop, type Pt, type Ref, type Skeleton,
 } from '@/lib/figure';
 import { cycleOf, phaseAt, type Cycle } from '@/lib/motion';
 import { FIGURES_3D } from '@/lib/figure3d/model';
@@ -29,20 +30,9 @@ import { useFigure3D } from './useFigure3D';
 
 export const hasFigure = (key: string): boolean => key in FIGURES;
 
-/** Taille du texte, en unités du corps (100 = sa hauteur). */
-const TEXT = 5.2;
-const CHAR = 0.56;
-
 const fmt = (n: number) => (Math.round(n * 100) / 100).toString();
 const pathOf = (pts: readonly Pt[], closed = true) =>
   pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${fmt(p[0])} ${fmt(-p[1])}`).join(' ') + (closed ? ' Z' : '');
-
-interface Box {
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-}
 
 const grow = (b: Box, [x, y]: Pt) => {
   b.x0 = Math.min(b.x0, x);
@@ -50,15 +40,6 @@ const grow = (b: Box, [x, y]: Pt) => {
   b.y0 = Math.min(b.y0, y);
   b.y1 = Math.max(b.y1, y);
 };
-
-/** Les lignes d'une consigne, et la place qu'elles prennent. */
-const linesOf = (text: string) => text.split('\n');
-function textBox(text: string, at: Pt, anchor: 'start' | 'middle' | 'end'): Box {
-  const lines = linesOf(text);
-  const w = Math.max(...lines.map((l) => l.length)) * TEXT * CHAR;
-  const x0 = anchor === 'start' ? at[0] : anchor === 'end' ? at[0] - w : at[0] - w / 2;
-  return { x0, x1: x0 + w, y0: at[1] - (lines.length - 1) * TEXT * 1.15 - TEXT * 0.35, y1: at[1] + TEXT * 0.85 };
-}
 
 /** Les meubles et les machines qui comptent dans le cadrage ; le sol et les murs suivent le cadre. */
 function propPoints(prop: Prop): Pt[] {
@@ -173,24 +154,15 @@ function PropView({ prop, box }: { prop: Prop; box: Box }) {
       return <path d={pathOf([[prop.x, 0], [prop.x, prop.h], [b, prop.h], [b, 0]])} className="fg-furniture fg-pad" />;
     }
     case 'stairs': {
-      const { rise, run } = FURNITURE.stair;
-      const pts: Pt[] = [[prop.x - 6, 0], [prop.x, 0]];
-      for (let i = 1; i <= prop.n; i++) pts.push([prop.x + (i - 1) * run, i * rise], [prop.x + i * run, i * rise]);
-      pts.push([prop.x + prop.n * run + 6, prop.n * rise], [prop.x + prop.n * run + 6, 0]);
       // La rampe : à 90 cm au-dessus des nez de marche.
-      const railY = (x: number) => 50 + rise + ((x - prop.x) / run) * rise;
-      const x0 = prop.x - 3;
-      const x1 = prop.x + prop.n * run + 3;
+      const { steps, rail, posts } = stairsOf(prop);
       return (
         <g className="fg-furniture">
-          <path d={pathOf(pts)} className="fg-pad" />
+          <path d={pathOf(steps)} className="fg-pad" />
           {prop.rail && (
             <>
-              <line x1={fmt(x0)} y1={fmt(-railY(x0))} x2={fmt(x1)} y2={fmt(-railY(x1))} className="fg-rail" />
-              <line x1={fmt(prop.x + 1)} y1={fmt(-rise)} x2={fmt(prop.x + 1)} y2={fmt(-railY(prop.x + 1))} />
-              <line
-                x1={fmt(x1 - 5)} y1={fmt(-prop.n * rise)} x2={fmt(x1 - 5)} y2={fmt(-railY(x1 - 5))}
-              />
+              <line x1={fmt(rail[0][0])} y1={fmt(-rail[0][1])} x2={fmt(rail[1][0])} y2={fmt(-rail[1][1])} className="fg-rail" />
+              {posts.map(([a, b], i) => <line key={i} x1={fmt(a[0])} y1={fmt(-a[1])} x2={fmt(b[0])} y2={fmt(-b[1])} />)}
             </>
           )}
         </g>
@@ -370,19 +342,6 @@ function BehindBody({ body, uid, box, children }: { body: Part[]; uid: string; b
   );
 }
 
-function arcPoints(at: Pt, a: Pt, b: Pt, r: number): Pt[] {
-  const ua = unit(sub(a, at));
-  const ub = unit(sub(b, at));
-  const t0 = Math.atan2(ua[1], ua[0]);
-  let d = Math.atan2(ub[1], ub[0]) - t0;
-  while (d > Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return Array.from({ length: 13 }, (_, i) => {
-    const t = t0 + (d * i) / 12;
-    return add(at, [r * Math.cos(t), r * Math.sin(t)]);
-  });
-}
-
 /** Le corps dans toutes les positions du mouvement : le cadre ne bouge pas pendant qu'il se plie. */
 function bodyExtent(panel: Panel): Pt[] {
   const pts: Pt[] = [];
@@ -434,53 +393,19 @@ function PanelView({ panel, uid, name, frame, phase = 1, three = null, moving = 
   const box: Box = { x0: Infinity, x1: -Infinity, y0: 0, y1: -Infinity };
   for (const q of extent) grow(box, q);
   for (const prop of panel.props) for (const q of propPoints(prop)) grow(box, q);
-  const growText = (text: string, pos: Pt, anchor: 'start' | 'middle' | 'end') => {
-    const tb = textBox(text, pos, anchor);
+  const growBox = (tb: Box) => {
     grow(box, [tb.x0, tb.y0]);
     grow(box, [tb.x1, tb.y1]);
   };
 
-  const notes = (compact ? [] : panel.notes ?? []).map((n) => {
-    const target = at(n.at);
-    const pos = add(target, [n.dx, n.dy]);
-    const anchor: 'start' | 'middle' | 'end' = n.dx > 1 ? 'start' : n.dx < -1 ? 'end' : 'middle';
-    growText(n.text, pos, anchor);
-    return { text: n.text, target, pos, anchor };
-  });
-  const angles = (panel.angles ?? []).map((a) => {
-    const c = at(a.at);
-    const pa = at(a.a);
-    const pb = at(a.b);
-    const r = a.r ?? 6;
-    const bis = unit(add(unit(sub(pa, c)), unit(sub(pb, c))));
-    const label = a.label ?? `${Math.round(angleAt(pa, c, pb))}°`;
-    const pos = add(c, mul(bis, r + 4.4));
-    growText(label, pos, 'middle');
-    return { pts: arcPoints(c, pa, pb, r), pos, label };
-  });
-  const motions = (panel.motions ?? []).map((m) => {
-    const from = m.joint && ghost ? resolve(m.joint, ghost.skeleton) : at(m.from!);
-    const to = m.joint ? resolve(m.joint, end) : at(m.to!);
-    const mid = lerp(from, to, 0.5);
-    const n = rot(unit(sub(to, from)), 90);
-    const ctrl = add(mid, mul(n, m.bend ?? 0));
-    const apex = lerp(mid, ctrl, 0.5);
-    const top = add(apex, mul(n, (m.bend ?? 0) >= 0 ? 4.2 : -4.2));
-    grow(box, apex);
-    if (m.label) growText(m.label, top, 'middle');
-    // Les extrémités s'écartent des points : la pointe ne les recouvre pas.
-    const end2 = add(to, mul(unit(sub(ctrl, to)), Math.min(2, dist(to, ctrl) * 0.3)));
-    const start = add(from, mul(unit(sub(ctrl, from)), Math.min(1.4, dist(from, ctrl) * 0.2)));
-    return { start, ctrl, end: end2, label: m.label, top, joint: m.joint, n, bend: m.bend ?? 0 };
-  });
-  // Les numéros 1 et 2 marquent un déplacement qui se voit ; sur quelques centimètres, ils masqueraient le geste.
-  const first = ghost ? motions.find((m) => m.joint && dist(m.start, m.end) > 12) : undefined;
-  const steps = first
-    ? [first.start, first.end].map((q, i) => {
-        const away = mul(first.n, first.bend >= 0 ? -4.2 : 4.2);
-        return { at: add(q, away), n: String(i + 1) };
-      })
-    : [];
+  // Les textes se posent sur la position dessinée : une fois par vignette, pas à chaque image du geste.
+  const { notes, angles, motions, steps } = useMemo(() => placeTexts(panel, { compact }), [panel, compact]);
+  for (const n of notes) growBox(textBox(n.text, n.pos, n.anchor));
+  for (const a of angles) growBox(labelBox(a.label, a.pos));
+  for (const m of motions) {
+    grow(box, m.apex);
+    if (m.label) growBox(labelBox(m.label, m.top));
+  }
   for (const st of steps) {
     grow(box, add(st.at, [-3, -3]));
     grow(box, add(st.at, [3, 3]));
@@ -570,20 +495,16 @@ function PanelView({ panel, uid, name, frame, phase = 1, three = null, moving = 
               <text x={fmt(st.at[0])} y={fmt(-st.at[1] + 1.25)} textAnchor="middle">{st.n}</text>
             </g>
           ))}
-          {notes.map((n, i) => {
-            const lead = add(n.target, mul(unit(sub(n.pos, n.target)), 1.3));
-            const endPt: Pt = [n.pos[0] + (n.anchor === 'start' ? -0.8 : n.anchor === 'end' ? 0.8 : 0), n.pos[1] + TEXT * 0.3];
-            return (
-              <g key={`n${i}`} className="fg-note" style={notesShown < 1 ? { opacity: notesShown } : undefined}>
-                {line(lead, endPt, '', 'l')}
-                <text x={fmt(n.pos[0])} y={fmt(-n.pos[1])} textAnchor={n.anchor}>
-                  {linesOf(n.text).map((l, j) => (
-                    <tspan key={j} x={fmt(n.pos[0])} dy={j === 0 ? 0 : fmt(TEXT * 1.15)}>{l}</tspan>
-                  ))}
-                </text>
-              </g>
-            );
-          })}
+          {notes.map((n, i) => (
+            <g key={`n${i}`} className="fg-note" style={notesShown < 1 ? { opacity: notesShown } : undefined}>
+              {line(n.lead, n.tail, '', 'l')}
+              <text x={fmt(n.pos[0])} y={fmt(-n.pos[1])} textAnchor={n.anchor}>
+                {linesOf(n.text).map((l, j) => (
+                  <tspan key={j} x={fmt(n.pos[0])} dy={j === 0 ? 0 : fmt(TEXT * 1.15)}>{l}</tspan>
+                ))}
+              </text>
+            </g>
+          ))}
         </svg>
       </div>
       <figcaption className="xf-caption">

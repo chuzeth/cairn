@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { EXERCISE_KEYS } from '@cairn/core';
 import { FIGURES } from '../apps/web/lib/exerciseFigures';
 import { EXERCISE_GROUPS } from '../apps/web/lib/exerciseGroups';
-import { FURNITURE, angleAt, dist, parts, resolve, type Pose, type Prop } from '../apps/web/lib/figure';
+import {
+  FURNITURE, angleAt, dist, inkTouches, inksTouch, panelTexts, parts, placeTexts, resolve, type Pose, type Prop,
+} from '../apps/web/lib/figure';
 
 /**
  * Les schémas d'exercices disent ce que les fiches demandent, et le disent juste.
@@ -221,5 +223,34 @@ describe('Les consignes, mesurées sur le dessin', () => {
     const j = joints(figure('test-pont').pose);
     expect(j['near.heel']![1]).toBeCloseTo(FURNITURE.stool.seat, 0);
     expect(Math.abs(j['far.ankle']![0] - j['far.hip']![0])).toBeLessThan(1);
+  });
+});
+
+/**
+ * Le 22/10, sur l'ordinateur : la rampe de l'escalier barrait « la rampe, la
+ * main valide ». Un texte posé sur le corps, sur la silhouette de départ, sur
+ * un trait du décor ou sur un autre texte ne se lit plus — et la 3D, plus
+ * pleine que le trait, le montre davantage.
+ */
+describe('Les textes du schéma se lisent', () => {
+  it('ne posent ni consigne, ni angle, ni tempo sur le corps, le décor ou un autre texte', () => {
+    const faults: string[] = [];
+    for (const { key, i, p } of panels) {
+      const { obstacles } = placeTexts(p);
+      const texts = panelTexts(p);
+      texts.forEach((t, j) => {
+        const hit = [
+          ...obstacles
+            .filter((o) => o.owner !== t.id && inkTouches(t.ink, o))
+            // Les degrés et les tempos se posent seuls : sur le pointillé fin du départ, seulement quand rien
+            // d'autre ne les loge près de leur arc ou de leur flèche. Une consigne, posée à la main, l'évite.
+            .filter((o) => t.kind === 'note' || !o.name.startsWith('départ '))
+            .map((o) => o.name),
+          ...texts.filter((u, m) => m !== j && inksTouch(u.ink, t.ink)).map((u) => `« ${u.text.replace('\n', ' ')} »`),
+        ];
+        if (hit.length) faults.push(`${key} n° ${i + 1}, « ${t.text.replace('\n', ' ')} » : ${[...new Set(hit)].join(', ')}`);
+      });
+    }
+    expect(faults).toEqual([]);
   });
 });
