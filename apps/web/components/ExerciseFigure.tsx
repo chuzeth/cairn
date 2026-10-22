@@ -7,6 +7,8 @@ import {
   type Panel, type Part, type Pose, type Prop, type Pt, type Ref, type Skeleton,
 } from '@/lib/figure';
 import { cycleOf, phaseAt, type Cycle } from '@/lib/motion';
+import { FIGURES_3D } from '@/lib/figure3d/model';
+import { useFigure3D } from './useFigure3D';
 
 /**
  * Le schéma d'un exercice : une ou deux vignettes, chacune la position qui
@@ -17,6 +19,12 @@ import { cycleOf, phaseAt, type Cycle } from '@/lib/motion';
  * travaillent en rouge, l'élastique en vert, le mouvement en bleu, les angles
  * et les alignements en traits fins. Tout est calculé (`lib/figure`) : un
  * angle écrit est l'angle du dessin.
+ *
+ * Depuis le 21/10, les schémas entièrement de profil (`FIGURES_3D`) montrent
+ * un mannequin 3D (`lib/figure3d`) posé par les mêmes squelettes : le corps,
+ * son décor et ce qu'il porte viennent de la 3D ; tout le reste — le pointillé
+ * du départ, les élastiques, les angles, les flèches, les consignes — reste
+ * ce calque vectoriel, posé dessus dans le même cadre.
  */
 
 export const hasFigure = (key: string): boolean => key in FIGURES;
@@ -329,6 +337,39 @@ function GhostView({ list }: { list: Part[] }) {
   );
 }
 
+/**
+ * Le même pointillé, posé sur la 3D : les fonds ne peuvent plus effacer les
+ * bords intérieurs sans effacer le corps dessous. Un masque le fait — il ôte
+ * l'intérieur de la silhouette de départ, et le corps de l'instant, devant
+ * lequel le départ passe toujours derrière.
+ */
+function GhostOverlay({ list, body, uid, box }: { list: Part[]; body: Part[]; uid: string; box: Box }) {
+  return (
+    <g className="fg-ghost">
+      <mask id={`${uid}-gm`} maskUnits="userSpaceOnUse" x={fmt(box.x0)} y={fmt(-box.y1)} width={fmt(box.x1 - box.x0)} height={fmt(box.y1 - box.y0)}>
+        <rect x={fmt(box.x0)} y={fmt(-box.y1)} width={fmt(box.x1 - box.x0)} height={fmt(box.y1 - box.y0)} fill="#fff" />
+        {[...list, ...body].map((p, i) => <path key={i} d={pathOf(p.pts)} fill="#000" />)}
+      </mask>
+      <g mask={`url(#${uid}-gm)`}>
+        {list.map((p, i) => <path key={i} d={pathOf(p.pts)} className="fg-ghost-edge fg-ghost-line" />)}
+      </g>
+    </g>
+  );
+}
+
+/** Ce qui passe derrière le corps (un élastique dans le dos) : masqué par la silhouette de l'instant. */
+function BehindBody({ body, uid, box, children }: { body: Part[]; uid: string; box: Box; children: ReactNode }) {
+  return (
+    <>
+      <mask id={`${uid}-bm`} maskUnits="userSpaceOnUse" x={fmt(box.x0)} y={fmt(-box.y1)} width={fmt(box.x1 - box.x0)} height={fmt(box.y1 - box.y0)}>
+        <rect x={fmt(box.x0)} y={fmt(-box.y1)} width={fmt(box.x1 - box.x0)} height={fmt(box.y1 - box.y0)} fill="#fff" />
+        {body.map((p, i) => <path key={i} d={pathOf(p.pts)} fill="#000" />)}
+      </mask>
+      <g mask={`url(#${uid}-bm)`}>{children}</g>
+    </>
+  );
+}
+
 function arcPoints(at: Pt, a: Pt, b: Pt, r: number): Pt[] {
   const ua = unit(sub(a, at));
   const ub = unit(sub(b, at));
@@ -354,10 +395,14 @@ function bodyExtent(panel: Panel): Pt[] {
   return pts;
 }
 
-function PanelView({ panel, uid, name, frame, moving = false, notesShown = 1, compact = false, control }: {
+function PanelView({ panel, uid, name, frame, phase = 1, three = null, moving = false, notesShown = 1, compact = false, control }: {
   panel: Panel;
   uid: string;
   name: string;
+  /** L'instant du geste que montre `frame`, de 0 (départ) à 1 (position dessinée) : celui que dessine la 3D. */
+  phase?: number;
+  /** Le schéma en 3D : son exercice et le rang de la vignette. */
+  three?: { exercise: string; index: number } | null;
   /**
    * Étroit — un téléphone : sans les consignes écrites autour du corps, qui le
    * réduisaient à 40 % de la vignette. Elles sont dites juste dessous, dans les
@@ -471,69 +516,76 @@ function PanelView({ panel, uid, name, frame, moving = false, notesShown = 1, co
   const line = (a: Pt, b: Pt, cls: string, key: string) => (
     <line key={key} x1={fmt(a[0])} y1={fmt(-a[1])} x2={fmt(b[0])} y2={fmt(-b[1])} className={cls} />
   );
+  // En 3D, le corps, le décor, le sac et ce que tient la main sont dans la toile : le SVG n'en garde que le calque.
+  const three3d = useFigure3D(three, phase, { x0: box.x0, x1: box.x1, y0: box.y0, y1: box.y1 });
+  const overlay = three3d.ready;
+  const behind = bands.filter((b) => b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `bb${i}`));
 
   return (
-    <figure className="xf-panel" data-moving={moving || undefined}>
+    <figure className="xf-panel" data-moving={moving || undefined} data-3d={overlay || undefined}>
       {control}
-      <svg viewBox={vb} className="xf" role="img" aria-label={`${name} : ${panel.label}`}>
-        <defs>
-          <marker id={marker} viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-            <path d="M0 0 L10 5 L0 10 z" className="fg-arrow-head" />
-          </marker>
-        </defs>
-        {panel.props.filter((p) => p.kind !== 'floor').map((p, i) => <PropView key={i} prop={p} box={box} />)}
-        {floor && <PropView prop={{ kind: 'floor' }} box={box} />}
-        {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r={ring} className="fg-weight-ghost" />}
-        {ghost && <GhostView list={ghost.parts} />}
-        {!moving && ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
-        {bands.filter((b) => b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `bb${i}`))}
-        {carried && !carried.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
-        <BodyView list={list} muscles={muscles} uid={uid} />
-        {carried?.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
-        {held && (
-          <g className={panel.hold === 'handle' ? 'fg-handle' : 'fg-disc'}>
-            <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r={ring} />
-            <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r="1.1" />
-          </g>
-        )}
-        {bands.filter((b) => !b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `b${i}`))}
-        {!moving && guides.map((g, i) => line(g.a, g.b, 'fg-guide', `g${i}`))}
-        {!moving && angles.map((a, i) => (
-          <g key={`a${i}`} className="fg-angle">
-            <path d={pathOf(a.pts, false)} />
-            <text x={fmt(a.pos[0])} y={fmt(-a.pos[1] + TEXT * 0.35)} textAnchor="middle">{a.label}</text>
-          </g>
-        ))}
-        {!moving && motions.map((m, i) => (
-          <g key={`m${i}`} className="fg-motion">
-            <path
-              d={`M${fmt(m.start[0])} ${fmt(-m.start[1])} Q${fmt(m.ctrl[0])} ${fmt(-m.ctrl[1])} ${fmt(m.end[0])} ${fmt(-m.end[1])}`}
-              markerEnd={`url(#${marker})`}
-            />
-            {m.label && <text x={fmt(m.top[0])} y={fmt(-m.top[1] + TEXT * 0.35)} textAnchor="middle">{m.label}</text>}
-          </g>
-        ))}
-        {!moving && steps.map((st) => (
-          <g key={`s${st.n}`} className="fg-step">
-            <circle cx={fmt(st.at[0])} cy={fmt(-st.at[1])} r="2.7" />
-            <text x={fmt(st.at[0])} y={fmt(-st.at[1] + 1.25)} textAnchor="middle">{st.n}</text>
-          </g>
-        ))}
-        {notes.map((n, i) => {
-          const lead = add(n.target, mul(unit(sub(n.pos, n.target)), 1.3));
-          const endPt: Pt = [n.pos[0] + (n.anchor === 'start' ? -0.8 : n.anchor === 'end' ? 0.8 : 0), n.pos[1] + TEXT * 0.3];
-          return (
-            <g key={`n${i}`} className="fg-note" style={notesShown < 1 ? { opacity: notesShown } : undefined}>
-              {line(lead, endPt, '', 'l')}
-              <text x={fmt(n.pos[0])} y={fmt(-n.pos[1])} textAnchor={n.anchor}>
-                {linesOf(n.text).map((l, j) => (
-                  <tspan key={j} x={fmt(n.pos[0])} dy={j === 0 ? 0 : fmt(TEXT * 1.15)}>{l}</tspan>
-                ))}
-              </text>
+      <div className="xf-stage">
+        {three3d.active && <canvas ref={three3d.canvasRef} className="xf-3d" aria-hidden="true" />}
+        <svg viewBox={vb} className="xf" role="img" aria-label={`${name} : ${panel.label}`}>
+          <defs>
+            <marker id={marker} viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" className="fg-arrow-head" />
+            </marker>
+          </defs>
+          {!overlay && panel.props.filter((p) => p.kind !== 'floor').map((p, i) => <PropView key={i} prop={p} box={box} />)}
+          {!overlay && floor && <PropView prop={{ kind: 'floor' }} box={box} />}
+          {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r={ring} className="fg-weight-ghost" />}
+          {ghost && (overlay ? <GhostOverlay list={ghost.parts} body={list} uid={uid} box={box} /> : <GhostView list={ghost.parts} />)}
+          {!moving && ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
+          {overlay ? <BehindBody body={list} uid={uid} box={box}>{behind}</BehindBody> : behind}
+          {!overlay && carried && !carried.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
+          {!overlay && <BodyView list={list} muscles={muscles} uid={uid} />}
+          {!overlay && carried?.front && <path d={pathOf(carried.pts)} className="fg-carry" />}
+          {!overlay && held && (
+            <g className={panel.hold === 'handle' ? 'fg-handle' : 'fg-disc'}>
+              <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r={ring} />
+              <circle cx={fmt(held.pose[0])} cy={fmt(-held.pose[1])} r="1.1" />
             </g>
-          );
-        })}
-      </svg>
+          )}
+          {bands.filter((b) => !b.behind).map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind}`, `b${i}`))}
+          {!moving && guides.map((g, i) => line(g.a, g.b, 'fg-guide', `g${i}`))}
+          {!moving && angles.map((a, i) => (
+            <g key={`a${i}`} className="fg-angle">
+              <path d={pathOf(a.pts, false)} />
+              <text x={fmt(a.pos[0])} y={fmt(-a.pos[1] + TEXT * 0.35)} textAnchor="middle">{a.label}</text>
+            </g>
+          ))}
+          {!moving && motions.map((m, i) => (
+            <g key={`m${i}`} className="fg-motion">
+              <path
+                d={`M${fmt(m.start[0])} ${fmt(-m.start[1])} Q${fmt(m.ctrl[0])} ${fmt(-m.ctrl[1])} ${fmt(m.end[0])} ${fmt(-m.end[1])}`}
+                markerEnd={`url(#${marker})`}
+              />
+              {m.label && <text x={fmt(m.top[0])} y={fmt(-m.top[1] + TEXT * 0.35)} textAnchor="middle">{m.label}</text>}
+            </g>
+          ))}
+          {!moving && steps.map((st) => (
+            <g key={`s${st.n}`} className="fg-step">
+              <circle cx={fmt(st.at[0])} cy={fmt(-st.at[1])} r="2.7" />
+              <text x={fmt(st.at[0])} y={fmt(-st.at[1] + 1.25)} textAnchor="middle">{st.n}</text>
+            </g>
+          ))}
+          {notes.map((n, i) => {
+            const lead = add(n.target, mul(unit(sub(n.pos, n.target)), 1.3));
+            const endPt: Pt = [n.pos[0] + (n.anchor === 'start' ? -0.8 : n.anchor === 'end' ? 0.8 : 0), n.pos[1] + TEXT * 0.3];
+            return (
+              <g key={`n${i}`} className="fg-note" style={notesShown < 1 ? { opacity: notesShown } : undefined}>
+                {line(lead, endPt, '', 'l')}
+                <text x={fmt(n.pos[0])} y={fmt(-n.pos[1])} textAnchor={n.anchor}>
+                  {linesOf(n.text).map((l, j) => (
+                    <tspan key={j} x={fmt(n.pos[0])} dy={j === 0 ? 0 : fmt(TEXT * 1.15)}>{l}</tspan>
+                  ))}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
       <figcaption className="xf-caption">
         {panel.ghostLabel && <span className="xf-key xf-key-ghost">1. {panel.ghostLabel}</span>}
         <span className="xf-key xf-key-solid">{panel.ghostLabel ? `2. ${panel.label}` : panel.label}</span>
@@ -562,7 +614,9 @@ function useStill(): boolean {
  * fige sur la position dessinée, avec ses angles et ses flèches ; un second la
  * relance.
  */
-function MovingPanel({ panel, uid, name, cycle, compact }: { panel: Panel; uid: string; name: string; cycle: Cycle; compact: boolean }) {
+function MovingPanel({ panel, uid, name, cycle, compact, three }: {
+  panel: Panel; uid: string; name: string; cycle: Cycle; compact: boolean; three: { exercise: string; index: number } | null;
+}) {
   const still = useStill();
   const [paused, setPaused] = useState(false);
   const [t, setT] = useState(0);
@@ -611,7 +665,10 @@ function MovingPanel({ panel, uid, name, cycle, compact }: { panel: Panel; uid: 
   );
   return (
     <div ref={ref} className="xf-moving">
-      <PanelView panel={panel} uid={uid} name={name} frame={frame} moving={running} notesShown={notesShown} compact={compact} control={control} />
+      <PanelView
+        panel={panel} uid={uid} name={name} frame={frame} phase={frame ? t : 1} three={three}
+        moving={running} notesShown={notesShown} compact={compact} control={control}
+      />
     </div>
   );
 }
@@ -640,11 +697,12 @@ export function ExerciseFigure({ exercise, label, tempo }: { exercise: ExerciseK
   if (!spec) return null;
   return (
     <div ref={ref} className="xf-panels" data-count={spec.panels.length}>
-      {spec.panels.map((p, i) =>
-        p.ghost
-          ? <MovingPanel key={i} panel={p} uid={`${exercise}-${i}`} name={label} cycle={cycle} compact={compact} />
-          : <PanelView key={i} panel={p} uid={`${exercise}-${i}`} name={label} compact={compact} />,
-      )}
+      {spec.panels.map((p, i) => {
+        const three = FIGURES_3D.has(exercise) ? { exercise, index: i } : null;
+        return p.ghost
+          ? <MovingPanel key={i} panel={p} uid={`${exercise}-${i}`} name={label} cycle={cycle} compact={compact} three={three} />
+          : <PanelView key={i} panel={p} uid={`${exercise}-${i}`} name={label} compact={compact} three={three} />;
+      })}
     </div>
   );
 }

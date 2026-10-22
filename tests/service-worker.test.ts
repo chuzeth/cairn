@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MODEL_URL } from '../apps/web/lib/figure3d/model';
 
 /**
  * Le service worker, exécuté tel quel contre un faux cache et un faux réseau.
@@ -208,5 +209,41 @@ describe('Les écrans gardés d’avance', () => {
     network = () => { throw new TypeError('Load failed'); };
     expect(await (await browse('/plan')).text()).toContain('/_next/static/chunks/plan.js');
     expect(await (await browse('/_next/static/chunks/plan.js', 'cors')).text()).toBe('js /_next/static/chunks/plan.js');
+  });
+});
+
+describe('Le mannequin des schémas 3D', () => {
+  /** L'installation, et toutes ses tâches. */
+  async function install() {
+    const pending: Promise<unknown>[] = [];
+    handlers.install!({ waitUntil: (p: Promise<unknown>) => { pending.push(p); } });
+    await Promise.all(pending);
+  }
+
+  it('est rangé dès l’installation, et sert hors ligne sans avoir jamais été ouvert', async () => {
+    network = (path) => (path === MODEL_URL ? new Response('glb', { status: 200 }) : app('écran'));
+    await install();
+    network = () => { throw new TypeError('Load failed'); };
+    expect(await (await browse(MODEL_URL, 'cors')).text()).toBe('glb');
+  });
+
+  it('se garde à part des pages : la purge des pages vues ne l’emporte pas', async () => {
+    network = (path) => (path === MODEL_URL ? new Response('glb', { status: 200 }) : app('écran'));
+    await install();
+    expect(await caches.get('cairn-figures')!.match(MODEL_URL)).toBeDefined();
+    expect(await shell().match(MODEL_URL)).toBeUndefined();
+  });
+
+  it('remplace l’ancien mannequin quand il change de nom', async () => {
+    const figures = new FakeCache();
+    caches.set('cairn-figures', figures);
+    await figures.put('/figures/mannequin-00000000.glb', new Response('ancien'));
+    await figures.put(MODEL_URL, new Response('glb'));
+    const pending: Promise<unknown>[] = [];
+    handlers.activate!({ waitUntil: (p: Promise<unknown>) => { pending.push(p); } });
+    await Promise.all(pending);
+    expect(caches.get('cairn-figures')).toBe(figures);
+    expect(await figures.match('/figures/mannequin-00000000.glb')).toBeUndefined();
+    expect(await figures.match(MODEL_URL)).toBeDefined();
   });
 });

@@ -1352,6 +1352,12 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 @media (min-width: 720px) { .xf-panels[data-count="2"] { grid-template-columns: 1fr 1fr; } }
 .xf-panel { position: relative; margin: 0; padding: 12px 10px 10px; border-radius: var(--radius); background: var(--bg-elev); border: 1px solid var(--border); }
 .xf { display: block; width: 100%; height: auto; max-height: 380px; margin: 0 auto; }
+/* La 3D (`lib/figure3d`) : la toile sous le calque vectoriel, exactement dans la boîte du SVG — même cadre, même place. */
+.xf-stage { position: relative; }
+.xf-stage > .xf { position: relative; }
+.xf-stage > .xf-3d { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+/* Posé sur la 3D, le pointillé du départ perd sa moitié intérieure sous le masque : il est tracé deux fois plus épais. */
+.xf .fg-ghost-line { stroke-width: 2.2; }
 /* Le bouton qui fige le mouvement sur la position dessinée, et le relance. */
 .xf-moving { min-width: 0; }
 .xf-play {

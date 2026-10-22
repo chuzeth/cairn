@@ -1221,7 +1221,9 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
       {
         label: 'En bas : 3 s pour y descendre',
         ghostLabel: 'En haut',
-        props: [{ kind: 'floor' }, { kind: 'bench', from: -66, to: -40, h: 25 }],
+        // Le bord du banc sous le bas du tibia, la cheville juste au-delà : à 4 unités plus près, le tibia
+        // arrière y entrait de 6 cm en bas du mouvement (le profil le cachait, la 3D l'a montré le 21/10).
+        props: [{ kind: 'floor' }, { kind: 'bench', from: -71.5, to: -45.5, h: 25 }],
         hold: 'dumbbell',
         ghost: {
           view: 'side', hip: [-8, 48.5], lean: 8,
