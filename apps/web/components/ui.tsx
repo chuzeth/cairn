@@ -215,18 +215,30 @@ export function RatioAlerts({
   alerts, source, withDay = false, className,
 }: { alerts: LoadRatioAlertRow[]; source: string | null; withDay?: boolean; className?: string }) {
   if (alerts.length === 0) return null;
-  // « au-delà » ne se coupe pas à son trait d'union.
-  const said = (t: string) => nbsp(t).replace(/-/g, '\u2011');
+  // Une phrase, la même partout — le plan, la séance, le matin : le rapport, le seuil,
+  // ce que ça veut dire. D'où vient la référence se déplie : elle est en partie estimée.
+  const comma = (v: number) => num(v, 2).replace(/0$/, '');
+  const day = (d: string) => {
+    const w = frDate(d, { weekday: true }).replace(/\s\d+.*$/, '');
+    return `${w.slice(0, 1).toLocaleUpperCase('fr')}${w.slice(1)}`;
+  };
   return (
     <div className={`ratio-alerts${className ? ` ${className}` : ''}`}>
       {alerts.map((a) => (
         <p key={`${a.date}-${a.channel}`} className="ratio-alert">
-          {withDay && <span className="ratio-alert-day">{frDate(a.date, { weekday: true })}</span>}
-          {withDay && ' '}
-          {said(a.text)}
+          {withDay && <><strong>{day(a.date)}</strong>{'\u00a0: '}</>}
+          {nbsp(
+            `${withDay ? 'charge' : 'Charge'} ${a.channel === 'mechanical' ? 'en descente ' : ''}à ${comma(a.value)} fois celle des ` +
+              `quatre dernières semaines — au\u2011delà de ${comma(a.limit)}, le risque de blessure monte.`,
+          )}
         </p>
       ))}
-      {source && <p className="ratio-alert-source">{said(source)}</p>}
+      {source && (
+        <details className="ratio-alert-source">
+          <summary>Référence en partie estimée</summary>
+          <p>{nbsp(source)}</p>
+        </details>
+      )}
     </div>
   );
 }

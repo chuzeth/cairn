@@ -2,52 +2,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  PLAN_URL, blockDuration, duration, frDate, getStamped, num, spelledDuration, todayIso,
+  PLAN_URL, blockDuration, duration, frDate, getStamped, nbsp, num, todayIso,
   type LoadRatioAlertRow, type PlanResponse, type SessionRow,
 } from '@/lib/api';
 import {
-  circuitText, CRITERION_LABELS, originLabel, planName, provenanceText, recoveryText, TYPE_COLORS,
+  circuitText, CRITERION_LABELS, originLabel, planName, provenanceText, recoveryText,
 } from '@/lib/sessions';
 import {
-  AbsenceNotice, Badge, Card, ErrorBox, GarminLine, GarminProblems, Loading, RatioAlerts, SessionHistory, Stale, WhereLine,
+  AbsenceNotice, Badge, ErrorBox, GarminLine, GarminProblems, Loading, RatioAlerts, SessionHistory, Stale, WhereLine,
 } from '@/components/ui';
+import { Figures } from '@/components/Today';
 import { Term } from '@/components/Term';
 import { SessionMap } from '@/components/SessionMap';
 import { Itinerary } from '@/components/Itinerary';
 import { onForeground } from '@/lib/version';
 import { followsPace } from '@cairn/core/blocks';
 import { isWorkout } from '@/lib/workout';
-import { held, thresholdMinutes, weekStartOf } from '@/lib/today';
-
-/**
- * Un TSB se lit signé : « 9 » et « −9 » ne décrivent pas le même athlète. La
- * décimale ne s'écrit que si elle existe — la cible est un entier, ce que le
- * plan en fait ne l'est pas.
- */
-const signed = (v: number) => `${v > 0 ? '+' : ''}${num(v, Number.isInteger(v) ? 0 : 1)}`;
-
-/**
- * La fraîcheur du jour de la course, dite à la précision de ce qui la mesure.
- *
- * Huit secondes sur une course prédite à ±23 minutes ne font ni un encart, ni
- * deux chiffres dont on lirait la différence : sous cette précision, le plan
- * amène à la cible, et c'est ce qui s'écrit. L'encart n'existe que pour un écart
- * que la prédiction sait mesurer — et il n'en dit que ce que ça change ; son
- * mécanisme, profondeur d'affûtage et plancher, est au journal du plan.
- */
-function RaceDayLine({ raceDay }: { raceDay: NonNullable<PlanResponse['raceDay']> }) {
-  const freshness = <Term k="fraicheur">Fraîcheur</Term>;
-  if (raceDay.projected == null) return <>{freshness} visée le jour de la course : {signed(raceDay.target)}</>;
-  if (!raceDay.notice) return <>{freshness} visée le jour de la course : {signed(raceDay.target)}, et ce plan t&apos;y amène</>;
-  return (
-    <>
-      {freshness} le jour de la course : {signed(raceDay.target)} visés, {signed(Math.round(raceDay.projected))} avec ce plan
-    </>
-  );
-}
-
-/** Les tons de l'état Garmin, dans ceux que la grille connaît déjà. */
-const GARMIN_TONE = { good: 'done', warn: 'off', mute: 'mute' } as const;
+import { held, weekStartOf } from '@/lib/today';
 
 /** Le jour de la semaine : une lettre dans la grille, trois dans la liste. */
 const DOW_SHORT = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -102,6 +73,8 @@ export default function PlanPage() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [past, setPast] = useState<string | null>(null);
+  /** La semaine regardée : celle en cours, tant qu'on n'en a pas choisi une autre. */
+  const [picked, setPicked] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -122,348 +95,343 @@ export default function PlanPage() {
 
   if (!data.plan) {
     return (
-      <>
-        <div className="page-head"><h1 className="page-title">Plan</h1></div>
-        <Card>
-          <div className="empty">
-            <p>Aucun plan actif.</p>
-            <p className="small">
-              Un plan se construit à partir d'un objectif de course : il définit les phases,
-              la progression de charge, le dénivelé hebdomadaire et l'affûtage.
-            </p>
-            <div className="row" style={{ justifyContent: 'center', marginTop: 14 }}>
-              <Link href="/races" className="btn" data-variant="primary">Définir un objectif</Link>
-              <Link href="/coach" className="btn">Demander au coach</Link>
-            </div>
-          </div>
-        </Card>
-      </>
+      <div className="p">
+        <header className="p-head">
+          <div className="p-eyebrow"><span>Plan</span></div>
+          <h1 className="p-title">Aucun plan actif</h1>
+          <p className="p-sub">Un plan se construit à partir d&apos;un objectif de course.</p>
+        </header>
+        <div className="p-empty">
+          <Link href="/races" className="btn" data-variant="primary">Définir un objectif</Link>
+          <Link href="/coach" className="btn">Demander au coach</Link>
+        </div>
+      </div>
     );
   }
 
-  // Regroupement calendaire, du lundi au dimanche, depuis la semaine en cours :
-  // la lecture partagée avec l'écran du matin remonte sept jours en arrière.
-  const monday = weekStartOf(todayIso());
-  const shown = data.sessions.filter((s) => s.date >= monday);
+  // Regroupement calendaire, du lundi au dimanche, depuis la semaine en cours.
+  const today = todayIso();
+  const monday = weekStartOf(today);
   const byWeek = new Map<string, SessionRow[]>();
-  for (const s of shown) {
+  for (const s of data.sessions.filter((x) => x.date >= monday)) {
     const w = weekStartOf(s.date);
     byWeek.set(w, [...(byWeek.get(w) ?? []), s]);
   }
-  const weeks = [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const today = todayIso();
+  const weeks = [...byWeek.keys()].sort();
+  const weekStart = picked && byWeek.has(picked) ? picked : weeks[0] ?? monday;
+  const sessions = byWeek.get(weekStart) ?? [];
+  const kept = sessions.filter(held);
+  const total = kept.reduce((a, s) => a + s.plannedLoad, 0);
+  const totalTime = kept.reduce((a, s) => a + s.plannedDurationS, 0);
+  const totalVert = kept.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
+  const days = Array.from({ length: 7 }, (_, i) =>
+    new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + i * 86_400_000).toISOString().slice(0, 10),
+  );
+  const alerts = (data.loadRatios?.alerts ?? []).filter((a) => days.includes(a.date));
+  const ahead = Math.round((Date.parse(`${weekStart}T00:00:00Z`) - Date.parse(`${monday}T00:00:00Z`)) / (7 * 86_400_000));
 
   return (
-    <>
+    <div className="p">
       {/* Hors réseau, le plan est celui de la dernière lecture : il le dit d'abord. */}
       {recordedAt && <Stale recordedAt={recordedAt} />}
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">Plan d'entraînement</h1>
-          <p className="page-sub">
-            {/* La cible seule est une intention. Ce que le plan en fait se mesure —
-                à la précision de la prédiction près. Et un chiffre du modèle
-                s'écrit avec ce qu'il signifie, à un tap. */}
-            {data.raceDay && <><RaceDayLine raceDay={data.raceDay} />{' · '}</>}
-            {num(shown.length)} séances sur {num(weeks.length)} semaines
-          </p>
+
+      <header className="p-head">
+        <div className="p-eyebrow">
+          <span>Plan</span>
+          <Link href="/coach" className="p-adjust">Ajuster avec le coach</Link>
         </div>
-        <Link href="/coach" className="btn">Ajuster avec le coach</Link>
+        <h1 className="p-title">{weekSpan(weekStart)}</h1>
+        <p className="p-sub">{ahead === 0 ? 'Cette semaine' : ahead === 1 ? 'La semaine prochaine' : `Dans ${num(ahead)} semaines`}</p>
+      </header>
+
+      {/* Une semaine à la fois : on la choisit, on ne fait pas défiler la saison. */}
+      <div className="p-weeks" role="tablist" aria-label="Semaines du plan">
+        {weeks.map((w, i) => (
+          <button
+            key={w}
+            type="button"
+            role="tab"
+            aria-selected={w === weekStart}
+            className="p-week"
+            onClick={() => { setPicked(w); setOpen(null); }}
+          >
+            {frDate(w)}
+          </button>
+        ))}
       </div>
 
-      {data.raceDay?.notice && (
-        <div className="banner">
-          <p className="small" style={{ margin: 0 }}>{data.raceDay.notice}</p>
+      {/* Ce qui demande une action ou change le plan ; rien d'autre ne s'affiche en bandeau. */}
+      {data.raceDay?.notice && <p className="p-notice">{data.raceDay.notice}</p>}
+      {data.absences.filter((a) => a.endDate >= weekStart && a.startDate <= days[6]!).map((a) => (
+        <AbsenceNotice key={a.id} absence={a} today={today} />
+      ))}
+      <GarminProblems overview={data.garmin} className="garmin-note" />
+
+      <div className="p-body">
+        <section className="p-overview" aria-label="La semaine en chiffres">
+          <Figures
+            items={[
+              // Ce que vaut la charge se lit d'un toucher sur le mot : pas une ligne de plus sous le chiffre.
+              { label: <Term k="points">Charge</Term>, value: num(total) },
+              { label: 'Durée', value: duration(totalTime) },
+              { label: 'Dénivelé', value: `${num(totalVert)} m` },
+            ]}
+          />
+          <WeekBars days={days} sessions={sessions} today={today} alerts={alerts} />
+          <RatioAlerts alerts={alerts} source={data.loadRatios?.source ?? null} withDay />
+        </section>
+
+        <ol className="p-days" aria-label="Les séances de la semaine">
+          {days.map((date) => {
+            const daily = sessions.filter((s) => s.date === date && s.type !== 'rest');
+            const completed = data.completedByDate[date];
+            const alerted = alerts.some((a) => a.date === date);
+            if (daily.length === 0) {
+              return (
+                <li key={date} className="p-day" data-rest>
+                  <DayDate date={date} today={today} alerted={alerted} />
+                  <span className="p-day-body">
+                    <span className="p-day-title">Repos</span>
+                    {completed && (
+                      <Link href={`/activities/${completed.id}`} className="p-day-meta p-day-link" transitionTypes={['nav-forward']}>
+                        {completed.name} →
+                      </Link>
+                    )}
+                  </span>
+                </li>
+              );
+            }
+            return daily.map((s, k) => {
+              const off = s.status === 'withdrawn' || s.status === 'cancelled';
+              const gain = Math.round(s.plannedElevationGainM ?? 0);
+              const body = (
+                <>
+                  {k === 0 ? <DayDate date={date} today={today} alerted={alerted} /> : <span className="p-day-date" aria-hidden />}
+                  <span className="p-day-body">
+                    <span className="p-day-title">{planName(s)}</span>
+                    <span className="p-day-meta">
+                      {duration(s.plannedDurationS)}{gain > 0 ? ` · ${num(gain)} m D+` : ''}
+                      {s.plannedDate ? ` · prévue le ${frDate(s.plannedDate)}` : ''}
+                    </span>
+                  </span>
+                  <span className="p-day-mark" data-status={date === today && s.status === 'planned' ? 'today' : s.status}>
+                    {STATUS_MARK[date === today && s.status === 'planned' ? 'today' : s.status] ?? ''}
+                  </span>
+                </>
+              );
+              // Une séance de renforcement s'ouvre en entier (`/seance`) ; une course se déplie ici.
+              return isWorkout(s) && !off ? (
+                <li key={s.id} className="p-day">
+                  <Link href={`/seance?d=${s.date}`} className="p-day-row" transitionTypes={['nav-forward']}>{body}</Link>
+                </li>
+              ) : (
+                <li key={s.id} className="p-day" data-off={off}>
+                  <button type="button" className="p-day-row" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}>
+                    {body}
+                  </button>
+                  {open === s.id && <RunDetail s={s} past={past} setPast={setPast} onReload={load} />}
+                </li>
+              );
+            });
+          })}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+/** « 19 au 25 octobre », « 26 octobre au 1er novembre ». */
+function weekSpan(monday: string): string {
+  const sunday = new Date(Date.parse(`${monday}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
+  const [, m1] = monday.split('-');
+  const [, m2] = sunday.split('-');
+  // Le premier du mois s'écrit « 1er ».
+  const first = (t: string) => t.replace(/^1(\s)/, '1er$1');
+  const a = first(frDate(monday, { long: true }));
+  const b = first(frDate(sunday, { long: true }));
+  // « au », pas un tiret : en Bodoni, tous les tirets ne sont qu'un filet.
+  return m1 === m2 ? `${a.replace(/\s\D+$/, '')}\u00a0au ${b}` : `${a} au ${b}`;
+}
+
+/** Ce qu'une séance est devenue, en un mot, à droite de sa ligne. Prévue : rien. */
+const STATUS_MARK: Partial<Record<SessionRow['status'] | 'today', string>> = {
+  today: 'Aujourd’hui',
+  completed: 'Faite',
+  replaced: 'Remplacée',
+  partial: 'Partielle',
+  missed: 'Manquée',
+  withdrawn: 'Retirée',
+  cancelled: 'Annulée',
+};
+
+function DayDate({ date, today, alerted }: { date: string; today: string; alerted: boolean }) {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return (
+    <span className="p-day-date" data-today={date === today}>
+      <span className="p-day-dow">{DOW_LONG[(dow + 6) % 7]}</span>
+      <span className="p-day-num">
+        {Number(date.slice(8, 10))}
+        {alerted && <span className="p-day-alert" aria-label="ratio de charge au-delà du seuil" />}
+      </span>
+    </span>
+  );
+}
+
+/** Une course dépliée sous sa ligne : ses blocs, sa carte, son pourquoi. */
+function RunDetail({
+  s, past, setPast, onReload,
+}: { s: SessionRow; past: string | null; setPast: (id: string | null) => void; onReload: () => void }) {
+  const load = onReload;
+  return (
+    <div className="p-detail">
+      <div className="row-between" style={{ marginBottom: 8 }}>
+        <strong>{s.title}</strong>
+        <Badge tone={s.priority === 'key' ? 'good' : undefined}>{s.priority === 'key' ? 'séance clef' : s.priority === 'support' ? 'soutien' : 'facultative'}</Badge>
+      </div>
+      <div className="small faint" style={{ marginBottom: 8 }}>
+        {num(s.plannedLoad)} <Term k="points">points de charge</Term>
+        {s.plannedMechanicalLoad > 0 && (
+          <> · {num(s.plannedMechanicalLoad)} de <Term k="mecanique">charge mécanique</Term></>
+        )}
+      </div>
+      <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
+      <GarminLine status={s.garmin} />
+
+      {s.blocks.some((b) => b.circuit) && (
+        <div className="tiny faint" style={{ marginTop: 6 }}>
+          Une part de ces {num(s.plannedMechanicalLoad)} points de charge mécanique vient du renforcement excentrique :
+          aucun flux d’activité ne le porte, le réalisé mesuré y affichera 0.
         </div>
       )}
 
-      {data.absences.filter((a) => a.endDate >= monday).map((a) => (
-        <AbsenceNotice key={a.id} absence={a} today={today} />
+      {s.successCriteria?.map((c, i) => (
+        <div
+          key={i}
+          className="small"
+          style={{
+            marginTop: 8, padding: '8px 10px', borderRadius: 6,
+            background: 'color-mix(in srgb, var(--good) 8%, transparent)',
+            borderLeft: '2px solid var(--good)',
+          }}
+        >
+          <strong>Réussite :</strong> {CRITERION_LABELS[c.metric] ?? c.metric}
+          {c.maxValue != null && ` ≤ ${num(c.maxValue)}`}
+          <div className="tiny faint" style={{ marginTop: 3 }}>« {c.origin.quote} » — {originLabel(c.origin)}</div>
+        </div>
       ))}
 
-      <GarminProblems overview={data.garmin} className="garmin-note" />
+      <div style={{ marginTop: 12 }}>
+        <SessionMap blocks={s.blocks} route={s.route} />
+      </div>
+      {s.route && (
+        <div style={{ marginTop: 12 }}>
+          <Itinerary route={s.route} date={s.date} title={s.title} onHomeSaved={load} />
+        </div>
+      )}
 
-      <div className="stack">
-        {weeks.map(([weekStart, sessions]) => {
-          // Une séance retirée ou annulée ne pèse plus rien : la compter dans le
-          // total de la semaine ferait lire une charge que personne n'attend plus.
-          const kept = sessions.filter(held);
-          const total = kept.reduce((a, s) => a + s.plannedLoad, 0);
-          const totalTime = kept.reduce((a, s) => a + s.plannedDurationS, 0);
-          const totalVert = kept.reduce((a, s) => a + (s.plannedElevationGainM ?? 0), 0);
-          // « pas sur la montre » sur chaque ligne ne disait qu'une chose, sept
-          // fois : elle se dit une fois, sous la semaine.
-          const unsent = kept.filter((s) => s.garmin?.state === 'not_sent');
-          const isCurrent = weekStart === weekStartOf(today);
-          const days = Array.from({ length: 7 }, (_, i) =>
-            new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + i * 86_400_000).toISOString().slice(0, 10),
-          );
-          const weekAlerts = (data.loadRatios?.alerts ?? []).filter((a) => days.includes(a.date));
-
-          return (
-            <Card
-              key={weekStart}
-              title={`Semaine du ${frDate(weekStart, { long: true })}`}
-              hint={
-                <>
-                  {num(total)} <Term k="points">points de charge</Term>, l&apos;effort de {spelledDuration(thresholdMinutes(total) * 60)} à
-                  ton seuil · {duration(totalTime)} · {num(totalVert)} m D+
-                </>
-              }
-              action={isCurrent ? <Badge tone="good">en cours</Badge> : undefined}
-            >
-              <WeekBars days={days} sessions={sessions} today={today} alerts={weekAlerts} />
-              <RatioAlerts alerts={weekAlerts} source={data.loadRatios?.source ?? null} withDay className="plan-alerts" />
-              <div className="plan-week">
-                {days.map((date, i) => {
-                  const daily = sessions.filter((s) => s.date === date);
-                  const completed = data.completedByDate[date];
-                  return (
-                    <div key={date} className="plan-day" data-today={date === today}>
-                      <div className="plan-date">
-                        <span className="plan-dow-short">{DOW_SHORT[i]}</span>
-                        <span className="plan-dow-long">{DOW_LONG[i]}</span> {date.slice(8, 10)}
-                      </div>
-                      <div className="plan-slots">
-                        {daily.length === 0 && <div className="plan-figures">—</div>}
-                        {daily.map((s) => {
-                          const card = (
-                            <div
-                              className="plan-session"
-                              data-faded={s.status === 'missed' || s.status === 'withdrawn' || s.status === 'cancelled'}
-                              style={{ borderLeftColor: TYPE_COLORS[s.type] ?? 'var(--border-strong)' }}
-                            >
-                              <div className="plan-name">{planName(s)}</div>
-                              {/* La durée seule : un « 85 » sans ce qu'il compte ne dirait
-                                  rien, et la charge de la séance se lit en l'ouvrant. */}
-                              {s.type !== 'rest' && (
-                                <div className="plan-figures">{duration(s.plannedDurationS)}</div>
-                              )}
-                              {s.status === 'completed' && <span className="plan-status" data-tone="done">✓ faite</span>}
-                              {/* Faite la veille ou le lendemain : elle est à son jour réel, et dit celui du plan. */}
-                              {s.plannedDate && (
-                                <div className="plan-status" data-tone="mute">prévue le {frDate(s.plannedDate)}</div>
-                              )}
-                              {s.status === 'replaced' && <span className="plan-status" data-tone="off">remplacée</span>}
-                              {s.status === 'missed' && <span className="plan-status" data-tone="off">manquée</span>}
-                              {/* Retirée, pas manquée : elle tombait dans une absence qu'il avait
-                                  annoncée. Le ton neutre est le fond de l'affaire. */}
-                              {s.status === 'withdrawn' && <span className="plan-status" data-tone="mute">retirée</span>}
-                              {/* Annulée par les règles : un jour qui ne protège plus rien, ou une
-                                  séance dont il ne restait rien. */}
-                              {s.status === 'cancelled' && <span className="plan-status" data-tone="mute">annulée</span>}
-                              {s.garmin && s.garmin.state !== 'not_sent' && (
-                                <div className="plan-status plan-garmin" data-tone={GARMIN_TONE[s.garmin.tone]} title={s.garmin.label}>
-                                  {s.garmin.short}
-                                </div>
-                              )}
-                            </div>
-                          );
-                          // Une séance de renforcement s'ouvre en entier, exercice par exercice
-                          // (`/seance`) ; une course se déplie ici, sous la semaine.
-                          return isWorkout(s) && s.status !== 'withdrawn' && s.status !== 'cancelled' ? (
-                            <Link key={s.id} href={`/seance?d=${s.date}`} className="plan-slot" transitionTypes={['nav-forward']}>{card}</Link>
-                          ) : (
-                            <button key={s.id} className="plan-slot" onClick={() => setOpen(open === s.id ? null : s.id)}>
-                              {card}
-                            </button>
-                          );
-                        })}
-                        {completed && !daily.some((s) => s.completedActivityId === completed.id) && (
-                          <Link href={`/activities/${completed.id}`} className="plan-done-link" transitionTypes={['nav-forward']}>
-                            ↗ séance faite
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {unsent.length > 0 && (
-                <p className="garmin-note plan-unsent" title={[...new Set(unsent.map((s) => s.garmin?.detail).filter(Boolean))].join(' · ')}>
-                  {unsent.length === kept.length
-                    ? 'Aucune séance de la semaine n’est sur la montre'
-                    : unsent.length === 1
-                      ? 'Une séance de la semaine n’est pas sur la montre'
-                      : `${num(unsent.length)} séances de la semaine ne sont pas sur la montre`}
-                  {/* La raison n'est dite que si elle vaut pour toutes : le renforcement et
-                      le hors-course ne restent pas dans Cairn pour la même raison. */}
-                  {new Set(unsent.map((s) => s.garmin?.detail)).size === 1 && unsent[0]!.garmin?.detail
-                    ? ` — ${unsent[0]!.garmin.detail}.`
-                    : '.'}
-                </p>
+      <div className="stack" style={{ gap: 8, marginTop: 12 }}>
+        {s.blocks.map((b, i) => (
+          <div key={i} style={{ borderLeft: '2px solid var(--border-strong)', paddingLeft: 10 }}>
+            <div className="row wrap" style={{ gap: 8 }}>
+              <strong className="small">
+                {b.repeat ? `${num(b.repeat)} × ` : ''}
+                {b.reps ? `${num(b.reps)}` : blockDuration(b.durationS)}
+                {b.distanceM ? ` ${num(b.distanceM)} m` : ''}
+              </strong>
+              <span className="small muted">{b.label}</span>
+              {b.exercise && (
+                <Link href={`/exercices#${b.exercise}`} className="tiny">comment faire</Link>
               )}
-
-              {sessions.filter((s) => s.id === open).map((s) => (
-                <div key={s.id} style={{ marginTop: 14, padding: 14, background: 'var(--bg-inset)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                  <div className="row-between" style={{ marginBottom: 8 }}>
-                    <strong>{s.title}</strong>
-                    <Badge tone={s.priority === 'key' ? 'good' : undefined}>{s.priority === 'key' ? 'séance clef' : s.priority === 'support' ? 'soutien' : 'facultative'}</Badge>
-                  </div>
-                  <div className="small faint" style={{ marginBottom: 8 }}>
-                    {num(s.plannedLoad)} <Term k="points">points de charge</Term>
-                    {s.plannedMechanicalLoad > 0 && (
-                      <> · {num(s.plannedMechanicalLoad)} de <Term k="mecanique">charge mécanique</Term></>
-                    )}
-                  </div>
-                  <p className="small muted" style={{ marginTop: 0 }}>{s.intent}</p>
-                  <GarminLine status={s.garmin} />
-
-                  {s.blocks.some((b) => b.circuit) && (
-                    <div className="tiny faint" style={{ marginTop: 6 }}>
-                      Une part de ces {num(s.plannedMechanicalLoad)} points de charge mécanique vient du renforcement excentrique :
-                      aucun flux d’activité ne le porte, le réalisé mesuré y affichera 0.
-                    </div>
-                  )}
-
-                  {s.successCriteria?.map((c, i) => (
-                    <div
-                      key={i}
-                      className="small"
-                      style={{
-                        marginTop: 8, padding: '8px 10px', borderRadius: 6,
-                        background: 'color-mix(in srgb, var(--good) 8%, transparent)',
-                        borderLeft: '2px solid var(--good)',
-                      }}
-                    >
-                      <strong>Réussite :</strong> {CRITERION_LABELS[c.metric] ?? c.metric}
-                      {c.maxValue != null && ` ≤ ${num(c.maxValue)}`}
-                      <div className="tiny faint" style={{ marginTop: 3 }}>« {c.origin.quote} » — {originLabel(c.origin)}</div>
-                    </div>
-                  ))}
-
-                  <div style={{ marginTop: 12 }}>
-                    <SessionMap blocks={s.blocks} route={s.route} />
-                  </div>
-                  {s.route && (
-                    <div style={{ marginTop: 12 }}>
-                      <Itinerary route={s.route} date={s.date} title={s.title} onHomeSaved={load} />
-                    </div>
-                  )}
-
-                  <div className="stack" style={{ gap: 8, marginTop: 12 }}>
-                    {s.blocks.map((b, i) => (
-                      <div key={i} style={{ borderLeft: '2px solid var(--border-strong)', paddingLeft: 10 }}>
-                        <div className="row wrap" style={{ gap: 8 }}>
-                          <strong className="small">
-                            {b.repeat ? `${num(b.repeat)} × ` : ''}
-                            {b.reps ? `${num(b.reps)}` : blockDuration(b.durationS)}
-                            {b.distanceM ? ` ${num(b.distanceM)} m` : ''}
-                          </strong>
-                          <span className="small muted">{b.label}</span>
-                          {b.exercise && (
-                            <Link href={`/exercices#${b.exercise}`} className="tiny">comment faire</Link>
-                          )}
-                          {/* Un bloc piloté à l'effort n'a pas de zone à tenir. */}
-                          {/* Une zone ne dit rien d'un bloc qui ne se court pas : souplesse, respiration. */}
-                          {!b.effort && !b.kind && <Badge>{b.zone}</Badge>}
-                          {b.hrRange && (
-                            <span className="tiny mono faint">
-                              {b.hrRange[0] > 0 ? `${num(b.hrRange[0])}-${num(b.hrRange[1])}` : `< ${num(b.hrRange[1])}`} bpm
-                            </span>
-                          )}
-                          {/* Sur un sentier, la FC guide : pas d'allure à plat à suivre. */}
-                          {b.paceRange && followsPace(b) && (
-                            <span className="tiny mono faint">
-                              {b.paceRange[1] === '—' ? `> ${b.paceRange[0]}` : `${b.paceRange[0]}-${b.paceRange[1]}`}/km
-                            </span>
-                          )}
-                          {b.vamTargetMh && <span className="tiny mono faint">{num(b.vamTargetMh)} m D+/h</span>}
-                          {b.cadenceTargetSpm && <span className="tiny mono faint">{num(b.cadenceTargetSpm)} ppm</span>}
-                          {/* Une cible qu'on demande de tenir est un paramètre
-                              physiologique : elle porte sa provenance, comme la
-                              vitesse critique sur l'écran de physiologie. */}
-                          {provenanceText(b.provenance) && (
-                            <span className="tiny faint">({provenanceText(b.provenance)})</span>
-                          )}
-                          {b.recovery && (
-                            <span className="tiny faint">
-                              {recoveryText(b.recovery)}
-                              {b.recovery.paceRange && followsPace(b) &&
-                                ` · ${b.recovery.paceRange[1] === '—'
-                                  ? `> ${b.recovery.paceRange[0]}`
-                                  : `${b.recovery.paceRange[0]}-${b.recovery.paceRange[1]}`}/km`}
-                            </span>
-                          )}
-                        </div>
-                        {b.effort && <div className="small" style={{ marginTop: 3 }}>{b.effort}</div>}
-                        {b.where && (
-                          <div className="tiny" style={{ marginTop: 3 }}>
-                            <WhereLine block={b} />
-                          </div>
-                        )}
-                        {b.circuit && (
-                          <div className="tiny" style={{ marginTop: 3 }}>{circuitText(b.circuit)}</div>
-                        )}
-                        {b.notes && <div className="tiny muted" style={{ marginTop: 3 }}>{b.notes}</div>}
-                      </div>
-                    ))}
-                  </div>
-
-                  {s.rationale && (
-                    <div className="tiny faint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <strong>
-                        {s.status === 'withdrawn' ? 'Pourquoi retirée :' : s.status === 'cancelled' ? 'Pourquoi annulée :' : 'Pourquoi ici :'}
-                      </strong>{' '}
-                      {s.rationale}
-                    </div>
-                  )}
-
-                  {/* Ce qui a façonné la séance — le raisonnement d'une décision,
-                      ce que la construction a cédé —, à un geste du « pourquoi ». */}
-                  {s.history && s.history.length > 0 && (
-                    <div style={{ marginTop: 10 }}>
-                      <button
-                        type="button"
-                        className="link-button tiny"
-                        aria-expanded={past === s.id}
-                        onClick={() => setPast(past === s.id ? null : s.id)}
-                      >
-                        {past === s.id ? 'Masquer l’historique' : `Historique (${s.history.length})`}
-                      </button>
-                      {past === s.id && (
-                        <div style={{ marginTop: 8 }}>
-                          <SessionHistory history={s.history} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Une consigne dont on ne peut pas remonter à la source est une
-                      consigne qu'on demande à l'athlète de croire. */}
-                  {s.directives && s.directives.length > 0 && (
-                    <div className="tiny faint" style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <strong>D'où vient cette forme :</strong>
-                      <div className="stack" style={{ gap: 6, marginTop: 5 }}>
-                        {s.directives.map((d, i) => (
-                          <div key={i}>
-                            {d.effect}
-                            <div style={{ opacity: 0.75 }}>« {d.origin.quote} » — {originLabel(d.origin)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </Card>
-          );
-        })}
+              {/* Un bloc piloté à l'effort n'a pas de zone à tenir. */}
+              {/* Une zone ne dit rien d'un bloc qui ne se court pas : souplesse, respiration. */}
+              {!b.effort && !b.kind && <Badge>{b.zone}</Badge>}
+              {b.hrRange && (
+                <span className="tiny mono faint">
+                  {b.hrRange[0] > 0 ? `${num(b.hrRange[0])}-${num(b.hrRange[1])}` : `< ${num(b.hrRange[1])}`} bpm
+                </span>
+              )}
+              {/* Sur un sentier, la FC guide : pas d'allure à plat à suivre. */}
+              {b.paceRange && followsPace(b) && (
+                <span className="tiny mono faint">
+                  {b.paceRange[1] === '—' ? `> ${b.paceRange[0]}` : `${b.paceRange[0]}-${b.paceRange[1]}`}/km
+                </span>
+              )}
+              {b.vamTargetMh && <span className="tiny mono faint">{num(b.vamTargetMh)} m D+/h</span>}
+              {b.cadenceTargetSpm && <span className="tiny mono faint">{num(b.cadenceTargetSpm)} ppm</span>}
+              {/* Une cible qu'on demande de tenir est un paramètre
+                  physiologique : elle porte sa provenance, comme la
+                  vitesse critique sur l'écran de physiologie. */}
+              {provenanceText(b.provenance) && (
+                <span className="tiny faint">({provenanceText(b.provenance)})</span>
+              )}
+              {b.recovery && (
+                <span className="tiny faint">
+                  {recoveryText(b.recovery)}
+                  {b.recovery.paceRange && followsPace(b) &&
+                    ` · ${b.recovery.paceRange[1] === '—'
+                      ? `> ${b.recovery.paceRange[0]}`
+                      : `${b.recovery.paceRange[0]}-${b.recovery.paceRange[1]}`}/km`}
+                </span>
+              )}
+            </div>
+            {b.effort && <div className="small" style={{ marginTop: 3 }}>{b.effort}</div>}
+            {b.where && (
+              <div className="tiny" style={{ marginTop: 3 }}>
+                <WhereLine block={b} />
+              </div>
+            )}
+            {b.circuit && (
+              <div className="tiny" style={{ marginTop: 3 }}>{circuitText(b.circuit)}</div>
+            )}
+            {b.notes && <div className="tiny muted" style={{ marginTop: 3 }}>{b.notes}</div>}
+          </div>
+        ))}
       </div>
 
-      {data.plan.revisionLog?.length > 0 && (
-        <Card title="Journal des révisions" hint="Toute modification du plan est tracée." style={{ marginTop: 14 }}>
-          <div className="stack" style={{ gap: 8 }}>
-            {data.plan.revisionLog.slice(-6).reverse().map((r, i) => (
-              <div key={i} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
-                <span className="tiny mono faint" style={{ width: 88, flex: 'none' }}>{frDate(r.at)}</span>
-                <span className="small muted">{r.summary}</span>
+      {s.rationale && (
+        <div className="tiny faint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <strong>
+            {s.status === 'withdrawn' ? 'Pourquoi retirée :' : s.status === 'cancelled' ? 'Pourquoi annulée :' : 'Pourquoi ici :'}
+          </strong>{' '}
+          {s.rationale}
+        </div>
+      )}
+
+      {/* Ce qui a façonné la séance — le raisonnement d'une décision,
+          ce que la construction a cédé —, à un geste du « pourquoi ». */}
+      {s.history && s.history.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="link-button tiny"
+            aria-expanded={past === s.id}
+            onClick={() => setPast(past === s.id ? null : s.id)}
+          >
+            {past === s.id ? 'Masquer l’historique' : `Historique (${s.history.length})`}
+          </button>
+          {past === s.id && (
+            <div style={{ marginTop: 8 }}>
+              <SessionHistory history={s.history} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Une consigne dont on ne peut pas remonter à la source est une
+          consigne qu'on demande à l'athlète de croire. */}
+      {s.directives && s.directives.length > 0 && (
+        <div className="tiny faint" style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <strong>D'où vient cette forme :</strong>
+          <div className="stack" style={{ gap: 6, marginTop: 5 }}>
+            {s.directives.map((d, i) => (
+              <div key={i}>
+                {d.effect}
+                <div style={{ opacity: 0.75 }}>« {d.origin.quote} » — {originLabel(d.origin)}</div>
               </div>
             ))}
           </div>
-        </Card>
+        </div>
       )}
-    </>
+    </div>
   );
 }

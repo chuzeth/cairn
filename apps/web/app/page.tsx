@@ -197,13 +197,10 @@ export default function Dashboard() {
       <TodayHero
         state={state}
         plan={plan}
-        actions={
-          <>
-            <button className="btn" onClick={runSync} disabled={syncing || !health?.stravaConnected}>
-              {syncing ? <><span className="spinner" /> Import…</> : 'Synchroniser Strava'}
-            </button>
-            <Link href="/coach" className="btn" data-variant="ghost">Parler au coach</Link>
-          </>
+        sync={
+          <button type="button" className="d-sync" onClick={runSync} disabled={syncing || !health?.stravaConnected}>
+            {syncing ? 'Import en cours…' : 'Synchroniser Strava'}
+          </button>
         }
       />
 
@@ -486,7 +483,7 @@ export default function Dashboard() {
  * son déroulé sur toute la largeur, et les jours qui mènent à la course. La
  * console d'analyse suit, en dessous.
  */
-function TodayHero({ state, plan, actions }: { state: StateResponse; plan: PlanResponse; actions: React.ReactNode }) {
+function TodayHero({ state, plan, sync }: { state: StateResponse; plan: PlanResponse; sync: React.ReactNode }) {
   const today = state.today.date;
   const session = plan.sessions.find(
     (s) => s.date === today && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled',
@@ -517,7 +514,7 @@ function TodayHero({ state, plan, actions }: { state: StateResponse; plan: PlanR
           <div className="d-actions">
             {session && !done && (
               <Link
-                href={workout ? `/seance?d=${session.date}` : '/plan'}
+                href={workout ? `/seance?d=${session.date}&go=1` : '/plan'}
                 className="btn d-go"
                 data-variant="primary"
                 transitionTypes={['nav-forward']}
@@ -526,12 +523,16 @@ function TodayHero({ state, plan, actions }: { state: StateResponse; plan: PlanR
                 <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
               </Link>
             )}
-            {actions}
+            {session && !done && workout && (
+              <Link href={`/seance?d=${session.date}`} className="m-toc-link" transitionTypes={['nav-forward']}>
+                Voir les {workout.reduce((a, p) => a + p.steps.length, 0)} exercices
+              </Link>
+            )}
           </div>
           {session && !done && <WatchLine sessionId={session.id} status={session.garmin} />}
           <p className="d-model">
             Modèle physiologique du {frDate(state.model.asOf, { long: true, year: true })} · confiance{' '}
-            {num(state.model.confidence * 100)} %
+            {num(state.model.confidence * 100)} % · {sync}
           </p>
         </div>
         {session && (

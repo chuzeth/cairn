@@ -326,9 +326,14 @@ function WorkoutEntry({ session, sessions }: { session: SessionRow; sessions: Se
       <SessionFlow parts={parts} />
       <ChargeLine session={session} sessions={sessions} />
       <div className="m-cta">
-        <Link href={`/seance?d=${session.date}`} className="btn m-open" data-variant="primary" transitionTypes={['nav-forward']}>
+        {/* Le bouton ouvre la séance elle-même, au premier exercice — pas une page de plus
+            où il faudrait le chercher. Le sommaire reste à un lien. */}
+        <Link href={`/seance?d=${session.date}&go=1`} className="btn m-open" data-variant="primary" transitionTypes={['nav-forward']}>
           <span>Commencer la séance</span>
           <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
+        </Link>
+        <Link href={`/seance?d=${session.date}`} className="m-toc-link" transitionTypes={['nav-forward']}>
+          Voir les {parts.reduce((a, p) => a + p.steps.length, 0)} exercices
         </Link>
         <WatchLine sessionId={session.id} status={session.garmin} />
       </div>

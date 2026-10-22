@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { StrengthTestResult } from '@cairn/core';
 import { usesDoorKit } from '@cairn/core/exercises';
 import { blockDuration, clock, frDate, nbsp, type LoadRatioAlertRow, type SessionRow } from '@/lib/api';
@@ -10,7 +11,7 @@ import { ExerciseFigure } from '@/components/ExerciseFigure';
 import { WatchLine } from '@/components/Watch';
 import { RatioAlerts } from '@/components/ui';
 import {
-  measureText, parseMeasure, partDuration, partSummary, setLabel, stepRx, stepsOf, workoutOf, workoutSummary, type Part, type Step,
+  measureText, parseMeasure, partDuration, setLabel, stepRx, stepsOf, workoutOf, workoutSummary, type Part, type Step,
 } from '@/lib/workout';
 
 /**
@@ -123,7 +124,7 @@ const fieldText = (v: number | undefined) => (v == null ? '' : String(v).replace
 // ── La vue ───────────────────────────────────────────────────────────────────
 
 export function WorkoutView({
-  session, tests, prev, next, back, ratio,
+  session, tests, prev, next, back, ratio, autostart = false,
 }: {
   session: SessionRow;
   /** Les résultats des tests, tous jours confondus. */
@@ -135,7 +136,14 @@ export function WorkoutView({
   back: { href: string; label: string };
   /** Les ratios de charge que le plan dépasse ce jour-là, et d'où vient leur référence. */
   ratio?: { alerts: LoadRatioAlertRow[]; source: string | null };
+  /**
+   * Ouverte depuis « Commencer la séance » : le pas à pas s'ouvre d'emblée, et sa
+   * croix ramène d'où l'on vient. Le 22/10, Pierre : devoir recliquer sur
+   * « Commencer » en arrivant était « un peu bizarre ».
+   */
+  autostart?: boolean;
 }) {
+  const router = useRouter();
   const parts = useMemo(() => workoutOf(session), [session]);
   const steps = useMemo(() => stepsOf(parts), [parts]);
   const [progress, setProgress] = useState<Progress>({ sets: {}, at: 0 });
@@ -203,13 +211,46 @@ export function WorkoutView({
 
   const testProps = { tests, entries, saved, onEntry, save, date: session.date, error: saveError };
 
+  /** Le pas à pas, à l'exercice dit, ou là où on s'était arrêté. */
+  const start = useCallback((at?: number) => {
+    // Le premier geste ouvre le son : sans lui, le navigateur tairait les bips.
+    tone(1, 1);
+    update({ ...progress, at: at ?? (started && done < steps.length ? resumeAt : 0) });
+    setPlaying(true);
+  }, [progress, started, done, steps.length, resumeAt, update]);
+
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!autostart || opened.current) return;
+    opened.current = true;
+    setProgress((p) => {
+      const at = Object.values(p.sets).some((n) => n > 0) ? Math.min(p.at, steps.length - 1) : 0;
+      return { ...p, at };
+    });
+    setPlaying(true);
+  }, [autostart, steps.length]);
+
+  const close = () => {
+    // Venu de « Commencer la séance » : la croix ramène à l'écran d'où l'on vient.
+    if (autostart && window.history.length > 1) router.back();
+    else setPlaying(false);
+  };
+
+  // La montre coche la séance d'elle-même, si elle est enregistrée sous le bon sport.
+  const onWatch = session.garmin != null && session.garmin.state !== 'not_sent';
+  const endNote = onWatch
+    ? `Lance « ${planName(session)} » sur ta montre, en Cardio : elle te guide, et Cairn coche la séance.`
+    : 'Enregistre-la sur ta montre en Musculation : Cairn la cochera d’elle-même.';
+
+  const label = started && done < steps.length ? `Reprendre — exercice ${resumeAt + 1}` : 'Commencer la séance';
+
   return (
     <div className="w">
       <nav className="w-crumbs">
         <Link href={back.href} transitionTypes={['nav-back']}>← {back.label}</Link>
         <span className="w-days">
-          {prev && <Link href={`/seance?d=${prev}`} transitionTypes={['nav-back']}>‹ {frDate(prev, { weekday: true })}</Link>}
-          {next && <Link href={`/seance?d=${next}`} transitionTypes={['nav-forward']}>{frDate(next, { weekday: true })} ›</Link>}
+          {prev && <Link href={`/seance?d=${prev}`} transitionTypes={['nav-back']} aria-label={`Séance du ${frDate(prev, { weekday: true, long: true })}`}>‹ {frDate(prev, { weekday: true })}</Link>}
+          {next && <Link href={`/seance?d=${next}`} transitionTypes={['nav-forward']} aria-label={`Séance du ${frDate(next, { weekday: true, long: true })}`}>{frDate(next, { weekday: true })} ›</Link>}
         </span>
       </nav>
 
@@ -217,72 +258,39 @@ export function WorkoutView({
         <div className="w-date">{frDate(session.date, { weekday: true, long: true })}</div>
         <h1 className="w-title">{planName(session)}</h1>
         <p className="w-summary">{workoutSummary(parts, session.plannedDurationS, session.plannedElevationGainM ?? 0)}</p>
-        {ratio && session.status !== 'completed' && <RatioAlerts alerts={ratio.alerts} source={ratio.source} className="w-alerts" />}
         {session.status === 'completed' && <p className="w-done">✓ Faite, et rattachée à la séance de ta montre.</p>}
-        <div className="w-start">
-          <button
-            type="button"
-            className="btn w-go"
-            data-variant="primary"
-            onClick={() => {
-              // Le premier geste ouvre le son : sans lui, le navigateur tairait les bips.
-              tone(1, 1);
-              if (!started) update({ ...progress, at: 0 });
-              setPlaying(true);
-            }}
-          >
-            <span>{started && done < steps.length ? `Reprendre — exercice ${resumeAt + 1}` : 'Commencer la séance'}</span>
-            <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
-          </button>
-          <span className="w-start-note">
-            {done > 0 ? `${done} exercice${done > 1 ? 's' : ''} sur ${steps.length} fait${done > 1 ? 's' : ''}` : 'Un exercice à la fois, en grand, les repos minutés.'}
-          </span>
-        </div>
-        {/* La montre après l'action du moment : elle la sert, elle ne la précède pas. */}
+        {ratio && session.status !== 'completed' && <RatioAlerts alerts={ratio.alerts} source={ratio.source} className="w-alerts" />}
         {session.status !== 'completed' && <WatchLine sessionId={session.id} status={session.garmin} />}
       </header>
 
-      <Sommaire parts={parts} finished={finished} />
-
-      {parts.map((part, pi) => (
-        <section className="w-part" key={`${part.name}-${pi}`}>
-          <header className="w-part-head">
-            <h2>{part.name}</h2>
-            <span>{partSummary(part)}</span>
-          </header>
-          {part.steps.map((step) => (
-            <StepCard
-              key={step.index}
-              step={step}
-              done={progress.sets[step.index] ?? 0}
-              onDone={(n) => setDone(step.index, n)}
-              {...testProps}
-            />
-          ))}
-        </section>
-      ))}
+      {/* Le sommaire est la séance : chaque exercice ouvre le pas à pas à cet endroit.
+          Une seule façon de la faire, et toujours la même. */}
+      <Sommaire parts={parts} finished={finished} onPick={(i) => start(i)} />
 
       {session.intent && (
-        <section className="w-why">
-          <h2>Pourquoi cette séance</h2>
+        <details className="w-why">
+          <summary>Pourquoi cette séance</summary>
           <p>{nbsp(session.intent)}</p>
-        </section>
+        </details>
       )}
+
+      <div className="w-cta">
+        <button type="button" className="btn w-go" data-variant="primary" onClick={() => start()}>
+          <span>{label}</span>
+          <svg width="22" height="10" viewBox="0 0 22 10" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M0 5h21M16 0.5 21 5l-5 4.5" /></svg>
+        </button>
+        {done > 0 && <span className="w-start-note">{done} exercice{done > 1 ? 's' : ''} sur {steps.length} fait{done > 1 ? 's' : ''}</span>}
+      </div>
 
       {playing && (
         <Player
           title={planName(session)}
-          // La montre coche la séance d'elle-même, si elle est enregistrée sous le bon sport.
-          endNote={
-            session.type === 'strength'
-              ? 'Enregistre-la sur ta montre en Musculation : Cairn la cochera d’elle-même.'
-              : 'Enregistre la marche sur ta montre en Marche, le reste en Musculation : Cairn cochera la séance.'
-          }
+          endNote={endNote}
           parts={parts}
           steps={steps}
           progress={progress}
           onProgress={update}
-          onClose={() => setPlaying(false)}
+          onClose={close}
           {...testProps}
         />
       )}
@@ -299,7 +307,9 @@ function stepFinished(step: Step, progress: Progress, entries: Record<string, En
 }
 
 /** La séance d'un coup d'œil : ses parties, ses exercices numérotés, ce que chacun demande. */
-function Sommaire({ parts, finished: isFinished }: { parts: Part[]; finished: (s: Step) => boolean }) {
+function Sommaire({
+  parts, finished: isFinished, onPick,
+}: { parts: Part[]; finished: (s: Step) => boolean; onPick: (index: number) => void }) {
   return (
     <nav className="w-toc" aria-label="Sommaire de la séance">
       {parts.map((part, pi) => (
@@ -313,11 +323,12 @@ function Sommaire({ parts, finished: isFinished }: { parts: Part[]; finished: (s
               const finished = isFinished(s);
               return (
                 <li key={s.index} data-done={finished}>
-                  <a href={`#etape-${s.n}`}>
+                  <button type="button" onClick={() => onPick(s.n - 1)} aria-label={`${s.name}, ${stepRx(s)} : commencer ici`}>
                     <span className="w-toc-n">{finished ? '✓' : String(s.n).padStart(2, '0')}</span>
                     <span className="w-toc-name">{s.name}</span>
                     <span className="w-toc-rx">{stepRx(s)}</span>
-                  </a>
+                    <svg className="w-toc-go" width="7" height="12" viewBox="0 0 7 12" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M1 1l5 5-5 5" /></svg>
+                  </button>
                 </li>
               );
             })}
@@ -393,59 +404,33 @@ function Details({ step }: { step: Step }) {
       {step.sheet && usesDoorKit(step.sheet) && (
         <Link href="/exercices#kit-porte" className="w-kit">Installer l’accroche de porte →</Link>
       )}
+      {step.sheet && <Sheet x={step.sheet} />}
     </>
   );
 }
 
-/** Un exercice du déroulé : le schéma, ce qu'il y a à faire, les séries à cocher, la fiche à déplier. */
-function StepCard({ step, done, onDone, ...tests }: { step: Step; done: number; onDone: (n: number) => void } & TestProps) {
-  const x = step.sheet;
+/** La fiche entière de l'exercice, dépliée à la demande : rien ne s'y perd, rien ne s'y impose. */
+function Sheet({ x }: { x: NonNullable<Step['sheet']> }) {
   return (
-    <article className="w-step" id={`etape-${step.n}`} data-done={done >= step.sets}>
-      <header className="w-step-head">
-        <h3 className="w-step-name">
-          <span className="w-step-n">{step.n}</span>
-          {step.name}
-        </h3>
-        <Main step={step} />
-      </header>
-      <div className="w-step-grid">
-        {x && (
-          <div className="w-step-fig">
-            <ExerciseFigure exercise={x.key} label={x.name} tempo={step.block.tempo} />
-          </div>
-        )}
-        <div className="w-step-body">
-          <Details step={step} />
-          {step.measure ? (
-            <TestEntry step={step} {...tests} />
-          ) : (
-            <SetDots step={step} done={done} onDone={onDone} />
-          )}
-          {x && (
-            <details className="w-more">
-              <summary>Tout sur l’exercice</summary>
-              <p className="w-more-why">{nbsp(x.why)}</p>
-              {x.setup && (
-                <>
-                  <h4>Installation</h4>
-                  <ul>{x.setup.map((s, i) => <li key={i}>{nbsp(s)}</li>)}</ul>
-                </>
-              )}
-              <h4>Le mouvement</h4>
-              <ol>{x.steps.map((s, i) => <li key={i}>{nbsp(s)}</li>)}</ol>
-              <h4>Ce que tu dois sentir</h4>
-              <p>{nbsp(x.feel)}</p>
-              <h4>Les erreurs</h4>
-              <ul>{x.mistakes.map((m, i) => <li key={i}>{nbsp(m)}</li>)}</ul>
-              {x.easier && <p><strong>Plus facile.</strong> {nbsp(x.easier)}</p>}
-              {x.harder && <p><strong>Plus dur.</strong> {nbsp(x.harder)}</p>}
-              <p className="w-cast"><strong>Le bras blessé.</strong> {nbsp(x.cast)}</p>
-            </details>
-          )}
-        </div>
-      </div>
-    </article>
+    <details className="w-more">
+      <summary>Tout sur l’exercice</summary>
+      <p className="w-more-why">{nbsp(x.why)}</p>
+      {x.setup && (
+        <>
+          <h4>Installation</h4>
+          <ul>{x.setup.map((s, i) => <li key={i}>{nbsp(s)}</li>)}</ul>
+        </>
+      )}
+      <h4>Le mouvement</h4>
+      <ol>{x.steps.map((s, i) => <li key={i}>{nbsp(s)}</li>)}</ol>
+      <h4>Ce que tu dois sentir</h4>
+      <p>{nbsp(x.feel)}</p>
+      <h4>Les erreurs</h4>
+      <ul>{x.mistakes.map((m, i) => <li key={i}>{nbsp(m)}</li>)}</ul>
+      {x.easier && <p><strong>Plus facile.</strong> {nbsp(x.easier)}</p>}
+      {x.harder && <p><strong>Plus dur.</strong> {nbsp(x.harder)}</p>}
+      <p className="w-cast"><strong>Le bras blessé.</strong> {nbsp(x.cast)}</p>
+    </details>
   );
 }
 
@@ -562,6 +547,8 @@ function Player({
   const [run, setRun] = useState<Run | null>(null);
   const [half, setHalf] = useState<Half | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  /** La liste des exercices, ouverte depuis le compteur : sauter où l'on veut, sans quitter la séance. */
+  const [listing, setListing] = useState(false);
   const step = steps[at]!;
   const done = progress.sets[step.index] ?? 0;
   const dialog = useRef<HTMLDivElement>(null);
@@ -758,12 +745,14 @@ function Player({
         if (finished) setFinished(false);
         else go(at - 1);
       } else if (e.key === 'Escape') {
-        onClose();
+        // La liste ouverte se ferme d'abord ; la séance ensuite.
+        if (listing) setListing(false);
+        else onClose();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [primary, at, steps.length, go, onClose, finished]);
+  }, [primary, at, steps.length, go, onClose, finished, listing]);
 
   const remaining = run && run.kind !== 'watch' ? Math.max(0, Math.ceil((run.endsAt - now) / 1000)) : 0;
   const totalSets = steps.reduce((a, s) => a + Math.min(s.sets, progress.sets[s.index] ?? 0), 0);
@@ -781,17 +770,58 @@ function Player({
           ))}
         </div>
         <div className="w-p-row">
-          <button type="button" className="w-p-close" onClick={onClose} aria-label="Fermer le pas à pas">
+          {/* La liste ouverte, la croix la referme : fermer la séance n'est pas ce qu'on cherche alors. */}
+          <button
+            type="button"
+            className="w-p-close"
+            onClick={listing ? () => setListing(false) : onClose}
+            aria-label={listing ? 'Fermer la liste des exercices' : 'Fermer le pas à pas'}
+          >
             <svg width="14" height="14" viewBox="0 0 14 14" stroke="currentColor" strokeWidth="1.2" aria-hidden><path d="M1 1l12 12M13 1 1 13" /></svg>
           </button>
           <div className="w-p-where">
             <span className="w-p-title">{title}</span>
           </div>
-          <span className="w-p-count" aria-label={finished ? 'Séance finie' : `Exercice ${at + 1} sur ${steps.length}`}>
+          <button
+            type="button"
+            className="w-p-count"
+            aria-expanded={listing}
+            aria-label={finished ? 'Séance finie, la liste des exercices' : `Exercice ${at + 1} sur ${steps.length} : la liste des exercices`}
+            onClick={() => setListing((l) => !l)}
+          >
             {finished ? 'Fini' : `${at + 1}/${steps.length}`}
-          </span>
+          </button>
         </div>
       </header>
+
+      {listing && (
+        <div className="w-p-list" role="dialog" aria-label="Les exercices de la séance">
+          {parts.map((p, pi) => (
+            <section key={`${p.name}-${pi}`}>
+              <h3>{p.name}</h3>
+              <ol>
+                {p.steps.map((s) => {
+                  const i = steps.indexOf(s);
+                  return (
+                    <li key={s.index}>
+                      <button
+                        type="button"
+                        data-now={!finished && i === at}
+                        data-done={stepFinished(s, progress, tests.entries)}
+                        onClick={() => { setFinished(false); go(i); setListing(false); }}
+                      >
+                        <span className="w-toc-n">{stepFinished(s, progress, tests.entries) ? '✓' : String(s.n).padStart(2, '0')}</span>
+                        <span className="w-toc-name">{s.name}</span>
+                        <span className="w-toc-rx">{stepRx(s)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ))}
+        </div>
+      )}
 
       {finished ? (
         <div className="w-p-end">

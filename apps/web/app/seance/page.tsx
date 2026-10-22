@@ -87,6 +87,7 @@ function Seance() {
         prev={prev}
         next={next}
         back={back}
+        autostart={params.get('go') === '1'}
         ratio={{
           alerts: (plan.loadRatios?.alerts ?? []).filter((a) => a.date === date),
           source: plan.loadRatios?.source ?? null,
