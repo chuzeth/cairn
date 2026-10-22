@@ -210,18 +210,20 @@ for (const side of ['R', 'L']) {
   // Le col : 5,2 au talon, 4,1 au cou-de-pied, tout l'avant-pied dedans.
   const collar = (x) => (x < -1 ? 5.2 : x < 2.5 ? 5.2 - ((x + 1) / 3.5) * 1.1 : 4.1);
   const inside = new Map(zone.map((v) => [v, 1 - smooth(collar(u(v)) - 0.45, collar(u(v)) + 0.45, world[v][1])]));
-  // Les orteils fondus : un lissage de Taubin, qui ne fait pas fondre le volume.
-  const toes = zone.filter((v) => u(v) > 2.5);
-  for (let it = 0; it < 14; it++) {
+  // Les orteils fondus, puis toute la tige lissée : une chaussure ne montre ni les tendons ni les os
+  // du pied. Un lissage de Taubin, qui ne fait pas fondre le volume.
+  const fade = (v) => Math.max(smooth(2.5, 5.5, u(v)), 0.75 * inside.get(v));
+  const shod = zone.filter((v) => fade(v) > 0.01);
+  for (let it = 0; it < 18; it++) {
     for (const lambda of [0.5, -0.53]) {
-      const moved = toes.map((v) => {
+      const moved = shod.map((v) => {
         const ns = [...neighbours[v]];
         const c = [0, 0, 0];
         for (const q of ns) for (let k = 0; k < 3; k++) c[k] += world[q][k] / ns.length;
-        const t = smooth(2.5, 5.5, u(v)) * lambda;
+        const t = fade(v) * lambda;
         return world[v].map((x, k) => x + (c[k] - x) * t);
       });
-      toes.forEach((v, i) => { world[v] = moved[i]; });
+      shod.forEach((v, i) => { world[v] = moved[i]; });
     }
   }
   const n = normalsOf(world);
@@ -240,10 +242,11 @@ for (const side of ['R', 'L']) {
     // La tige : l'épaisseur du cuir ; la semelle : un rebord qui dépasse un peu.
     const low = 1 - smooth(0.35, 1.3, p[1]);
     const lateral = Math.sign(p[2] - ankle[2]) || 1;
-    p[0] += n[v][0] * 0.32 * s * (1 - low) + (u(v) < -1 ? -0.18 : 0) * low * s;
-    p[1] = Math.max(0, p[1] + n[v][1] * 0.32 * s * (1 - low));
-    p[2] += n[v][2] * 0.32 * s * (1 - low) + lateral * 0.28 * low * s;
-    shoe[v] = [s, s * (1 - smooth(0.85, 1.35, p[1]))];
+    p[0] += n[v][0] * 0.42 * s * (1 - low) + (u(v) < -1 ? -0.18 : 0) * low * s;
+    p[1] = Math.max(0, p[1] + n[v][1] * 0.42 * s * (1 - low));
+    p[2] += n[v][2] * 0.42 * s * (1 - low) + lateral * 0.3 * low * s;
+    // La semelle, sur 2 cm de haut : de profil, une bande sombre sous la tige.
+    shoe[v] = [s, s * (1 - smooth(1.05, 1.55, p[1]))];
   }
 }
 

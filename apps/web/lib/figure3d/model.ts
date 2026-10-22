@@ -17,7 +17,7 @@ import type { FigureSpec, Prop } from '../figure';
  * service worker le range dès l'installation : les deux noms doivent rester
  * les mêmes, `tests/exercise-figures-3d.test.ts` le vérifie.
  */
-export const MODEL_URL = '/figures/mannequin-7947f23b.glb';
+export const MODEL_URL = '/figures/mannequin-603f2975.glb';
 
 /** Le décor que la 3D sait bâtir. */
 export const PROPS_3D: ReadonlySet<Prop['kind']> = new Set([

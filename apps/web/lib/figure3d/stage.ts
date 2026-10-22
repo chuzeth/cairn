@@ -77,9 +77,9 @@ function readTokens(el: Element): Tokens {
     metal: faint,
     plate: c('--text-dim', '#4A433B'),
     carry: c('--fig-carry', '#8C7B63'),
-    // La chaussure : la tige un ton à côté du corps, la semelle claire sur un corps sombre, sombre sur un corps clair.
-    shoe: near.clone().lerp(faint, 0.45),
-    sole: bg2,
+    // La chaussure, à l'inverse du corps : tige claire et semelle sombre sur le corps à l'encre, l'inverse la nuit.
+    shoe: bg2.clone().lerp(c('--bg-elev', '#FBF8F3'), 0.5),
+    sole: c('--text-dim', '#4A433B'),
   };
 }
 
@@ -106,7 +106,7 @@ function bodyMaterial() {
           'vec3 tone = mix( diffuse, uMuscle, vMuscle * ( 1.0 - vShoe.x ) );',
           'tone = mix( tone, uShoe, vShoe.x );',
           'tone = mix( tone, uSole, vShoe.y );',
-          'tone = mix( tone, uFar, vFar * uFarMix );',
+          'tone = mix( tone, uFar, vFar * uFarMix * ( 1.0 - 0.7 * vShoe.x ) );',
           'vec4 diffuseColor = vec4( tone, opacity );',
         ].join('\n\t'),
       )

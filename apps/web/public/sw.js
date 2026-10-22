@@ -89,7 +89,7 @@ const KEPT = [
  * pas un fragment de Next.
  */
 const FIGURES = 'cairn-figures';
-const FIGURE_ASSETS = ['/figures/mannequin-7947f23b.glb'];
+const FIGURE_ASSETS = ['/figures/mannequin-603f2975.glb'];
 
 /** La date du relevé, portée du cache jusqu'à l'écran. */
 const RECORDED_AT = 'x-cairn-recorded-at';

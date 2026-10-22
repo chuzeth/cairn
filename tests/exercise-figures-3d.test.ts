@@ -76,6 +76,8 @@ function solids(prop: Prop, key: string): [number, number, number, number, numbe
 const INHERITED: string[] = [
   'mollets-excentriques n° 1, t = 0 : box',
   'montee-tabouret n° 1, t = 0.5 : wall',
+  'test-pont n° 1, t = 0.5 : stool',
+  'test-pont n° 1, t = 1 : stool',
   'soleaire-assis n° 1, t = 0 : box',
   'soleaire-assis n° 1, t = 1 : box',
   'activation n° 1, t = 0.5 : sol',
@@ -218,8 +220,9 @@ describe('Les schémas en 3D', () => {
         }
       }
     }
-    // Le dessin les a déjà, la 3D les rend visibles : la pointe qui plonge dans la caisse des mollets, la cuisse
-    // qui frôle le mur et le pied arrière qui passe sous le sol à mi-geste, le pied dans la contremarche.
+    // Le dessin les a déjà, la 3D les rend visibles : la pointe qui plonge dans la caisse des mollets, le talon
+    // dans le tabouret du test du pont, la cuisse qui frôle le mur et le pied arrière qui passe sous le sol à
+    // mi-geste, le pied dans la contremarche.
     expect(inherited).toEqual(INHERITED);
   }, 120_000);
 });
