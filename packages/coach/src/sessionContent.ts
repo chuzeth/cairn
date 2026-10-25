@@ -114,8 +114,16 @@ const RUNNING_TARGETS = [
  * Valide un contenu de séance et le complète depuis les zones de l'athlète.
  * Lève une erreur nommant le champ fautif : le coach doit pouvoir corriger et
  * réessayer sans deviner.
+ *
+ * `runFree` : la séance ne se court pas — renforcement, escalier, vélo. Ses blocs
+ * gardent la FC de leur zone et ne reçoivent pas son allure : le 25/10, un vélo
+ * d'appartement en zone 2 affichait « 5:37–6:51/km » sur le plan et la montre.
  */
-export function parseSessionBlocks(raw: unknown, model: PhysiologyModel): SessionBlock[] {
+export function parseSessionBlocks(
+  raw: unknown,
+  model: PhysiologyModel,
+  opts: { runFree?: boolean } = {},
+): SessionBlock[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new Error('blocks : un tableau d\'au moins un bloc est attendu.');
   }
@@ -124,7 +132,7 @@ export function parseSessionBlocks(raw: unknown, model: PhysiologyModel): Sessio
   }
 
   const zones = buildZones(model);
-  const blocks = raw.map((entry, i) => parseBlock(entry, `blocks[${i}]`, zones, model));
+  const blocks = raw.map((entry, i) => parseBlock(entry, `blocks[${i}]`, zones, model, opts.runFree ?? false));
 
   const { durationS } = sessionTotals(model, blocks);
   if (durationS > MAX_TOTAL_DURATION_S) {
@@ -170,6 +178,7 @@ function parseBlock(
   at: string,
   zones: ZoneDefinition[],
   model: PhysiologyModel,
+  runFree: boolean,
 ): SessionBlock {
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
     throw new Error(`${at} : objet attendu.`);
@@ -294,6 +303,18 @@ function parseBlock(
   if (effort !== undefined) {
     block.effort = effort;
     if (vamTargetMh !== undefined) block.provenance = { vam: 'default' };
+  } else if (kind === undefined && runFree) {
+    if (raw.speedRangeMs !== undefined) {
+      throw new Error(`${at}.speedRangeMs : une séance hors course ne se court pas — sa cible est la FC.`);
+    }
+    const hrRange = raw.hrRange === undefined
+      ? ([Math.round(z.hrMin), Math.round(z.hrMax)] as [number, number])
+      : range(raw.hrRange, `${at}.hrRange`, 0, model.hrMax, true);
+    block.hrRange = hrRange;
+    block.provenance = {
+      hr: hrRange[0] === Math.round(z.hrMin) && hrRange[1] === Math.round(z.hrMax) ? hrProvenanceOf(z) : 'default',
+      ...(vamTargetMh !== undefined ? { vam: 'default' as const } : {}),
+    };
   } else if (kind === undefined) {
     const hrRange = raw.hrRange === undefined
       ? ([Math.round(z.hrMin), Math.round(z.hrMax)] as [number, number])

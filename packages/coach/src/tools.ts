@@ -10,7 +10,7 @@ import * as db from '@cairn/db';
 import {
   ACWR_SPIKE, EASY_SPEED_WINDOW_DAYS, EASY_TERRAINS, ECCENTRIC_MOVEMENTS, MOUNTAIN_M_PER_KM, VERTICAL_CURVE_DURATIONS,
   describeZone, easySpeedOf, formatClock, formatDuration, formatPace, goalProbability, hrProvenanceOf, interpretAcwr,
-  interpretDurability, isEasyZone, msToKmh, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
+  interpretDurability, isEasyZone, isRunFree, msToKmh, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
   summarizeForCoach,
   targetRaceDayTsb, verticalCapacity,
   type LoadRatioExceedance,
@@ -1530,7 +1530,7 @@ export async function executeTool(
       let blocks: SessionBlock[] | undefined;
       let amendments: string[] = [];
       if (rawBlocks !== undefined) {
-        blocks = parseSessionBlocks(rawBlocks, model);
+        blocks = parseSessionBlocks(rawBlocks, model, { runFree: isRunFree(newType ?? target.type) });
         const totals = sessionTotals(model, blocks);
         patch.blocks = blocks;
         patch.plannedDurationS = totals.durationS;

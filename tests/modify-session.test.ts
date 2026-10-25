@@ -172,6 +172,28 @@ describe('Une séance passée dont le contenu change', () => {
   });
 });
 
+describe('Une séance hors course', () => {
+  // Le 25/10 : un vélo d'appartement à la place de la récupération du dimanche. Le bloc en zone 2
+  // héritait de l'allure de course de sa zone — « 5:37–6:51/km » sur le plan et sur la montre.
+  const dimanche = (): PlannedSession => ({
+    id: 'dimanche', athleteId: 'pierre', date: '2099-01-04', type: 'cross_training',
+    title: 'Récupération 39 min + souplesse et respiration 35 min', intent: '', priority: 'key', status: 'planned',
+    blocks: [{ label: 'Marche facile, à plat', zone: 'Z1', durationS: 1800 }],
+    plannedLoad: 40, plannedMechanicalLoad: 3, plannedDurationS: 4465,
+  });
+
+  it('ne reçoit pas d’allure : elle ne se court pas', async () => {
+    db.sessions = [dimanche()];
+    await executeTool('pierre', 'modify_session', {
+      session_id: 'dimanche', rationale: 'Du vélo d\'appartement à la place de la marche.', apply: true,
+      blocks: [{ label: 'Endurance sur le vélo', zone: 'Z2', durationS: 2400, hrRange: [134, 148] }],
+    });
+    const [bike] = (db.updates[0]!.patch as Partial<PlannedSession>).blocks!;
+    expect([bike!.hrRange, bike!.speedRangeMs, bike!.paceRange]).toEqual([[134, 148], undefined, undefined]);
+    expect(bike!.provenance).toEqual({ hr: 'default' });
+  });
+});
+
 describe('Une rando-course qui porte de l\'intensité garde ses blocs', () => {
   const efforts = (blocks: readonly SessionBlock[]) => blocks.filter((b) => b.zone === 'Z3');
 
