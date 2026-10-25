@@ -192,6 +192,20 @@ describe('Une séance hors course', () => {
     expect([bike!.hrRange, bike!.speedRangeMs, bike!.paceRange]).toEqual([[134, 148], undefined, undefined]);
     expect(bike!.provenance).toEqual({ hr: 'default' });
   });
+
+  it('ne donne pas non plus d’allure au repos entre deux séries', async () => {
+    // Le même jour, les 15 s entre deux équilibres affichaient « plus lent que 6:54/km ».
+    db.sessions = [dimanche()];
+    await executeTool('pierre', 'modify_session', {
+      session_id: 'dimanche', rationale: 'L\'équilibre du côté faible.', apply: true,
+      blocks: [{
+        label: 'Équilibre yeux fermés', zone: 'Z2', durationS: 45, repeat: 4, effort: 'Tenir sans trembler',
+        recovery: { durationS: 15, zone: 'Z1', active: false, betweenReps: true },
+      }],
+    });
+    const { recovery } = (db.updates[0]!.patch as Partial<PlannedSession>).blocks![0]!;
+    expect([recovery!.speedRangeMs, recovery!.paceRange]).toEqual([undefined, undefined]);
+  });
 });
 
 describe('Une rando-course qui porte de l\'intensité garde ses blocs', () => {

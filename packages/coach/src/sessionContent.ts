@@ -359,7 +359,7 @@ function parseBlock(
     block.cadenceTargetSpm = Math.round(number(raw.cadenceTargetSpm, `${at}.cadenceTargetSpm`, 120, 240));
   }
   if (raw.recovery !== undefined) {
-    block.recovery = parseRecovery(raw.recovery, `${at}.recovery`, zones);
+    block.recovery = parseRecovery(raw.recovery, `${at}.recovery`, zones, runFree);
   }
   if (raw.circuit !== undefined) {
     block.circuit = parseCircuit(raw.circuit, `${at}.circuit`);
@@ -426,7 +426,7 @@ function parseBlock(
   return block;
 }
 
-function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[]): Recovery {
+function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[], runFree = false): Recovery {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error(`${at} : objet attendu.`);
   }
@@ -458,10 +458,11 @@ function parseRecovery(raw: unknown, at: string, zones: ZoneDefinition[]): Recov
   // tenir, comme les blocs. Sans cela, « récup 90 s active » s'exécute au juger,
   // et le bilan de réserve anaérobie doit deviner la vitesse au lieu de la lire.
   // Une remontée se marche : sa plage cardiaque dit ce qu'est « facile », une
-  // allure à plat n'y dirait rien.
+  // allure à plat n'y dirait rien — pas plus qu'entre deux séries d'une séance
+  // hors course (`runFree`).
   if (z.speedMaxMs != null) {
     recovery.hrRange = [Math.round(z.hrMin), Math.round(z.hrMax)];
-    if ((recovery.elevationGainM ?? 0) > 0) {
+    if ((recovery.elevationGainM ?? 0) > 0 || runFree) {
       recovery.provenance = { hr: hrProvenanceOf(z) };
     } else {
       recovery.speedRangeMs = [z.speedMinMs, z.speedMaxMs];
