@@ -58,6 +58,8 @@
   --fig-mat: #E6DFD3;
   --fig-towel: #CFD5D3;
   --fig-carry: #8C7B63;
+  /* La position de départ, en 3D : une silhouette pâle derrière le corps. */
+  --fig-ghost: #DDD6CA;
   --topo: #E2DACD;
 
   /* Sémantique */
@@ -143,6 +145,7 @@
   --fig-mat: #2C2823;
   --fig-towel: #3A4442;
   --fig-carry: #9E8C72;
+  --fig-ghost: #3B3630;
   --topo: #2E2A25;
   --metabolic: #8FA6B8;
   --metabolic-dim: #2C343B;
@@ -1309,6 +1312,9 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .xf-key { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 8px; align-items: start; }
 .xf-key::before { content: ''; width: 16px; height: 0; margin-top: 0.7em; border-top: 2px solid var(--fig-near); }
 .xf-key-ghost::before { border-top: 2px dashed var(--text-faint); }
+/* En 3D, la légende montre ce qu'on voit : le corps plein, et la silhouette pâle du départ. */
+.xf-panel[data-3d] .xf-key::before { height: 10px; margin-top: 0.32em; border: 0; border-radius: 2px; background: var(--fig-near); }
+.xf-panel[data-3d] .xf-key-ghost::before { background: var(--fig-ghost); }
 .xf .fg-part { stroke: var(--bg-elev); stroke-width: 1.1; stroke-linejoin: round; }
 .xf .fg-fill { stroke: none; }
 /* Le modelé : l'ombre au dos des volumes, la lumière devant. */

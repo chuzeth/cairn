@@ -309,26 +309,6 @@ function GhostView({ list }: { list: Part[] }) {
   );
 }
 
-/**
- * Le même pointillé, posé sur la 3D : les fonds ne peuvent plus effacer les
- * bords intérieurs sans effacer le corps dessous. Un masque le fait — il ôte
- * l'intérieur de la silhouette de départ, et le corps de l'instant, devant
- * lequel le départ passe toujours derrière.
- */
-function GhostOverlay({ list, body, uid, box }: { list: Part[]; body: Part[]; uid: string; box: Box }) {
-  return (
-    <g className="fg-ghost">
-      <mask id={`${uid}-gm`} maskUnits="userSpaceOnUse" x={fmt(box.x0)} y={fmt(-box.y1)} width={fmt(box.x1 - box.x0)} height={fmt(box.y1 - box.y0)}>
-        <rect x={fmt(box.x0)} y={fmt(-box.y1)} width={fmt(box.x1 - box.x0)} height={fmt(box.y1 - box.y0)} fill="#fff" />
-        {[...list, ...body].map((p, i) => <path key={i} d={pathOf(p.pts)} fill="#000" />)}
-      </mask>
-      <g mask={`url(#${uid}-gm)`}>
-        {list.map((p, i) => <path key={i} d={pathOf(p.pts)} className="fg-ghost-edge fg-ghost-line" />)}
-      </g>
-    </g>
-  );
-}
-
 /** Ce qui passe derrière le corps (un élastique dans le dos) : masqué par la silhouette de l'instant. */
 function BehindBody({ body, uid, box, children }: { body: Part[]; uid: string; box: Box; children: ReactNode }) {
   return (
@@ -460,7 +440,7 @@ function PanelView({ panel, uid, name, frame, phase = 1, three = null, moving = 
           {!overlay && panel.props.filter((p) => p.kind !== 'floor').map((p, i) => <PropView key={i} prop={p} box={box} />)}
           {!overlay && floor && <PropView prop={{ kind: 'floor' }} box={box} />}
           {held?.ghost && <circle cx={fmt(held.ghost[0])} cy={fmt(-held.ghost[1])} r={ring} className="fg-weight-ghost" />}
-          {ghost && (overlay ? <GhostOverlay list={ghost.parts} body={list} uid={uid} box={box} /> : <GhostView list={ghost.parts} />)}
+          {ghost && !overlay && <GhostView list={ghost.parts} />}
           {!moving && ghostBands.map((b, i) => line(b.a, b.b, `fg-band fg-band-${b.kind} fg-band-ghost`, `gb${i}`))}
           {overlay ? <BehindBody body={list} uid={uid} box={box}>{behind}</BehindBody> : behind}
           {!overlay && carried && !carried.front && <path d={pathOf(carried.pts)} className="fg-carry" />}

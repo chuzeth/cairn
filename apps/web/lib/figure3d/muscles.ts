@@ -13,11 +13,12 @@
  * 1 à 2 cm. Le résultat est un attribut par sommet, de 0 à 1, que le matériau
  * mélange vers la terracotta.
  *
- * `side` suit le dessin : `near` (par défaut) est le côté droit, celui qu'on
- * voit ; les muscles du bras sont ceux du bras libre.
+ * `side` suit le dessin : de profil, `near` (par défaut) est le côté droit,
+ * celui qu'on voit ; de face, `left` et `right` sont ceux de l'image
+ * (`sideOf`). Les muscles du bras sont ceux du bras libre.
  */
-import type { Muscle, SidePose } from '../figure';
-import type { RestData, Side } from './rig';
+import type { Muscle, Pose } from '../figure';
+import { armSides, sideOf, type RestData, type Side } from './rig';
 
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -73,6 +74,7 @@ function region(m: Muscle['muscle'], side: Side, d: RestData): Region | null {
   const y = (v: number) => d.pos[v * 3 + 1]!;
   const z = (v: number) => d.pos[v * 3 + 2]!;
   const nx = (v: number) => d.normal[v * 3]!;
+  const nz = (v: number) => d.normal[v * 3 + 2]!;
   switch (m) {
     case 'quads': {
       const seg = thigh();
@@ -154,6 +156,16 @@ function region(m: Muscle['muscle'], side: Side, d: RestData): Region | null {
         return smooth(-0.05, -0.35, nx(v)) * smooth(hipJ[0] - 1, hipJ[0] - 4, x(v)) * band(y(v), fold, hipY + 8.2, 1.4) * band(zz, 0.9, 12.5, 1.6) * smooth(0.2, 0.5, w);
       };
     }
+    case 'gluteMed': {
+      const hipJ = d.head(`upperleg01.${side}`);
+      const onPelvis = on(new RegExp(`^(root|spine05|pelvis\\.${side}|upperleg01\\.${side})$`));
+      return (v) => {
+        const w = d.weightOf(v, onPelvis);
+        if (w < 0.2 || z(v) * sz < 3) return 0;
+        // Le moyen fessier : le dehors du bassin, de la crête iliaque au grand trochanter, sur ses deux tiers arrière.
+        return smooth(0.25, 0.55, nz(v) * sz) * band(y(v), hipY - 1, hipY + 7.5, 1.4) * band(x(v), hipJ[0] - 7, hipJ[0] + 2.5, 1.6) * smooth(0.2, 0.5, w);
+      };
+    }
     case 'abs':
       return (v) => {
         const w = d.weightOf(v, onTrunk);
@@ -221,12 +233,12 @@ function region(m: Muscle['muscle'], side: Side, d: RestData): Region | null {
 const ARM: ReadonlySet<Muscle['muscle']> = new Set(['biceps', 'triceps', 'forearm', 'shoulder']);
 
 /** Le masque des muscles d'un exercice, de 0 à 1 par sommet. */
-export function muscleMask(d: RestData, muscles: readonly Muscle[], pose: SidePose): Float32Array {
+export function muscleMask(d: RestData, muscles: readonly Muscle[], pose: Pose): Float32Array {
   const n = d.pos.length / 3;
   const out = new Float32Array(n);
-  const freeSide: Side = pose.freeSide === 'far' ? 'L' : 'R';
+  const { free } = armSides(pose);
   const fns = muscles
-    .map((m) => region(m.muscle, ARM.has(m.muscle) ? freeSide : m.side === 'far' || m.side === 'left' ? 'L' : 'R', d))
+    .map((m) => region(m.muscle, ARM.has(m.muscle) ? free : sideOf(pose, m.side ?? (pose.view === 'side' ? 'near' : 'right')), d))
     .filter((f): f is Region => f !== null);
   for (let v = 0; v < n; v++) {
     let k = 0;

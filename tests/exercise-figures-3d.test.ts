@@ -4,21 +4,21 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { FIGURES } from '../apps/web/lib/exerciseFigures';
-import { FURNITURE, SEG, between, parts, skeleton, type Panel, type Prop, type SidePose } from '../apps/web/lib/figure';
+import { FURNITURE, SEG, between, parts, skeleton, type Panel, type Pose, type Prop } from '../apps/web/lib/figure';
 import { FIGURES_3D, MODEL_URL } from '../apps/web/lib/figure3d/model';
 import { muscleMask } from '../apps/web/lib/figure3d/muscles';
 import { depthOf } from '../apps/web/lib/figure3d/props';
-import { Rig } from '../apps/web/lib/figure3d/rig';
+import { Rig, armSides, sideOf } from '../apps/web/lib/figure3d/rig';
 
 /**
  * Les garanties des schémas, vérifiées sur le mannequin 3D posé.
  *
  * `exercise-figures.test.ts` vérifie le dessin : longueurs de Winter, appuis
  * où ils sont dits, rien sous le sol. Ici, la même chose sur la peau du
- * mannequin, sommet par sommet, pour chaque schéma qui passe en 3D et à
- * plusieurs instants du geste : les articulations 3D, vues de profil, tombent
- * sur celles du dessin ; les segments gardent leur longueur ; la peau touche
- * les appuis ; rien ne passe sous le sol, ni dans un meuble ou un mur.
+ * mannequin, sommet par sommet, pour chaque schéma et à plusieurs instants du
+ * geste : les articulations 3D, dans la vue du dessin, tombent sur les
+ * siennes ; les segments gardent leur longueur ; la peau touche les appuis ;
+ * rien ne passe sous le sol, ni dans un meuble ou un mur.
  */
 
 const MODEL = new URL(`../apps/web/public${MODEL_URL}`, import.meta.url);
@@ -33,7 +33,7 @@ beforeAll(async () => {
 const panels = [...FIGURES_3D].flatMap((key) => FIGURES[key as keyof typeof FIGURES]!.panels.map((p, i) => ({ key, i, p })));
 /** Les instants vérifiés : le départ, le milieu, la position dessinée. */
 const instants = (p: Panel) => (p.ghost ? [0, 0.5, 1] : [1]);
-const poseAt = (p: Panel, t: number) => (p.ghost ? between(p.ghost, p.pose, t) : p.pose) as SidePose;
+const poseAt = (p: Panel, t: number): Pose => (p.ghost ? between(p.ghost, p.pose, t) : p.pose);
 
 /** Les sommets dont le poids sur les os `test` dépasse `min`. */
 function vertsOf(test: (bone: string) => boolean, min = 0.5): number[] {
@@ -81,6 +81,7 @@ const INHERITED: string[] = [
   'soleaire-assis n° 1, t = 0 : box',
   'soleaire-assis n° 1, t = 1 : box',
   'activation n° 1, t = 0.5 : sol',
+  'mollets-machine n° 1, t = 1 : box',
   'marche-cote n° 1, t = 1 : stairs',
   'escalier-immeuble n° 1, t = 0 : stairs',
   'escalier-immeuble n° 1, t = 0.5 : stairs',
@@ -90,11 +91,11 @@ const INHERITED: string[] = [
 ];
 
 describe('Les schémas en 3D', () => {
-  it('passent en 3D les 36 exercices entièrement de profil, au décor connu', () => {
-    expect(FIGURES_3D.size).toBe(36);
-    for (const key of ['split-squat-bulgare', 'step-up', 'dead-bug', 'hip-thrust', 'escalier-immeuble']) expect(FIGURES_3D.has(key), key).toBe(true);
-    // Les vues de face, les machines dessinées point par point, la porte : en vecteur.
-    for (const key of ['gainage-lateral', 'abduction', 'leg-curl', 'mollets-machine']) expect(FIGURES_3D.has(key), key).toBe(false);
+  it('passent tous en 3D, de profil, de face, de dos et de dessus', () => {
+    // Le 27/10, Pierre : « que ce soit que de la modélisation 3D ». Un schéma resté en vecteur se verrait.
+    const keys = Object.keys(FIGURES).filter((k) => FIGURES[k as keyof typeof FIGURES]);
+    expect(keys.filter((k) => !FIGURES_3D.has(k))).toEqual([]);
+    expect(FIGURES_3D.size).toBe(63);
   });
 
   it('chargent un mannequin que le service worker range dès l’installation', () => {
@@ -107,7 +108,7 @@ describe('Les schémas en 3D', () => {
     const d = rig.restData();
     for (const { key, i, p } of panels) {
       for (const m of p.muscles ?? []) {
-        const mask = muscleMask(d, [m], p.pose as SidePose);
+        const mask = muscleMask(d, [m], p.pose);
         const painted = mask.reduce((s, x) => s + x, 0);
         expect.soft(painted, `${key} n° ${i + 1} : ${m.muscle}`).toBeGreaterThan(40);
       }
@@ -127,18 +128,23 @@ describe('Les schémas en 3D', () => {
         expect.soft(Math.abs(L.upperArm - SEG.upperArm), name).toBeLessThan(0.05);
         expect.soft(Math.abs(L.forearm - SEG.forearm), name).toBeLessThan(0.05);
         expect.soft(Math.abs(L.trunk - SEG.trunk), name).toBeLessThan(0.05);
-        const free = pose.freeSide === 'far' ? 'L' : 'R';
-        for (const [bone, joint] of [
-          ['upperleg01.R', 'near.hip'], ['lowerleg01.R', 'near.knee'], ['foot.R', 'near.ankle'],
-          ['upperleg01.L', 'far.hip'], ['lowerleg01.L', 'far.knee'], ['foot.L', 'far.ankle'],
-          [`upperarm01.${free}`, 'free.shoulder'],
-        ] as const) {
+        const { free } = armSides(pose);
+        // De profil, les jambes et les genoux ; de face, les hanches et les chevilles (le genou s'y résout) ; de dessus, les épaules.
+        const legs: [string, string][] = pose.view === 'side'
+          ? [['upperleg01.R', 'near.hip'], ['lowerleg01.R', 'near.knee'], ['foot.R', 'near.ankle'], ['upperleg01.L', 'far.hip'], ['lowerleg01.L', 'far.knee'], ['foot.L', 'far.ankle']]
+          : pose.view === 'front'
+            ? (['left', 'right'] as const).flatMap((s): [string, string][] => [[`upperleg01.${sideOf(pose, s)}`, `${s}.hip`], [`foot.${sideOf(pose, s)}`, `${s}.ankle`]])
+            : [];
+        for (const [bone, joint] of [...legs, [`upperarm01.${free}`, 'free.shoulder']] as const) {
           const v = rig.head(bone);
           const q = k.joints[joint]!;
           expect.soft(Math.hypot(v.x - q[0], v.y - q[1]), `${name} : ${joint}`).toBeLessThan(0.1);
         }
-        // Le bras libre : sur le dessin, à l'écart près qu'il prend s'il pend (7 à 9°).
+        // Le bras libre : sur le dessin, à l'écart près qu'il prend s'il pend (7 à 9°). Une main dont la fiche dit
+        // la profondeur y va exactement ; son coude se résout, et le coude du dessin n'est plus qu'un repère.
+        const deep = pose.view !== 'side' && pose.free.depth != null;
         for (const [bone, joint] of [[`lowerarm01.${free}`, 'free.elbow'], [`wrist.${free}`, 'free.wrist']] as const) {
+          if (deep && joint === 'free.elbow') continue;
           const v = rig.head(bone);
           const q = k.joints[joint]!;
           expect.soft(Math.hypot(v.x - q[0], v.y - q[1]), `${name} : ${joint}`).toBeLessThan(0.9);
@@ -155,6 +161,8 @@ describe('Les schémas en 3D', () => {
     // Le buste qui s'assoit ou se couche : MakeHuman rattache le bas des fesses au haut de la cuisse.
     const trunk = vertsOf((b) => /^(root|spine0\d|pelvis|upperleg01)/.test(b));
     const head = vertsOf((b) => /^(head|neck0[23])$/.test(b));
+    const hand = { R: vertsOf((b) => /^(wrist|metacarpal|finger).*\.R$/.test(b)), L: vertsOf((b) => /^(wrist|metacarpal|finger).*\.L$/.test(b)) };
+    const BONE: Record<string, string> = { shoulder: 'upperarm01', elbow: 'lowerarm01', wrist: 'wrist' };
     const d = rig.restData();
     // Les points du pied que le dessin désigne, pris sur la semelle au repos : le talon (3,8 derrière la
     // cheville, le coin de semelle — la chaussure dépasse derrière, comme celle du dessin), l'avant du pied
@@ -174,27 +182,46 @@ describe('Les schémas en 3D', () => {
         const name = `${key} n° ${i + 1}, t = ${t}`;
         const all = skin();
         const drawn = parts(pose).parts;
-        const lowest = Math.min(...all.map((v) => v.y));
-        const lowest2d = Math.min(...drawn.flatMap((q) => q.pts.map((pt) => pt[1])));
-        if (lowest < -0.8 && lowest >= lowest2d - 0.6) inherited.push(`${name} : sol`);
-        expect.soft(lowest, `${name} : le corps descend à ${lowest.toFixed(2)} (le dessin à ${lowest2d.toFixed(2)})`).toBeGreaterThanOrEqual(Math.min(-0.8, lowest2d - 0.6));
+        const k = skeleton(pose);
+        // Vu de dessus, y est l'avant, et il n'y a pas de sol.
+        if (pose.view !== 'top') {
+          const lowest = Math.min(...all.map((v) => v.y));
+          const lowest2d = Math.min(...drawn.flatMap((q) => q.pts.map((pt) => pt[1])));
+          if (lowest < -0.8 && lowest >= lowest2d - 0.6) inherited.push(`${name} : sol`);
+          expect.soft(lowest, `${name} : le corps descend à ${lowest.toFixed(2)} (le dessin à ${lowest2d.toFixed(2)})`).toBeGreaterThanOrEqual(Math.min(-0.8, lowest2d - 0.6));
+        }
 
         const contacts = t === 1 ? p.contacts ?? [] : t === 0 ? p.ghostContacts ?? [] : [];
+        const { free, cast } = armSides(pose);
         for (const c of contacts) {
-          let list: number[];
-          if (c.ref) {
-            const [side, point] = c.ref.split('.') as ['near' | 'far', string];
-            list = region(side === 'near' ? 'R' : 'L', point!);
+          let y: number;
+          // Ce que le dessin met à la hauteur de l'appui : un point du squelette, ou le bas d'une partie du corps.
+          const y2d = c.ref ? k.joints[c.ref]![1] : Math.min(...drawn.filter((q) => q.name === c.part).flatMap((q) => q.pts.map((pt) => pt[1])));
+          const [side, point] = (c.ref ?? '').split('.') as [string, string];
+          if (side === 'free' || side === 'cast') {
+            const s = side === 'free' ? free : cast;
+            if (point === 'tip') {
+              // Le bout des doigts : le haut de la main sous un cadre, son bas sur un appui.
+              const ys = hand[s].map((v) => all[v]!.y);
+              y = c.y > k.joints[`${side}.wrist`]![1] ? Math.max(...ys) : Math.min(...ys);
+            } else {
+              y = rig.head(`${BONE[point]}.${s}`).y;
+            }
+          } else if (c.ref && pose.view === 'front') {
+            // De face, une cheville au sol : la semelle à plat, sous elle de la hauteur de la cheville.
+            const s = sideOf(pose, side as 'left' | 'right');
+            y = Math.min(...feet[s].map((v) => all[v]!.y)) + SEG.ankle;
           } else {
-            const [side, part] = c.part!.includes('.') ? c.part!.split('.') : ['', c.part!];
-            const s = side === 'far' ? 'L' : 'R';
-            list = part === 'trunk' ? trunk : part === 'head' ? head : part === 'shank' ? shank[s] : feet[s];
+            let list: number[];
+            if (c.ref) {
+              list = region(side === 'near' ? 'R' : 'L', point);
+            } else {
+              const [ps, part] = c.part!.includes('.') ? c.part!.split('.') : ['', c.part!];
+              const s = ps === 'far' ? 'L' : 'R';
+              list = part === 'trunk' ? trunk : part === 'head' ? head : part === 'shank' ? shank[s] : feet[s];
+            }
+            y = Math.min(...list.map((v) => all[v]!.y));
           }
-          const y = Math.min(...list.map((v) => all[v]!.y));
-          // Le dessin a sa propre marge (`tol`) : la 3D suit le dessin à 0,6 près, et reste dans la marge élargie d'autant.
-          const y2d = c.ref
-            ? skeleton(pose).joints[c.ref]![1]
-            : Math.min(...drawn.filter((q) => q.name === c.part).flatMap((q) => q.pts.map((pt) => pt[1])));
           const label = `${name} : appui ${c.ref ?? c.part} à ${y.toFixed(2)} pour ${c.y.toFixed(2)} (le dessin à ${y2d.toFixed(2)})`;
           if (Math.abs(y - c.y) > (c.tol ?? 0.6)) expect.soft(Math.abs(y - y2d), label).toBeLessThanOrEqual(0.6);
           expect.soft(Math.abs(y - c.y), label).toBeLessThanOrEqual((c.tol ?? 0.6) + 0.6);
@@ -220,9 +247,9 @@ describe('Les schémas en 3D', () => {
         }
       }
     }
-    // Le dessin les a déjà, la 3D les rend visibles : la pointe qui plonge dans la caisse des mollets, le talon
-    // dans le tabouret du test du pont, la cuisse qui frôle le mur et le pied arrière qui passe sous le sol à
-    // mi-geste, le pied dans la contremarche.
+    // Le dessin les a déjà, la 3D les rend visibles : la pointe qui plonge dans la caisse des mollets (le pied
+    // est d'un bloc, le mannequin n'a pas d'orteils qui plient), le talon dans le tabouret du test du pont, la
+    // cuisse qui frôle le mur et le pied arrière qui passe sous le sol à mi-geste, le pied dans la contremarche.
     expect(inherited).toEqual(INHERITED);
   }, 120_000);
 });

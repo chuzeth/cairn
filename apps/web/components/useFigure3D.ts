@@ -33,7 +33,10 @@ export function useFigure3D(target: { exercise: string; index: number } | null, 
           made = stage.view(exercise, index, el);
           setView(made);
         })
-        .catch(() => { if (alive) setFailed(true); });
+        .catch((e) => {
+          console.warn('Schéma 3D : le mannequin ne se charge pas', e);
+          if (alive) setFailed(true);
+        });
     }, { rootMargin: '300px' });
     io.observe(el);
     return () => {
@@ -53,7 +56,9 @@ export function useFigure3D(target: { exercise: string; index: number } | null, 
     if (!view || failed) return;
     try {
       if (view.draw(latest.current.phase, latest.current.frame)) setReady(true);
-    } catch {
+    } catch (e) {
+      // La vignette garde son dessin vectoriel ; la cause se lit dans la console.
+      console.warn(`Schéma 3D : ${view.exercise} ne se dessine pas`, e);
       setFailed(true);
     }
   };

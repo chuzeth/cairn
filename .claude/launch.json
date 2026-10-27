@@ -4,6 +4,12 @@
     {
       "name": "Cairn",
       "url": "http://localhost:3000"
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "-w", "@cairn/web"],
+      "port": 3001
     }
   ]
 }

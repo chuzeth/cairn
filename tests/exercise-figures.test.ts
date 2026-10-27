@@ -3,7 +3,7 @@ import { EXERCISE_KEYS } from '@cairn/core';
 import { FIGURES } from '../apps/web/lib/exerciseFigures';
 import { EXERCISE_GROUPS } from '../apps/web/lib/exerciseGroups';
 import {
-  FURNITURE, angleAt, dist, inkTouches, inksTouch, panelTexts, parts, placeTexts, resolve, type Pose, type Prop,
+  FURNITURE, SEG, angleAt, dist, inkTouches, inksTouch, panelTexts, parts, placeTexts, resolve, type Pose, type Prop,
 } from '../apps/web/lib/figure';
 
 /**
@@ -42,6 +42,19 @@ describe('Les schémas d’exercices', () => {
       expect(k.reach, name).toBe(true);
       for (const [a, b, l] of k.rigid) {
         expect(dist(k.joints[a]!, k.joints[b]!), `${name} : ${a} – ${b}`).toBeCloseTo(l, 1);
+      }
+    }
+  });
+
+  it('ne dessinent jamais un bras « en raccourci » plus long que le bras', () => {
+    // La vue raccourcit un bras qui vient vers nous ; elle ne l'allonge pas. Le 27/10, le bras du
+    // départ de l'extension de hanche, placé pour une épaule 22 plus haute, mesurait 31,7.
+    for (const { name, pose } of poses) {
+      const { skeleton: k } = parts(pose);
+      for (const side of ['free', 'cast'] as const) {
+        if (!k.arms[side].projected) continue;
+        expect.soft(dist(k.joints[`${side}.shoulder`]!, k.joints[`${side}.elbow`]!), `${name} : ${side}, le bras`).toBeLessThanOrEqual(SEG.upperArm + 0.05);
+        expect.soft(dist(k.joints[`${side}.elbow`]!, k.joints[`${side}.wrist`]!), `${name} : ${side}, l'avant-bras`).toBeLessThanOrEqual(SEG.forearm + 0.05);
       }
     }
   });

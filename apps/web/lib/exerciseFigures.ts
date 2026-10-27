@@ -81,7 +81,8 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
       {
         label: 'En bas : 3 s pour y descendre, 1 s tenue',
         ghostLabel: 'En haut',
-        props: [{ kind: 'floor' }, { kind: 'stool', x: -40, face: 1 }, { kind: 'jamb', x: 27 }],
+        // Le pied arrière posé au bord du tabouret : en bas, le devant de la cheville passe devant lui, pas dedans.
+        props: [{ kind: 'floor' }, { kind: 'stool', x: -44, face: 1 }, { kind: 'jamb', x: 27 }],
         ghost: {
           view: 'side', hip: [-8, 48.5], lean: 8,
           near: { ankle: [9.7, A] }, far: { ankle: [-46, 24.8], sole: 200 },
@@ -291,21 +292,17 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     panels: [
       {
         label: 'De face : de profil à la porte, la poignée contre la poitrine',
-        props: [
-          { kind: 'floor' },
-          { kind: 'shape', pts: [[-44, 0], [-44, 110]], tone: 'metal' },
-          { kind: 'shape', pts: [[-44, 72], [-38, 72]], tone: 'line' },
-        ],
+        props: [{ kind: 'floor' }, { kind: 'door', x: 44, anchor: 72 }],
         hold: 'handle',
         pose: {
           view: 'front', pelvis: [0, 50],
           left: { ankle: [-9, A] }, right: { ankle: [9, A] },
-          free: { side: 'right', elbow: [11, 63], hand: [2, 71] },
+          free: { side: 'left', elbow: [-11, 63], hand: [-2, 71], depth: 9 },
         },
-        bands: [{ from: [-38, 72], to: 'free.wrist', kind: 'long' }],
+        bands: [{ from: doorHook(44, 72), to: 'free.wrist', kind: 'long' }],
         notes: [
-          { text: 'la porte, vue\nde la tranche', at: [-44, 100], dx: 4, dy: 4 },
-          { text: 'genoux souples', at: 'right.knee', dx: 10, dy: 0 },
+          { text: 'la porte, vue\nde la tranche', at: [44, 100], dx: -4, dy: 4 },
+          { text: 'genoux souples', at: 'left.knee', dx: -10, dy: 0 },
         ],
         contacts: [{ ref: 'left.ankle', y: A }],
       },
@@ -313,14 +310,14 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         label: 'Vu de dessus : tends le bras 2 s, tiens 3 s, le buste ne tourne pas',
         ghostLabel: 'La poignée contre la poitrine',
         props: [
-          { kind: 'shape', pts: [[-50, -14], [-50, 40]], tone: 'line' },
-          { kind: 'circle', c: [-48.6, 9], r: 1.3, tone: 'line' },
+          { kind: 'shape', pts: [[-51.1, -14], [-48.9, -14], [-48.9, 40], [-51.1, 40]], closed: true, tone: 'pad' },
+          { kind: 'circle', c: [-46.6, 9], r: 1.3, tone: 'line' },
         ],
         hold: 'handle',
-        ghost: { view: 'top', at: [0, 0], free: { side: 'right', elbow: [11, 9], hand: [3, 9] } },
-        pose: { view: 'top', at: [0, 0], free: { side: 'right', elbow: [7, 16], hand: [1, 31] } },
-        bands: [{ from: [-48.6, 9], to: 'free.wrist', kind: 'long' }],
-        ghostBands: [{ from: [-48.6, 9], to: 'free.wrist', kind: 'long' }],
+        ghost: { view: 'top', at: [0, 0], free: { side: 'right', elbow: [11, 9], hand: [3, 9], depth: 6 } },
+        pose: { view: 'top', at: [0, 0], free: { side: 'right', elbow: [7.4, 17.9], hand: [1, 31], depth: 5 } },
+        bands: [{ from: [-46.6, 9], to: 'free.wrist', kind: 'long' }],
+        ghostBands: [{ from: [-46.6, 9], to: 'free.wrist', kind: 'long' }],
         motions: [{ joint: 'free.wrist', bend: -4, label: '2 s' }],
         notes: [
           { text: 'les épaules\nrestent face\nà l’avant', at: [12, -2], dx: 9, dy: -6 },
@@ -800,13 +797,14 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         props: [
           { kind: 'floor' },
           { kind: 'mat', from: -40, to: 10 },
-          { kind: 'box', x: 29, h: STEP.high, depth: 13, face: 1 },
+          // Le tabouret, pas une caisse : la jambe du dessous passe sous son assise, entre ses pieds.
+          { kind: 'stool', x: 29, face: 1 },
         ],
         pose: {
-          view: 'front', pelvis: [0, 25.5], turn: 78,
-          left: { ankle: [40, 7.5] }, right: { ankle: [49.1, 20.2] },
-          free: { side: 'left', elbow: [-28.5, 2.8], hand: [-24, 2.2] },
-          cast: { elbow: [-7, 37], hand: [5, 33] },
+          view: 'front', pelvis: [0, 25.22], turn: 75.12,
+          left: { ankle: [40, 7.5] }, right: { ankle: [49.1, 19] },
+          free: { side: 'left', elbow: [-30.8, 2.8], hand: [-26.3, 2.2] },
+          cast: { elbow: [-7.3, 38.1], hand: [5, 33], depth: 8 },
         },
         guides: [{ from: 'head', to: 'right.knee' }],
         motions: [{ from: [2, 12], to: [2, 20.5], label: '1 s' }],
@@ -898,7 +896,7 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         pose: {
           view: 'front', pelvis: [0, 52.8],
           left: { ankle: [-5.5, A + 2.8] }, right: { ankle: [5.5, A] },
-          free: { side: 'left', elbow: [-17, 61], hand: [-21, 69] },
+          free: { side: 'left', elbow: [-15.7, 63.7], hand: [-21, 69] },
         },
         notes: [
           { text: 'yeux fermés', at: 'head', dx: 9, dy: 4 },
@@ -1094,13 +1092,13 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         props: [{ kind: 'floor' }, { kind: 'backdrop', from: -36, to: 36, top: 100 }],
         ghost: {
           view: 'front', pelvis: [0, 52.6], back: true,
-          left: { ankle: [-5, A] }, right: { ankle: [-13, 11] },
-          free: { side: 'left', elbow: [-16, 68], hand: [-13, 79] },
+          left: { ankle: [-5, A] }, right: { ankle: [-11, 8.5], depth: 10 },
+          free: { side: 'right', elbow: [16, 68], hand: [13, 79] },
         },
         pose: {
           view: 'front', pelvis: [0, 52.6], back: true,
-          left: { ankle: [-5, A] }, right: { ankle: [24, 11] },
-          free: { side: 'left', elbow: [-16, 68], hand: [-13, 79] },
+          left: { ankle: [-5, A] }, right: { ankle: [30.9, 10.5] },
+          free: { side: 'right', elbow: [16, 68], hand: [13, 79] },
         },
         motions: [{ joint: 'right.ankle', bend: -8, label: '1 s' }],
         notes: [{ text: 'le bassin\nne tourne pas', at: 'pelvis', dx: -24, dy: 2 }],
@@ -1146,15 +1144,15 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         pose: {
           view: 'front', pelvis: [0, 52.8],
           left: { ankle: [-6, A] }, right: { ankle: [6, A] },
-          free: { side: 'right', elbow: [11.8, 62], hand: [12.6, 46.5] },
+          free: { side: 'left', elbow: [-12, 63.1], hand: [-12.4, 48.6] },
         },
-        guides: [{ from: [-16, 79.8], to: [16, 79.8] }],
+        guides: [{ from: [-17, 81.6], to: [17, 81.6] }],
         notes: [
-          { text: 'les épaules\nà niveau', at: [-16, 79.8], dx: -4, dy: 4 },
-          { text: 'ce flanc\ntravaille', at: [-6, 62], dx: -10, dy: -6 },
-          { text: '8 à 15 kg', at: [13, 27], dx: 6, dy: -2 },
+          { text: 'les épaules\nà niveau', at: [17, 81.6], dx: 4, dy: 4 },
+          { text: 'ce flanc\ntravaille', at: [6, 62], dx: 10, dy: -6 },
+          { text: '8 à 15 kg', at: [-13, 27], dx: -6, dy: -2 },
         ],
-        muscles: [{ muscle: 'obliques', side: 'left' }],
+        muscles: [{ muscle: 'obliques', side: 'right' }],
         contacts: [{ ref: 'left.ankle', y: A }, { ref: 'right.ankle', y: A }],
       },
     ],
@@ -1259,7 +1257,7 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghost: {
           view: 'side', hip: [0, 45], lean: 140, nod: 5,
           near: { thigh: -45, shank: -45, sole: -45 }, far: { thigh: -45, shank: -45, sole: -45 },
-          free: { elbow: [6, 52], hand: [12, 49] }, cast: { elbow: [8, 53], hand: [14, 51] },
+          free: { elbow: [5.8, 30.4], hand: [10.3, 25] }, cast: { elbow: [7.9, 32.3], hand: [12.4, 25.8] },
         },
         pose: {
           view: 'side', hip: [0, 45], lean: 45,
@@ -1391,14 +1389,14 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         ghostLabel: 'Pieds joints',
         props: [{ kind: 'floor' }, { kind: 'backdrop', from: -40, to: 40, top: 96 }],
         ghost: {
-          view: 'front', pelvis: [0, 52], back: true,
+          view: 'front', pelvis: [0, 52.5], back: true,
           left: { ankle: [-5, A] }, right: { ankle: [5, A] },
-          free: { side: 'left', elbow: [-15, 66], hand: [-11, 75] },
+          free: { side: 'right', elbow: [15, 66], hand: [11, 75] },
         },
         pose: {
-          view: 'front', pelvis: [0, 52], back: true,
-          left: { ankle: [-5, A] }, right: { ankle: [19, 8] },
-          free: { side: 'left', elbow: [-15, 66], hand: [-11, 75] },
+          view: 'front', pelvis: [0, 52.5], back: true,
+          left: { ankle: [-5, A] }, right: { ankle: [21.7, 5.8] },
+          free: { side: 'right', elbow: [15, 66], hand: [11, 75] },
         },
         bands: [{ from: 'left.ankle', to: 'right.ankle', kind: 'mini' }],
         ghostBands: [{ from: 'left.ankle', to: 'right.ankle', kind: 'mini' }],
@@ -1438,10 +1436,10 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
         label: 'De face : la tête, le bassin et les pieds alignés',
         props: [{ kind: 'floor' }, { kind: 'mat', from: -40, to: 52 }],
         pose: {
-          view: 'front', pelvis: [0, 22.8], turn: 70,
-          left: { ankle: [42.7, 4.1] }, right: { ankle: [44.7, 9.7] },
+          view: 'front', pelvis: [2.15, 25.06], turn: 72.6,
+          left: { ankle: [46.98, 4.09] }, right: { ankle: [48.39, 10.22] },
           free: { side: 'left', elbow: [-28.8, 4], hand: [-24.5, 3.4] },
-          cast: { elbow: [-5.4, 34.3], hand: [3.5, 29.5] },
+          cast: { elbow: [-4.6, 38.3], hand: [3.5, 29.5], depth: 8 },
         },
         guides: [{ from: 'head', to: 'left.ankle' }],
         motions: [{ from: [-6, 5.6], to: [-6, 14.6], label: 'bassin haut' }],

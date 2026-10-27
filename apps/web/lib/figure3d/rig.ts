@@ -1,31 +1,79 @@
 /**
  * Le mannequin, posé par les squelettes des schémas.
  *
- * Les poses ne changent pas : `lib/figure` résout toujours un squelette 2D de
- * profil — hanche, genou, cheville, épaule, coude, poignet, inclinaison du
- * buste, plante du pied. Ici, chaque segment du mannequin tourne pour prendre
- * la direction de son segment 2D, dans le plan du profil. Les longueurs sont
- * remises à celles de Winter avant tout : une cuisse de 24,5, un tibia de
- * 24,6, un bras de 18,6, un avant-bras de 14,6, un buste de 28,8. Le genou et
- * la cheville 3D tombent donc exactement sur ceux du dessin, vus de profil —
+ * Les poses ne changent pas : `lib/figure` résout toujours un squelette 2D —
+ * hanche, genou, cheville, épaule, coude, poignet, inclinaison du buste,
+ * plante du pied. Ici, chaque segment du mannequin tourne pour prendre la
+ * direction de son segment 2D. Les longueurs sont remises à celles de Winter
+ * avant tout : une cuisse de 24,5, un tibia de 24,6, un bras de 18,6, un
+ * avant-bras de 14,6, un buste de 28,8 ; de face, les hanches et les épaules
+ * du dessin sont celles du mannequin (`FRONT`). Les articulations 3D tombent
+ * donc sur celles du dessin, dans la vue du dessin —
  * `tests/exercise-figures-3d.test.ts` le vérifie, avec les appuis.
  *
- * Ce que le profil ne dit pas, la 3D le décide, et le dit ici : un bras qui
- * pend s'écarte de 7 à 9° pour ne pas traverser la cuisse ; un bras « en
- * raccourci » vient vers nous de ce qu'il faut pour garder ses longueurs ;
- * l'écharpe porte l'avant-bras en travers du ventre ; un bras plâtré « posé »
- * se pose sur le ventre, le coude au sol contre le flanc.
+ * La caméra ne tourne jamais : c'est le corps qui se tourne vers elle. De
+ * profil, il regarde vers les x croissants ; de face, vers nous ; de dos, vers
+ * le fond ; vu de dessus, la tête vers nous, le regard vers le haut de l'image.
  *
- * Repère : celui des schémas, x vers l'avant, y vers le haut, le sol à 0 ; z
- * vers nous. La jambe et le bras « de notre côté » sont les droits (`.R`).
+ * Ce que la vue ne dit pas, la 3D le décide, et le dit ici : un bras qui pend
+ * s'écarte de 7 à 9° pour ne pas traverser la cuisse ; un bras « en
+ * raccourci » vient vers nous (de profil), devant le corps (de face, de dos)
+ * ou sous les épaules (de dessus) de ce qu'il faut pour garder ses longueurs,
+ * sauf si la fiche dit où est la main ; une jambe de face plie le genou vers
+ * l'avant quand sa cheville est plus près que la jambe tendue ; l'écharpe
+ * porte l'avant-bras en travers du ventre ; un bras plâtré « posé » se pose
+ * sur le ventre, le coude au sol contre le flanc.
+ *
+ * Repère : celui des schémas, x vers la droite de l'image, y vers le haut, le
+ * sol à 0 ; z vers nous. De profil, la jambe et le bras « de notre côté » sont
+ * les droits (`.R`).
  */
 import * as THREE from 'three';
-import { SEG, dir, type ArmPts, type ArmSpec, type LegPts, type Prop, type Pt, type Skeleton, type SidePose } from '../figure';
+import {
+  SEG, dir, rot, type ArmPts, type ArmSpec, type FrontArm, type FrontPose, type LegPts, type Pose, type Prop, type Pt,
+  type Skeleton, type SidePose, type TopPose,
+} from '../figure';
 
 export type Side = 'R' | 'L';
 const RAD = Math.PI / 180;
 const X = new THREE.Vector3(1, 0, 0);
+const Y = new THREE.Vector3(0, 1, 0);
 const Z = new THREE.Vector3(0, 0, 1);
+
+/**
+ * Le côté du corps que désigne un côté du dessin. De profil, celui de notre
+ * côté est le droit ; de face, la gauche de l'image est la droite du corps ; de
+ * dos et vu de dessus, sa gauche.
+ */
+export function sideOf(p: Pose, side: 'left' | 'right' | 'near' | 'far'): Side {
+  if (side === 'near') return 'R';
+  if (side === 'far') return 'L';
+  const mirrored = p.view === 'front' && p.back !== true;
+  return (side === 'left') === mirrored ? 'R' : 'L';
+}
+
+/** Le côté du bras libre et celui du plâtre. */
+export function armSides(p: Pose): { free: Side; cast: Side } {
+  const free = p.view === 'side' ? (p.freeSide === 'far' ? 'L' : 'R') : sideOf(p, p.free.side);
+  return { free, cast: free === 'R' ? 'L' : 'R' };
+}
+
+/** Le repère du corps, dans le monde : devant, en haut (le long du buste), et sa droite. */
+export interface BodyFrame {
+  fwd: THREE.Vector3;
+  up: THREE.Vector3;
+  right: THREE.Vector3;
+}
+
+/** La rotation qui porte le repère (devant `f0`, haut `u0`) sur (devant `f1`, haut `u1`). */
+function frameRotation(f0: THREE.Vector3, u0: THREE.Vector3, f1: THREE.Vector3, u1: THREE.Vector3): THREE.Quaternion {
+  const basis = (f: THREE.Vector3, u: THREE.Vector3) => {
+    const uu = u.clone().normalize();
+    const ff = perp(f, uu).normalize();
+    return new THREE.Matrix4().makeBasis(ff, uu, ff.clone().cross(uu));
+  };
+  return new THREE.Quaternion().setFromRotationMatrix(basis(f1, u1).multiply(basis(f0, u0).transpose()));
+}
 
 const flat = (p: Pt, q: Pt) => new THREE.Vector3(q[0] - p[0], q[1] - p[1], 0).normalize();
 /** La direction `v` tournée d'un quart de tour vers l'avant dans le plan du profil : (x, y) → (−y, x). */
@@ -83,6 +131,8 @@ export class Rig {
   private readonly restNormal: Float32Array;
   /** Les longueurs du mannequin au repos, pour le rapport. */
   readonly restLengths: Record<string, number> = {};
+  /** L'axe du buste au repos, des hanches aux épaules, dans le plan du profil. */
+  private readonly restUp: THREE.Vector3;
 
   constructor(scene: THREE.Object3D) {
     this.scene = scene;
@@ -118,6 +168,8 @@ export class Rig {
       trunk: this.trunkLength(),
     });
     this.fitWinter();
+    const axis = this.mid('upperarm01.R', 'upperarm01.L').sub(this.mid('upperleg01.R', 'upperleg01.L'));
+    this.restUp = new THREE.Vector3(axis.x, axis.y, 0).normalize();
   }
 
   bone(name: string): THREE.Bone {
@@ -143,8 +195,7 @@ export class Rig {
 
   private trunkLength(): number {
     this.scene.updateMatrixWorld(true);
-    const v = this.mid('upperarm01.R', 'upperarm01.L').sub(this.mid('upperleg01.R', 'upperleg01.L'));
-    return Math.hypot(v.x, v.y);
+    return this.mid('upperarm01.R', 'upperarm01.L').distanceTo(this.mid('upperleg01.R', 'upperleg01.L'));
   }
 
   /** Une chaîne d'os allongée ou raccourcie pour que `from` → `to` mesure `target`. */
@@ -235,44 +286,77 @@ export class Rig {
   }
 
   /**
-   * Le buste : le milieu des hanches sur la hanche du dessin, l'axe hanches →
-   * épaules sur celui du dessin ; la tête suit `nod`.
+   * Le buste : le milieu des hanches en `hip`, l'axe hanches → épaules selon
+   * `up`, la poitrine vers `fwd` ; la tête suit `nod`.
    */
-  trunk(k: Skeleton, p: SidePose) {
-    const hip = k.joints.hip!;
-    const up = flat(hip, k.joints.shoulder!);
+  private orient(hip: THREE.Vector3, up: THREE.Vector3, fwd: THREE.Vector3, nod = 0) {
     const root = this.bone('root');
     root.quaternion.identity();
     root.position.copy(this.restLocal.get('root')!);
     this.scene.updateMatrixWorld(true);
     const midHip = this.mid('upperleg01.R', 'upperleg01.L');
-    const axis = this.mid('upperarm01.R', 'upperarm01.L').sub(midHip);
-    axis.z = 0;
-    const q = new THREE.Quaternion().setFromUnitVectors(axis.normalize(), up);
+    const q = frameRotation(X, this.restUp, fwd, up);
     root.quaternion.copy(q);
     const offset = midHip.clone().sub(root.position).applyQuaternion(q);
-    root.position.set(hip[0], hip[1], 0).sub(offset);
-    root.updateMatrixWorld(true);
-    // La tête : `nod` réparti sur les trois vertèbres du cou et la tête.
-    const nod = -(p.nod ?? 0) * RAD;
-    for (const n of ['neck01', 'neck02', 'neck03', 'head']) this.bone(n).quaternion.setFromAxisAngle(Z, nod / 4);
+    root.position.copy(hip).sub(offset);
+    // La tête : `nod` réparti sur les trois vertèbres du cou et la tête, autour de l'axe des épaules.
+    for (const n of ['neck01', 'neck02', 'neck03', 'head']) this.bone(n).quaternion.setFromAxisAngle(Z, (-nod * RAD) / 4);
     root.updateMatrixWorld(true);
   }
 
-  /** Une jambe : la cuisse, le tibia, puis le pied à plat sur sa plante inclinée de `sole`. */
-  leg(side: Side, l: LegPts) {
+  /** Le repère du buste, tel qu'il est posé. */
+  frame(): BodyFrame {
+    const q = this.world(this.bone('root'));
+    const fwd = perp(X, this.restUp).normalize().applyQuaternion(q);
+    const up = this.restUp.clone().applyQuaternion(q);
+    return { fwd, up, right: fwd.clone().cross(up) };
+  }
+
+  /**
+   * Le buste de profil : le milieu des hanches sur la hanche du dessin, l'axe
+   * hanches → épaules sur celui du dessin.
+   */
+  trunk(k: Skeleton, p: SidePose) {
+    const hip = k.joints.hip!;
+    const up = flat(hip, k.joints.shoulder!);
+    this.orient(new THREE.Vector3(hip[0], hip[1], 0), up, new THREE.Vector3(up.y, -up.x, 0), p.nod ?? 0);
+  }
+
+  /**
+   * Une jambe par ses deux directions, dans le monde : la cuisse et le tibia
+   * tournent sur eux-mêmes pour que leur avant regarde `frontT` et `frontS` ;
+   * le pied prend l'orientation `foot`.
+   */
+  private legDirs(side: Side, t: THREE.Vector3, s: THREE.Vector3, frontT: THREE.Vector3, frontS: THREE.Vector3, foot: THREE.Quaternion) {
     const ul = this.bone(`upperleg01.${side}`);
-    const t = flat(l.hip, l.knee);
     this.swing(ul, this.dirOf(`upperleg01.${side}`, `lowerleg01.${side}`), t);
-    // Le genou regarde devant : l'avant de la cuisse au repos (+x) va sur le quart de tour de son axe.
-    const front = X.clone().applyQuaternion(this.world(ul));
-    this.twist(ul, t, signedAngle(front, quarter(t), t));
-    const s = flat(l.knee, l.ankle);
+    // L'avant de la cuisse au repos (+x) va sur celui qu'on veut : le genou regarde devant.
+    this.twist(ul, t, signedAngle(X.clone().applyQuaternion(this.world(ul)), frontT, t));
     const ll = this.bone(`lowerleg01.${side}`);
     this.swing(ll, this.dirOf(`lowerleg01.${side}`, `foot.${side}`), s);
-    const shin = X.clone().applyQuaternion(this.world(ll));
-    this.twist(ll, s, signedAngle(shin, quarter(s), s));
-    this.setWorld(this.bone(`foot.${side}`), new THREE.Quaternion().setFromAxisAngle(Z, l.sole * RAD));
+    this.twist(ll, s, signedAngle(X.clone().applyQuaternion(this.world(ll)), frontS, s));
+    this.setWorld(this.bone(`foot.${side}`), foot);
+  }
+
+  /** Une jambe de profil : la cuisse, le tibia, puis le pied à plat sur sa plante inclinée de `sole`. */
+  leg(side: Side, l: LegPts) {
+    const t = flat(l.hip, l.knee);
+    const s = flat(l.knee, l.ankle);
+    this.legDirs(side, t, s, quarter(t), quarter(s), new THREE.Quaternion().setFromAxisAngle(Z, l.sole * RAD));
+  }
+
+  /** Une jambe vers sa cheville, en 3D : le genou se résout, poussé vers `pole` ; le pied prend l'orientation `foot`. */
+  legTo(side: Side, ankle: THREE.Vector3, pole: THREE.Vector3, foot: THREE.Quaternion) {
+    const hip = this.head(`upperleg01.${side}`);
+    const a = SEG.thigh;
+    const b = SEG.shank;
+    const toA = ankle.clone().sub(hip);
+    const d = Math.min(a + b - 1e-3, Math.max(Math.abs(a - b) + 1e-3, toA.length()));
+    const u = toA.normalize();
+    const cos = (a * a + d * d - b * b) / (2 * a * d);
+    const knee = hip.clone().addScaledVector(u, a * cos).addScaledVector(perp(pole, u).normalize(), a * Math.sqrt(Math.max(0, 1 - cos * cos)));
+    const end = hip.clone().addScaledVector(u, d);
+    this.legDirs(side, knee.clone().sub(hip).normalize(), end.sub(knee).normalize(), pole, pole, foot);
   }
 
   /** La normale de la paume, lue sur la main posée. */
@@ -361,6 +445,26 @@ export class Rig {
     this.armDirs(side, elbow.clone().sub(s).normalize(), wrist.sub(elbow).normalize(), style);
   }
 
+  /**
+   * Un bras de face, de dos ou de dessus, par ses points tels que la vue les
+   * montre ; ce que la vue ne voit pas va dans l'axe de la caméra, du côté
+   * `sign` (+1 vers nous). Sans `depth`, chaque segment s'y déplie de ce qu'il
+   * faut pour garder sa longueur. Avec, la main va à `depth` de l'épaule, et le
+   * coude se résout du côté de celui du dessin.
+   */
+  armView(side: Side, a: ArmPts, sign: 1 | -1, depth: number | undefined, style: ArmStyle = {}) {
+    const s = this.head(`upperarm01.${side}`);
+    const out = (from: THREE.Vector3, p: Pt, l: number) =>
+      new THREE.Vector3(p[0], p[1], from.z + sign * Math.sqrt(Math.max(0, l * l - (p[0] - from.x) ** 2 - (p[1] - from.y) ** 2)));
+    const elbow = out(s, a.elbow, SEG.upperArm);
+    if (depth == null) {
+      const wrist = out(elbow, a.wrist, SEG.forearm);
+      this.armDirs(side, elbow.clone().sub(s).normalize(), wrist.sub(elbow).normalize(), style);
+    } else {
+      this.armTo(side, new THREE.Vector3(a.wrist[0], a.wrist[1], s.z + sign * depth), elbow.sub(s), style);
+    }
+  }
+
   /** Les doigts repliés vers la paume ; le pouce referme le poing. */
   fingers(side: Side, grip: number) {
     const palm = this.palm(side);
@@ -393,21 +497,103 @@ export class Rig {
     this.twist(this.bone(`finger1-1.${side}`), axis, signedAngle(thumb, this.across(side), axis) * 0.85);
   }
 
-  /**
-   * Toute la pose de profil : le buste, les jambes, le bras libre ; le bras
-   * plâtré selon `cast` (en écharpe, en travers, posé sur le ventre, ou par ses
-   * angles).
-   */
-  pose(k: Skeleton, p: SidePose, opts: PoseOptions = {}) {
+  /** Toute la pose, dans la vue du dessin. */
+  pose(k: Skeleton, p: Pose, opts: PoseOptions = {}) {
     this.reset();
+    if (p.view === 'front') this.poseFront(k, p, opts);
+    else if (p.view === 'top') this.poseTop(k, p, opts);
+    else this.poseSide(k, p, opts);
+    this.scene.updateMatrixWorld(true);
+  }
+
+  /** Le côté `s` du corps : sa droite, ou sa gauche. */
+  private lateral(f: BodyFrame, s: Side) {
+    return f.right.clone().multiplyScalar(s === 'R' ? 1 : -1);
+  }
+
+  /**
+   * L'écharpe, en vrai : le bras pend un peu devant (10°) et s'écarte du flanc
+   * (8°) ; l'avant-bras part à 40° de l'avant, vers le milieu, un peu relevé,
+   * le pouce en haut. Face à un mur proche (`wall`, sa face en x), l'avant-bras
+   * rentre vers le ventre, jusqu'à 85° : le plâtre ne le traverse pas. De face
+   * et de dessus, où l'on voit à quelle distance du ventre il passe, il part à
+   * 65° (`inward`) : en travers du ventre, contre lui.
+   */
+  private sling(side: Side, f: BodyFrame, wall: number | null = null, inward0 = 40) {
+    const out = this.lateral(f, side);
+    const hang = f.up.clone().negate().multiplyScalar(Math.cos(10 * RAD)).addScaledVector(f.fwd, Math.sin(10 * RAD));
+    const u = hang.multiplyScalar(Math.cos(8 * RAD)).addScaledVector(out, Math.sin(8 * RAD)).normalize();
+    for (const inward of [inward0, 50, 60, 70, 78, 85].filter((a) => a >= inward0)) {
+      const v = f.fwd.clone().multiplyScalar(Math.cos(inward * RAD)).addScaledVector(out, -Math.sin(inward * RAD)).addScaledVector(f.up, 0.2).normalize();
+      this.armDirs(side, u, v, { palm: perp(f.fwd.clone().negate(), v).normalize(), grip: 0.6 });
+      if (wall === null) break;
+      const knuckles = this.head(`finger3-1.${side}`);
+      const reach = Math.max(knuckles.x + 2.8, knuckles.clone().addScaledVector(this.along(side), 3.5).x);
+      if (reach <= wall - 0.5) break;
+      this.resetArm(side);
+    }
+  }
+
+  /**
+   * De face ou de dos : le corps tourné vers nous (ou vers le fond), puis de
+   * `turn` autour du bassin ; les jambes vers leurs chevilles, les pieds à plat
+   * dans le repère du corps ; les bras par leurs points, l'écharpe sinon.
+   */
+  private poseFront(k: Skeleton, p: FrontPose, opts: PoseOptions) {
+    const sign: 1 | -1 = p.back ? -1 : 1;
+    const fwd = new THREE.Vector3(0, 0, sign);
+    const [bx, by] = rot([0, 1], p.turn ?? 0);
+    const [ux, uy] = rot(dir(180 + (p.tilt ?? 0)), p.turn ?? 0);
+    this.orient(new THREE.Vector3(p.pelvis[0], p.pelvis[1], 0), new THREE.Vector3(ux, uy, 0), fwd);
+    const foot = frameRotation(X, Y, fwd, new THREE.Vector3(bx, by, 0));
+    for (const side of ['left', 'right'] as const) {
+      const s = sideOf(p, side);
+      const leg = p[side];
+      const hip = this.head(`upperleg01.${s}`);
+      this.legTo(s, new THREE.Vector3(leg.ankle[0], leg.ankle[1], hip.z + sign * (leg.depth ?? 0)), fwd, foot);
+    }
+    this.arms(k, p, sign, opts);
+  }
+
+  /** Vu de dessus : debout, la tête vers nous, le regard vers le haut de l'image ; les épaules en `at`. */
+  private poseTop(k: Skeleton, p: TopPose, opts: PoseOptions) {
+    const fwd = new THREE.Vector3(0, 1, 0);
+    const up = new THREE.Vector3(0, 0, 1);
+    this.orient(new THREE.Vector3(p.at[0], p.at[1], -SEG.trunk), up, fwd);
+    const foot = frameRotation(X, Y, fwd, up);
+    for (const s of ['R', 'L'] as const) {
+      const hip = this.head(`upperleg01.${s}`);
+      this.legTo(s, hip.clone().addScaledVector(up, -(SEG.thigh + SEG.shank)), fwd, foot);
+    }
+    this.arms(k, p, -1, opts);
+  }
+
+  /** Les bras de face, de dos ou de dessus : le libre par ses points, le plâtré par les siens ou en écharpe. */
+  private arms(k: Skeleton, p: FrontPose | TopPose, sign: 1 | -1, opts: PoseOptions) {
+    const f = this.frame();
+    const { free, cast } = armSides(p);
+    // La paume vers le corps, le pouce devant : un bras au repos, une poignée tenue droite. Au sol (un
+    // gainage sur l'avant-bras), la main à plat, paume en bas.
+    const onFloor = p.view === 'front' && k.arms.free.wrist[1] < 6;
+    const style = onFloor ? { palm: new THREE.Vector3(0, -1, 0), grip: 0 } : { palm: this.lateral(f, free).negate(), grip: opts.hold ? 1 : 0.25 };
+    this.armView(free, k.arms.free, sign, p.free.depth, style);
+    if (onFloor) this.handFlat(free);
+    const spec: FrontArm | undefined = p.view === 'front' ? p.cast : undefined;
+    if (spec) this.armView(cast, k.arms.cast, sign, spec.depth, { palm: this.lateral(f, cast).negate(), grip: 0.3 });
+    else this.sling(cast, f, null, 65);
+  }
+
+  /**
+   * De profil : le buste, les jambes, le bras libre ; le bras plâtré selon
+   * `cast` (en écharpe, en travers, posé sur le ventre, ou par ses angles).
+   */
+  private poseSide(k: Skeleton, p: SidePose, opts: PoseOptions) {
     this.trunk(k, p);
     this.leg('R', k.legs.near!);
     this.leg('L', k.legs.far!);
-    const freeSide: Side = p.freeSide === 'far' ? 'L' : 'R';
-    const castSide: Side = freeSide === 'R' ? 'L' : 'R';
+    const { free: freeSide, cast: castSide } = armSides(p);
     const up = flat(k.joints.hip!, k.joints.shoulder!);
     const down = up.clone().negate();
-    const fwd = new THREE.Vector3(up.y, -up.x, 0);
     const lateral = (s: Side) => new THREE.Vector3(0, 0, s === 'R' ? 1 : -1);
     const supine = p.lean < -60;
 
@@ -434,20 +620,7 @@ export class Rig {
     // Le bras plâtré.
     const cast = p.cast;
     if (cast === undefined || cast === 'sling' || cast === 'across') {
-      // L'écharpe, en vrai : le bras pend un peu devant (10°) et s'écarte du flanc (8°) ;
-      // l'avant-bras part à 40° de l'avant, vers le milieu, un peu relevé, le pouce en haut.
-      // Face à un mur proche, l'avant-bras rentre vers le ventre (jusqu'à 85°) : le plâtre ne le traverse pas.
-      const u = down.clone().applyAxisAngle(Z, 10 * RAD).multiplyScalar(Math.cos(8 * RAD)).add(lateral(castSide).multiplyScalar(Math.sin(8 * RAD))).normalize();
-      const wall = frontWall(opts.props ?? [], k.joints.hip![0]);
-      for (const inward of [40, 50, 60, 70, 78, 85]) {
-        const v = fwd.clone().multiplyScalar(Math.cos(inward * RAD)).add(lateral(castSide).negate().multiplyScalar(Math.sin(inward * RAD))).add(up.clone().multiplyScalar(0.2)).normalize();
-        this.armDirs(castSide, u, v, { palm: perp(fwd.clone().negate(), v).normalize(), grip: 0.6 });
-        if (wall === null) break;
-        const knuckles = this.head(`finger3-1.${castSide}`);
-        const reach = Math.max(knuckles.x + 2.8, knuckles.clone().addScaledVector(this.along(castSide), 3.5).x);
-        if (reach <= wall - 0.5) break;
-        this.resetArm(castSide);
-      }
+      this.sling(castSide, this.frame(), frontWall(opts.props ?? [], k.joints.hip![0]));
     } else if (cast.over) {
       // Posé sur le ventre : la main sur la peau au droit de la main du dessin, le coude contre le flanc.
       const s = this.head(`upperarm01.${castSide}`);
@@ -460,7 +633,6 @@ export class Rig {
     } else {
       this.arm(castSide, k.arms.cast, 6, { palm: lateral(castSide).negate(), grip: 0.3 });
     }
-    this.scene.updateMatrixWorld(true);
   }
 
   // ── Le maillage ───────────────────────────────────────────────────────────

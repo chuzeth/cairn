@@ -147,13 +147,32 @@ export interface FrontPose {
   tilt?: number;
   /** Tout le corps tourné autour du bassin, degrés, sens trigonométrique (un gainage latéral). */
   turn?: number;
-  left: { ankle: Pt };
-  right: { ankle: Pt };
-  free: { side: 'left' | 'right'; elbow: Pt; hand: Pt };
+  left: FrontLeg;
+  right: FrontLeg;
+  free: FrontArm & { side: 'left' | 'right' };
   /** Le bras plâtré, en écharpe par défaut. */
-  cast?: { elbow: Pt; hand: Pt };
+  cast?: FrontArm;
   /** Vu de dos : le visage ne se voit pas. */
   back?: boolean;
+}
+
+/**
+ * Un bras de face, de dos ou de dessus, par ses points tels que la vue les
+ * montre. `depth` dit ce que la vue ne montre pas : la main devant les épaules
+ * (de face, de dos) ou sous elles (de dessus), en unités — la poignée contre
+ * la poitrine. Sans elle, le bras se déplie dans cet axe de ce qu'il faut pour
+ * garder ses longueurs.
+ */
+export interface FrontArm {
+  elbow: Pt;
+  hand: Pt;
+  depth?: number;
+}
+
+/** Une jambe de face ou de dos, par sa cheville ; `depth`, la cheville devant la hanche — une jambe qui croise devant l'autre. */
+export interface FrontLeg {
+  ankle: Pt;
+  depth?: number;
 }
 
 /** Vu du dessus : x sur le côté, y vers l'avant. */
@@ -161,7 +180,7 @@ export interface TopPose {
   view: 'top';
   /** Le milieu des épaules. */
   at: Pt;
-  free: { side: 'left' | 'right'; elbow: Pt; hand: Pt };
+  free: FrontArm & { side: 'left' | 'right' };
 }
 
 export type Pose = SidePose | FrontPose | TopPose;
@@ -281,13 +300,17 @@ function sideSkeleton(p: SidePose): Skeleton {
   };
 }
 
-/** De face : les largeurs d'un homme de 1,80 m. */
+/**
+ * De face : les largeurs d'un homme de 1,80 m, celles du mannequin 3D — ses
+ * hanches, ses épaules, au-dessus des hanches de la longueur du buste. Le
+ * dessin et la 3D posent ainsi les mêmes articulations.
+ */
 export const FRONT = {
   /** Écart des centres des hanches au milieu du bassin. */
-  hip: 5,
+  hip: 6.6,
   /** Écart des épaules. */
-  shoulder: 10,
-  shoulderHeight: 27,
+  shoulder: 11.6,
+  shoulderHeight: SEG.trunk,
 } as const;
 
 function frontSkeleton(p: FrontPose): Skeleton {
@@ -304,12 +327,14 @@ function frontSkeleton(p: FrontPose): Skeleton {
   const rSh = place(atTrunk(FRONT.shoulderHeight, FRONT.shoulder));
   const neck = place(atTrunk(SEG.trunk, 0));
   const head = place(atTrunk(SEG.trunk + SEG.neck, 0));
-  const straight = (hip: Pt, ankle: Pt): LegPts => {
+  const straight = (hip: Pt, leg: FrontLeg): LegPts => {
+    const { ankle } = leg;
     const knee = lerp(hip, ankle, SEG.thigh / (SEG.thigh + SEG.shank));
-    return { hip, knee, ankle, heel: ankle, ball: ankle, toe: ankle, sole: 0, reach: dist(hip, ankle) <= SEG.thigh + SEG.shank + 0.05 };
+    const reach = Math.hypot(dist(hip, ankle), leg.depth ?? 0) <= SEG.thigh + SEG.shank + 0.05;
+    return { hip, knee, ankle, heel: ankle, ball: ankle, toe: ankle, sole: 0, reach };
   };
-  const left = straight(lHip, p.left.ankle);
-  const rightLeg = straight(rHip, p.right.ankle);
+  const left = straight(lHip, p.left);
+  const rightLeg = straight(rHip, p.right);
   const freeSh = p.free.side === 'left' ? lSh : rSh;
   const castSh = p.free.side === 'left' ? rSh : lSh;
   const free = armOf(freeSh, { elbow: p.free.elbow, hand: p.free.hand });
@@ -341,7 +366,7 @@ function topSkeleton(p: TopPose): Skeleton {
   const castSh = p.free.side === 'left' ? rSh : lSh;
   const free = armOf(freeSh, { elbow: p.free.elbow, hand: p.free.hand });
   const side = p.free.side === 'left' ? 1 : -1;
-  const cast = armOf(castSh, { elbow: add(castSh, [side * 1.5, 3]), hand: add(o, [-side * 3.5, 6.5]) });
+  const cast = armOf(castSh, { elbow: add(castSh, [side * 1.5, 3]), hand: add(o, [-side * 1, 6.5]) });
   const joints: Record<string, Pt> = {
     head: add(o, [0, 0.8]), shoulder: o,
     'free.shoulder': freeSh, 'free.elbow': free.elbow, 'free.wrist': free.wrist, 'free.tip': free.tip,
@@ -642,10 +667,10 @@ function frontParts(k: Skeleton, p: FrontPose): Part[] {
   const up = rot(dir(180 + (p.tilt ?? 0)), turn);
   const right = rot(up, -90);
   const at = (h: number, s: number): Pt => add(add(o, mul(up, h)), mul(right, s));
-  // De face : les hanches, la taille marquée, le grand dorsal, les deltoïdes.
+  // De face : les hanches, la taille marquée, le grand dorsal, les deltoïdes — aux largeurs du mannequin 3D.
   const half = (s: 1 | -1): Pt[] => [
-    at(-3.5, s * 9.6), at(1.5, s * 10.3), at(7.0, s * 8.6), at(11.5, s * 8.3), at(17.0, s * 9.6),
-    at(21.5, s * 10.4), at(25.0, s * 12.0), at(28.4, s * 11.8), at(30.2, s * 8.6), at(30.2, s * 3.4),
+    at(-3.5, s * 10.8), at(1.5, s * 10.6), at(7.0, s * 8.8), at(11.5, s * 8.3), at(17.0, s * 9.6),
+    at(21.5, s * 10.8), at(25.5, s * 12.8), at(29.6, s * 13.0), at(31.6, s * 9.4), at(32.0, s * 3.6),
   ];
   const trunk: Part = {
     name: 'trunk', tone: 'near',
@@ -1415,6 +1440,22 @@ function legBetween(a: LegSpec, la: LegPts, b: LegSpec, lb: LegPts, t: number): 
   return { thigh: lerpAngle(x.thigh, y.thigh, t), shank: lerpAngle(x.shank, y.shank, t), sole: lerpNum(x.sole, y.sole, t) };
 }
 
+/** La profondeur d'une main ou d'une cheville entre deux positions : 0 quand l'une ne la dit pas. */
+const depthBetween = (a: number | undefined, b: number | undefined, t: number): number | undefined =>
+  a == null && b == null ? undefined : lerpNum(a ?? 0, b ?? 0, t);
+
+/** Une jambe de face entre deux positions. */
+function frontLegBetween(a: FrontLeg, b: FrontLeg, t: number): FrontLeg {
+  const depth = depthBetween(a.depth, b.depth, t);
+  return { ankle: lerp(a.ankle, b.ankle, t), ...(depth != null ? { depth } : {}) };
+}
+
+/** Un bras de face ou de dessus entre deux positions : ses points, et sa profondeur si les deux la disent. */
+function frontArmBetween(a: FrontArm, b: FrontArm, t: number): FrontArm {
+  const depth = a.depth != null && b.depth != null ? lerpNum(a.depth, b.depth, t) : (t < 0.5 ? a.depth : b.depth);
+  return { elbow: lerp(a.elbow, b.elbow, t), hand: lerp(a.hand, b.hand, t), ...(depth != null ? { depth } : {}) };
+}
+
 /** Un bras entre deux positions : par ses angles s'ils sont dits des deux côtés, sinon par la main. */
 function armBetween(a: ArmSpec, pa: ArmPts, b: ArmSpec, pb: ArmPts, t: number): ArmSpec {
   const fingers = (s: ArmSpec) => ('fingers' in s ? s.fingers : undefined);
@@ -1464,17 +1505,17 @@ export function between(a: Pose, b: Pose, t: number): Pose {
       pelvis: lerp(a.pelvis, b.pelvis, t),
       tilt: lerpNum(a.tilt ?? 0, b.tilt ?? 0, t),
       turn: lerpAngle(a.turn ?? 0, b.turn ?? 0, t),
-      left: { ankle: lerp(a.left.ankle, b.left.ankle, t) },
-      right: { ankle: lerp(a.right.ankle, b.right.ankle, t) },
-      free: { side: b.free.side, elbow: lerp(a.free.elbow, b.free.elbow, t), hand: lerp(a.free.hand, b.free.hand, t) },
-      ...(a.cast && b.cast ? { cast: { elbow: lerp(a.cast.elbow, b.cast.elbow, t), hand: lerp(a.cast.hand, b.cast.hand, t) } } : {}),
+      left: frontLegBetween(a.left, b.left, t),
+      right: frontLegBetween(a.right, b.right, t),
+      free: { side: b.free.side, ...frontArmBetween(a.free, b.free, t) },
+      ...(a.cast && b.cast ? { cast: frontArmBetween(a.cast, b.cast, t) } : {}),
     };
   }
   if (a.view === 'top' && b.view === 'top') {
     return {
       ...b,
       at: lerp(a.at, b.at, t),
-      free: { side: b.free.side, elbow: lerp(a.free.elbow, b.free.elbow, t), hand: lerp(a.free.hand, b.free.hand, t) },
+      free: { side: b.free.side, ...frontArmBetween(a.free, b.free, t) },
     };
   }
   return t < 0.5 ? a : b;
