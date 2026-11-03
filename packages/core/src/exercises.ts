@@ -36,6 +36,8 @@ export const EXERCISE_KEYS = [
   'escalier-immeuble',
   // Le 19/10, le plâtre retiré : la rééducation du coude, avec sa kiné.
   'kine',
+  // Le 02/11, préparer l'impact avant de recourir : de petits sauts.
+  'sauts-pieds-joints', 'sauts-une-jambe',
   // Les tests du premier et du dernier jour, un par étape de la séance.
   'test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse',
 ] as const;
@@ -1285,6 +1287,60 @@ export const EXERCISES: Record<ExerciseKey, ExerciseSheet> = {
     harder: 'Un sac plus lourd, ou une jambe à la fois.',
     cast: 'Le sac se pose et se retire d\'une main, assis : rien ne passe par le bras blessé.',
   },
+  'sauts-pieds-joints': {
+    key: 'sauts-pieds-joints',
+    name: 'Petits sauts, pieds joints',
+    what: 'Debout, pieds joints, tu rebondis sur place à quelques centimètres du sol, sur l\'avant des pieds, comme à la corde à sauter.',
+    cues: [
+      'Le pied rebondit à peine : 5 cm, pas plus.',
+      'Le talon ne touche pas, le genou reste presque tendu.',
+      'Silencieux : si ça tape, tu sautes trop haut.',
+    ],
+    where: ['maison'],
+    equipment: 'Le tapis, près d\'un mur',
+    why:
+      'Six semaines sans course : le muscle a gagné, mais le tendon d\'Achille et l\'os ont perdu l\'habitude du choc, et ' +
+      'ils s\'adaptent plus lentement. Ces rebonds leur rendent, en petites doses, ce que chaque foulée va leur demander.',
+    setup: ['Debout sur le tapis, les pieds joints, à portée de main d\'un mur.', 'Le bras blessé contre toi, le regard droit devant.'],
+    steps: [
+      'Rebondis sur l\'avant des pieds, au rythme de deux sauts par seconde.',
+      'Reste grand : le mouvement vient des chevilles, pas des genoux.',
+      'Arrête la série dès que le rebond devient lourd.',
+    ],
+    breath: 'Respire librement.',
+    feel: 'Les mollets qui font ressort ; aucune douleur au tendon ni au tibia.',
+    mistakes: ['Sauter haut : la dose, c\'est le nombre de petits rebonds.', 'Atterrir sur les talons.'],
+    easier: 'Sans décoller : monter sur la pointe et retomber sur place, vite.',
+    harder: 'Sur une jambe (la fiche suivante).',
+    cast: 'Le bras blessé reste contre toi ; rien ne s\'y appuie. Sur le tapis, sans chaussettes qui glissent. Si ta kiné ne veut pas encore de sauts, attends son accord.',
+  },
+  'sauts-une-jambe': {
+    key: 'sauts-une-jambe',
+    name: 'Petits sauts sur une jambe',
+    what: 'Debout sur une jambe, l\'autre pied levé derrière, tu rebondis sur place à quelques centimètres du sol, sur l\'avant du pied.',
+    cues: [
+      'Le rebond tout petit, le genou presque tendu.',
+      'Le bassin à niveau, le genou ne rentre pas.',
+      'La main valide près du mur, sans s\'y tenir.',
+    ],
+    where: ['maison'],
+    equipment: 'Le tapis, près d\'un mur',
+    why:
+      'Courir, c\'est rebondir d\'une jambe sur l\'autre. Faire ces sauts sans douleur est le critère le plus simple pour ' +
+      'savoir que la jambe est prête au choc de la foulée, et la gauche, en retrait aux tests, y travaille autant que la droite.',
+    setup: ['Sur un pied, sur le tapis, le côté valide vers le mur, à portée de main.', 'L\'autre pied levé derrière, le bras blessé contre toi.'],
+    steps: [
+      'Rebondis sur l\'avant du pied, 5 cm au plus, sans presser.',
+      'Toutes les répétitions d\'une jambe, puis l\'autre.',
+      'Au moindre déséquilibre, repose l\'autre pied : pas de chute.',
+    ],
+    breath: 'Respire librement.',
+    feel: 'Le mollet et le fessier qui stabilisent ; aucune douleur à la cheville, au tibia ou au genou.',
+    mistakes: ['Enchaîner fatigué : c\'est là qu\'on tombe.', 'Laisser le genou rentrer à l\'atterrissage.'],
+    easier: 'Les sauts pieds joints, en reportant le poids d\'un côté.',
+    harder: 'De petits sauts en avançant, plus tard, quand la course est revenue.',
+    cast: 'Le mur à portée de la main valide. Fatigué, tu t\'arrêtes : une chute est le seul risque que ton coude ne peut pas prendre.',
+  },
   'mollets-charges': {
     key: 'mollets-charges',
     name: 'Mollet lesté, sur un pied, au bord du step',
@@ -2118,6 +2174,34 @@ export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why:
     title: 'Récupération',
     focus: 'Marche facile, souplesse, cheville, équilibre, pied.',
     why: 'La semaine s\'assimile : c\'est maintenant que le muscle se construit.',
+  },
+];
+
+/** La suite du bloc, du 3 au 29 novembre : de la force vers la course. */
+export const RETURN_WEEKS: { dates: string; name: string; what: string }[] = [
+  {
+    dates: '3 au 8 novembre',
+    name: 'Préparer l\'impact',
+    what: 'Force A mardi, vélo et hanches mercredi, force B jeudi, moteur et premiers sauts vendredi, force C samedi, ' +
+      'longue montée à Fourvière dimanche.',
+  },
+  {
+    dates: '9 au 15 novembre',
+    name: 'Dernière charge',
+    what: 'La même semaine, plus lourde. Le vendredi 13, les sauts sur une jambe : sans douleur, ni pendant ni le ' +
+      'lendemain, c\'est le critère de la reprise.',
+  },
+  {
+    dates: '16 au 22 novembre',
+    name: 'La course revient',
+    what: 'Avec le feu vert du chirurgien ou de la kiné : lundi, mercredi, vendredi, 2 minutes de course pour 1 de ' +
+      'marche, à plat, sur sol sec. Force A mardi, moteur jeudi, force B samedi, longue montée dimanche.',
+  },
+  {
+    dates: '23 au 29 novembre',
+    name: 'La course s\'allonge',
+    what: '6 × 3 minutes, 5 × 4 minutes, 4 × 6 minutes. Deux forces, un moteur. Les tests le dimanche 29, avant de ' +
+      'construire vers 2027.',
   },
 ];
 

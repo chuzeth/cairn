@@ -95,7 +95,7 @@ describe('Les schémas en 3D', () => {
     // Le 27/10, Pierre : « que ce soit que de la modélisation 3D ». Un schéma resté en vecteur se verrait.
     const keys = Object.keys(FIGURES).filter((k) => FIGURES[k as keyof typeof FIGURES]);
     expect(keys.filter((k) => !FIGURES_3D.has(k))).toEqual([]);
-    expect(FIGURES_3D.size).toBe(63);
+    expect(FIGURES_3D.size).toBe(65);
   });
 
   it('chargent un mannequin que le service worker range dès l’installation', () => {

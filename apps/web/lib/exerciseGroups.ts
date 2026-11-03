@@ -13,7 +13,7 @@ import type { ExerciseKey } from '@cairn/core/exercises';
 export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[] }[] = [
   {
     title: 'Les tests',
-    lead: 'Le 9 octobre et le 1er novembre : sept mesures, les mêmes, à la même heure.',
+    lead: 'Le 9 octobre, le 1er et le 29 novembre : sept mesures, les mêmes, à la même heure.',
     keys: ['test-mollets', 'test-pont', 'test-chaise', 'test-gainage', 'test-equilibre', 'test-cheville', 'test-souplesse'],
   },
   {
@@ -37,7 +37,7 @@ export const EXERCISE_GROUPS: { title: string; lead: string; keys: ExerciseKey[]
     lead: 'Le tendon d’Achille et le pied, qui encaissent chaque foulée : ce qu’un arrêt de course déconditionne en premier.',
     keys: [
       'mollets-charges', 'soleaire-assis', 'mollets-iso', 'mollets-excentriques', 'mollets-sol', 'releves-pointe',
-      'cheville-mobilite', 'squat-profond', 'pied-court', 'equilibre',
+      'cheville-mobilite', 'squat-profond', 'pied-court', 'equilibre', 'sauts-pieds-joints', 'sauts-une-jambe',
     ],
   },
   {

@@ -839,6 +839,50 @@ const FIGURE_LIST: Partial<Record<ExerciseKey, FigureSpec>> = {
     ],
   },
 
+  'sauts-pieds-joints': {
+    panels: [
+      {
+        label: 'Un petit rebond, 5 cm, le talon ne touche pas',
+        ghostLabel: 'Sur l’avant des pieds',
+        props: [{ kind: 'floor' }, { kind: 'mat', from: -24, to: 28 }],
+        ghost: {
+          view: 'side', hip: [2, 54.4], lean: 2,
+          near: { ankle: ankleFromBall([6, 0.6], -18), sole: -18 }, far: { ankle: ankleFromBall([4, 0.6], -18), sole: -18 },
+          free: { upper: 4, fore: 22 },
+        },
+        pose: {
+          view: 'side', hip: [2, 59], lean: 2,
+          near: { ankle: ankleFromBall([6, 5.6], -18), sole: -18 }, far: { ankle: ankleFromBall([4, 5.6], -18), sole: -18 },
+          free: { upper: 4, fore: 22 },
+        },
+        motions: [{ joint: 'near.heel', bend: 3, label: '5 cm' }],
+        muscles: [{ muscle: 'calves' }, { muscle: 'soleus' }],
+        ghostContacts: [{ ref: 'near.ball', y: 0.6 }, { ref: 'far.ball', y: 0.6 }],
+      },
+    ],
+  },
+  'sauts-une-jambe': {
+    panels: [
+      {
+        label: 'Sur une jambe : le même petit rebond, le bassin à niveau',
+        ghostLabel: 'Sur l’avant du pied',
+        props: [{ kind: 'floor' }, { kind: 'mat', from: -30, to: 26 }],
+        ghost: {
+          view: 'side', hip: [2, 54.4], lean: 2,
+          near: { ankle: ankleFromBall([6, 0.6], -18), sole: -18 }, far: { thigh: -5, shank: -88, sole: -85 },
+          free: { upper: 4, fore: 22 },
+        },
+        pose: {
+          view: 'side', hip: [2, 59], lean: 2,
+          near: { ankle: ankleFromBall([6, 5.6], -18), sole: -18 }, far: { thigh: -5, shank: -88, sole: -85 },
+          free: { upper: 4, fore: 22 },
+        },
+        motions: [{ joint: 'near.heel', bend: 3, label: '5 cm' }],
+        muscles: [{ muscle: 'calves' }, { muscle: 'glutes' }],
+        ghostContacts: [{ ref: 'near.ball', y: 0.6 }],
+      },
+    ],
+  },
   'mollets-iso': {
     panels: [
       {

@@ -582,7 +582,8 @@ export function compensationHomeDay(model: PhysiologyModel, dow: number): Sessio
  */
 
 /** La semaine du bloc : 0, les trois jours d'ouverture ; 1 construire ; 2 charger ; 3 alléger. */
-export type BlockWeek = 0 | 1 | 2 | 3;
+/** 0 à 3 : le bloc du 09/10 au 01/11. 4 et 5 : la suite, vers la course (`bridgeDay`). */
+export type BlockWeek = 0 | 1 | 2 | 3 | 4 | 5;
 
 interface BlockDose {
   /** Séries des exercices principaux, par jambe pour ceux d'une jambe. */
@@ -618,29 +619,46 @@ interface BlockDose {
   wallS: number;
   /** Gainage sur le côté, s. */
   holdS: number;
+  /**
+   * Les séries de plus du côté faible, mollets et chaîne arrière. Au 01/11, une
+   * série de plus n'a pas suffi : l'écart s'est creusé (`bridgeDay`). Alors deux,
+   * et ce côté commence.
+   */
+  weakSets: number;
 }
 
 const BLOCK_DOSE: Record<BlockWeek, BlockDose> = {
   0: {
     main: 3, second: 3, acc: 2, mainReps: 10, reserve: 3, pack: '', stairsPack: '', harder: false, isoSets: 3,
-    climb: { reps: 4, zone: 'Z4' }, stairsMin: 30, easyStairsMin: 20, wallS: 60, holdS: 40,
+    climb: { reps: 4, zone: 'Z4' }, stairsMin: 30, easyStairsMin: 20, wallS: 60, holdS: 40, weakSets: 1,
   },
   1: {
     main: 4, second: 3, acc: 3, mainReps: 8, reserve: 2,
     pack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.', harder: false, isoSets: 4,
     stairsPack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.',
-    climb: { reps: 5, zone: 'Z4' }, stairsMin: 45, easyStairsMin: 30, wallS: 75, holdS: 45,
+    climb: { reps: 5, zone: 'Z4' }, stairsMin: 45, easyStairsMin: 30, wallS: 75, holdS: 45, weakSets: 1,
   },
   2: {
     main: 5, second: 4, acc: 3, mainReps: 6, reserve: 1,
     pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: true, isoSets: 5,
     stairsPack: 'Le sac à dos de 6 à 8 kg — quatre à cinq bouteilles d\'eau de 1,5 L.',
-    climb: { reps: 6, zone: 'Z4' }, stairsMin: 70, easyStairsMin: 40, wallS: 90, holdS: 50,
+    climb: { reps: 6, zone: 'Z4' }, stairsMin: 70, easyStairsMin: 40, wallS: 90, holdS: 50, weakSets: 1,
   },
   3: {
     main: 2, second: 2, acc: 2, mainReps: 8, reserve: 3, pack: 'Le sac à dos de 8 kg.', stairsPack: 'Le sac à dos de 6 à 8 kg.',
     harder: false, isoSets: 3,
-    climb: { reps: 4, zone: 'Z4' }, stairsMin: 40, easyStairsMin: 30, wallS: 60, holdS: 40,
+    climb: { reps: 4, zone: 'Z4' }, stairsMin: 40, easyStairsMin: 30, wallS: 60, holdS: 40, weakSets: 1,
+  },
+  // Vers la course : moins de séries que la semaine de charge d'octobre, la même charge — la force se garde à moindre volume.
+  4: {
+    main: 3, second: 3, acc: 2, mainReps: 6, reserve: 2,
+    pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: false, isoSets: 4,
+    stairsPack: '', climb: { reps: 5, zone: 'Z4' }, stairsMin: 0, easyStairsMin: 0, wallS: 60, holdS: 45, weakSets: 2,
+  },
+  5: {
+    main: 4, second: 3, acc: 2, mainReps: 6, reserve: 1,
+    pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: true, isoSets: 4,
+    stairsPack: '', climb: { reps: 6, zone: 'Z4' }, stairsMin: 0, easyStairsMin: 0, wallS: 60, holdS: 50, weakSets: 2,
   },
 };
 
@@ -753,7 +771,7 @@ interface Rx {
   /** Durée d'une série, s, quand ni le maintien ni l'effort guidé ne la donnent. */
   setS?: number;
   /** Le côté faible des tests, et les séries qu'il prend en plus. */
-  weak?: { side?: WeakSide; sets: number };
+  weak?: { side?: WeakSide; sets: number; first?: boolean };
 }
 
 /** Un exercice du bloc, rangé dans sa partie. */
@@ -762,6 +780,7 @@ function ex(exercise: ExerciseKey, part: string, r: Rx): SessionBlock {
   const weak = r.sides === 'jambe' && r.weak?.side ? { ...r.weak.side, sets: r.weak.sets } : undefined;
   const notes = [
     weak ? `Jambe ${weak.side} : ${weak.sets > 1 ? `${weak.sets} séries` : 'une série'} de plus — ${weak.measured}.` : '',
+    weak && r.weak?.first ? 'Elle commence, et l\'autre s\'arrête au même nombre de répétitions.' : '',
     r.notes ?? '',
   ].filter(Boolean).join(' ');
   return {
@@ -858,7 +877,7 @@ function armCare(weekday: boolean, castOff = false): SessionBlock[] {
 const calfIso = (d: BlockDose, w: WeakSides, part: string = PART.calves) =>
   ex('mollets-iso', part, {
     label: 'Mollet sous le cadre de porte', sets: d.isoSets, reps: 4, sides: 'jambe', pulse: { workS: 3, restS: 3 },
-    restS: 20, effort: 'Pousse à fond', weak: { side: w.calves, sets: 1 },
+    restS: 20, effort: 'Pousse à fond', weak: { side: w.calves, sets: d.weakSets },
   });
 
 /** L'équilibre, yeux fermés : le côté faible des tests d'abord, deux fois de plus. */
@@ -910,12 +929,16 @@ const deadBug = (part: string, effort = 'Dos plaqué') =>
   });
 
 /** Les tests du premier et du dernier jour, un par étape. */
-export function blockTests(model: PhysiologyModel, when: 'start' | 'end'): SessionTemplate {
+export function blockTests(model: PhysiologyModel, when: 'start' | 'end' | 'return'): SessionTemplate {
   const start = when === 'start';
   const test = (exercise: ExerciseKey, label: string, r: Omit<Rx, 'label' | 'effort'> & { effort?: string }) =>
     ex(exercise, PART.tests, { label, effort: 'Jusqu\'à l\'échec', ...r });
-  return template(model, `bloc_tests_${when}`, 'strength', start ? 'Tests de départ' : 'Tests de fin de bloc',
-    start
+  return template(model, `bloc_tests_${when}`, 'strength',
+    start ? 'Tests de départ' : when === 'end' ? 'Tests de fin de bloc' : 'Tests après la reprise',
+    when === 'return'
+      ? 'Les sept mesures, quatre semaines après le 1er novembre : la jambe gauche a-t-elle rattrapé la droite aux ' +
+          'mollets et au pont ? Note aussi la chaise et le gainage, qui manquent au 1er novembre.'
+      : start
       ? 'Savoir d\'où tu pars : sept mesures, chacune vise une de tes lacunes ou un pilier du trail long. Le ' +
           '1er novembre, les mêmes diront ce que tu as gagné.'
       : 'Les sept mesures du 9 octobre, dans le même ordre et à la même heure : ce que trois semaines de force ont ' +
@@ -938,7 +961,7 @@ export function blockTests(model: PhysiologyModel, when: 'start' | 'end'): Sessi
 }
 
 /** Force A — les genoux et les descentes : le quadriceps qui freine, chargé. */
-export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSides): SessionTemplate {
+export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSides, calves = week !== 0): SessionTemplate {
   const d = BLOCK_DOSE[week];
   return template(model, `bloc_force_a_${week}`, 'strength', 'Force A : genoux et descentes',
     'Le quadriceps qui freine en s\'allongeant, chargé : ton aisance en descente, mesurée sur tes sorties, est à ' +
@@ -964,8 +987,8 @@ export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('chaise-une-jambe', PART.legs, {
         label: 'Chaise sur une jambe', sets: d.acc, holdS: d.harder ? 40 : 30, sides: 'jambe', restS: 30,
       }),
-      // Le lendemain des tests, les mollets sont vidés : l'isométrie attend lundi.
-      ...(week === 0 ? [] : [calfIso(d, w)]),
+      // Le lendemain des tests, les mollets sont vidés : l'isométrie attend.
+      ...(calves ? [calfIso(d, w)] : []),
       ...pushPull(d),
       deadBug(PART.core),
       ...armCare(true, afterCast(week)),
@@ -983,11 +1006,11 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       ex('souleve-une-jambe', PART.posterior, {
         label: 'Soulevé de terre sur une jambe, lesté', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 75,
         reserve: d.reserve, setS: 50, tempo: '3 s pour descendre, 1 s pour remonter',
-        notes: withPack(d), weak: { side: w.hips, sets: 1 },
+        notes: withPack(d), weak: { side: w.hips, sets: d.weakSets, first: d.weakSets > 1 },
       }),
       ex('hip-thrust', PART.posterior, {
         label: 'Pont sur le canapé', sets: d.second, reps: 12, sides: 'jambe', restS: 45, reserve: d.reserve, setS: 45,
-        tempo: '1 s pour monter, 2 s tenues, 2 s pour redescendre', weak: { side: w.hips, sets: 1 },
+        tempo: '1 s pour monter, 2 s tenues, 2 s pour redescendre', weak: { side: w.hips, sets: d.weakSets, first: d.weakSets > 1 },
         notes: d.harder ? 'Cette semaine, le sac posé sur le bassin, tenu par la main valide.' : undefined,
       }),
       ex('leg-curl-serviette', PART.posterior, {
@@ -1014,7 +1037,7 @@ export function blockForceB(model: PhysiologyModel, week: BlockWeek, w: WeakSide
  * le step, qui ne monte pas le cœur assez haut —, puis les mollets chargés, la
  * cheville et l'équilibre.
  */
-export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSides): SessionTemplate {
+export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSides, jumps: SessionBlock[] = []): SessionTemplate {
   const d = BLOCK_DOSE[week];
   const { reps, zone } = d.climb;
   const vert = 55;
@@ -1040,10 +1063,11 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       heart(model, 'Marche facile', 'Z1', 10 * 60, {
         exercise: 'marche', part: PART.coolDown, elevationLossM: vert, notes: 'La dernière descente, lente, puis à plat.',
       }),
+      ...jumps,
       ex('mollets-charges', PART.calvesFeet, {
         label: 'Mollet lesté, sur un pied', sets: d.second + 1, reps: d.harder ? 6 : 8, sides: 'jambe', restS: 60,
         reserve: d.reserve, setS: 60, tempo: '3 s pour monter, 1 s en haut, 3 s pour redescendre',
-        notes: withPack(d), weak: { side: w.calves, sets: 1 },
+        notes: withPack(d), weak: { side: w.calves, sets: d.weakSets, first: d.weakSets > 1 },
       }),
       ex('soleaire-assis', PART.calvesFeet, {
         label: 'Soléaire assis, sac sur les genoux', sets: d.second, reps: d.harder ? 10 : 12, restS: 45,
@@ -1065,13 +1089,14 @@ export function blockMoteur(model: PhysiologyModel, week: BlockWeek, w: WeakSide
 }
 
 /** Force C — une jambe et la puissance : les relances, et la force sur un seul appui. */
-export function blockForceC(model: PhysiologyModel, week: BlockWeek, w: WeakSides): SessionTemplate {
+export function blockForceC(model: PhysiologyModel, week: BlockWeek, w: WeakSides, jumps: SessionBlock[] = []): SessionTemplate {
   const d = BLOCK_DOSE[week];
   return template(model, `bloc_force_c_${week}`, 'strength', 'Force C : une jambe, puissance',
     'La puissance des relances et la force sur un seul appui — celui de chaque foulée, en montée comme en descente : ' +
       'monter vite, descendre lentement, sur une jambe.',
     [
       ...blockWarmUp(model),
+      ...jumps,
       ex('montee-tabouret', PART.legs, {
         label: 'Montée explosive sur le step', sets: d.main, reps: 5, sides: 'jambe', restS: 75, reserve: d.reserve,
         setS: 40, tempo: 'Monte le plus vite possible sans sauter, redescends en 3 s',
@@ -1105,7 +1130,7 @@ const hips = (d: BlockDose, w: WeakSides): SessionBlock[] => [
   }),
   ex('pont-une-jambe', PART.hips, {
     label: 'Pont sur une jambe, au sol', sets: 2, reps: 15, sides: 'jambe', restS: 30, setS: 45,
-    tempo: '1 s pour monter, 2 s serrées en haut', effort: 'Jusqu\'à la brûlure', weak: { side: w.hips, sets: 1 },
+    tempo: '1 s pour monter, 2 s serrées en haut', effort: 'Jusqu\'à la brûlure', weak: { side: w.hips, sets: d.weakSets, first: d.weakSets > 1 },
   }),
 ];
 
@@ -1289,6 +1314,161 @@ export function blockDay(model: PhysiologyModel, index: number, weak: WeakSides 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// La suite : du 3 au 29 novembre, vers la course
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Le 02/11, Pierre : la backyard du 07/11 est hors de portée, la course peut
+ * reprendre d'ici 10 à 15 jours, et les ambitions de 2027 ne bougent pas.
+ *
+ * Tests du 01/11 : le pont gagne 25 % à gauche et 42 % à droite, les mollets 9 %
+ * et 15 % ; l'équilibre et la cheville sont réglés. Avec une série de plus à
+ * gauche, l'écart s'est creusé (mollets 22 → 26 %, pont 11 → 22 %) : le côté
+ * faible prend deux séries et commence (`weakSets`).
+ *
+ * Six semaines sans impact au 16/11 : le muscle a gagné, le tendon et l'os ont
+ * perdu l'habitude du choc, et ils s'adaptent plus lentement que le muscle et le
+ * cœur (Bohm 2015, Warden 2014). Deux semaines de sauts progressifs, puis une
+ * course-marche à plat, trois fois par semaine. La force se garde avec moins de
+ * séances (Rønnestad & Mujika 2014) : trois, puis deux quand la course revient.
+ */
+const BRIDGE_DAYS = 28;
+
+/** Les sauts : le stade dit combien, et s'il se fait sur une jambe. */
+function jumps(stage: 1 | 2 | 3 | 4): SessionBlock[] {
+  const PART_IMPACT = 'Préparer l\'impact';
+  const rest = { restS: 45, setS: 25, tempo: 'Le talon ne touche pas, le genou presque tendu' };
+  const both = ex('sauts-pieds-joints', PART_IMPACT, {
+    label: 'Petits sauts, pieds joints', sets: stage === 1 ? 2 : 3, reps: stage === 1 ? 10 : stage === 2 ? 15 : 20,
+    effort: 'Léger, sans douleur', notes: 'Sur le tapis, près d\'un mur.', ...rest,
+  });
+  if (stage < 3) return [both];
+  return [
+    both,
+    ex('sauts-une-jambe', PART_IMPACT, {
+      label: 'Petits sauts sur une jambe', sets: 2, reps: stage === 3 ? 8 : 12, sides: 'jambe', effort: 'Léger, sans douleur',
+      notes: stage === 4
+        ? 'Le critère de la reprise : aucune douleur à la cheville, au tibia ou au genou, ni pendant, ni demain matin.'
+        : 'La main valide près du mur.',
+      ...rest,
+    }),
+  ];
+}
+
+/** Le vélo d'appartement, puis les hanches et le tronc : du volume pour le cœur, sans aucun choc. */
+export function bridgeVelo(model: PhysiologyModel, week: BlockWeek, w: WeakSides, minutes: number): SessionTemplate {
+  const d = BLOCK_DOSE[week];
+  return template(model, `pont_velo_${week}`, 'cross_training', 'Vélo, hanches et tronc',
+    'Le cœur a perdu moins que tu ne crains, à condition de lui redonner du volume : une heure sans aucun choc, le ' +
+      'lendemain d\'une force. Puis le bassin, qui devra tenir dès les premières foulées.',
+    [
+      {
+        label: 'Échauffement', zone: 'Z1', durationS: 600, part: 'Vélo',
+        effort: 'De très facile à facile, cadence 85 à 90 tr/min',
+        notes: 'Assis, le buste droit, la main droite seule sur le guidon et le bras blessé contre toi : rien ne s\'appuie dessus. Jamais en danseuse.',
+      },
+      {
+        label: 'Endurance sur le vélo', zone: 'Z2', durationS: minutes * 60, hrRange: [134, 148], provenance: { hr: 'default' }, part: 'Vélo',
+        notes: 'Tu parles en phrases. C\'est la zone 2 de course, moins les 5 à 10 battements que le vélo retire au même effort. Toutes les 10 minutes, 1 minute à 105–110 tr/min, la résistance d\'un cran plus légère.',
+      },
+      { label: 'Retour au calme', zone: 'Z1', durationS: 300, part: 'Vélo', effort: 'Très facile, les jambes tournent seules' },
+      ...hips(d, w),
+      ...core(d),
+      { ...souplesse(600), part: PART.mobility },
+      ...armCare(true, true),
+    ]);
+}
+
+/** La longue montée, dehors : du temps debout, du dénivelé, et les pieds qui retrouvent le sol. */
+export function bridgeLong(model: PhysiologyModel, week: BlockWeek, minutes: number, vertM: number, pack: boolean): SessionTemplate {
+  return template(model, `pont_longue_${week}_${minutes}`, 'cross_training', 'Longue montée dehors',
+    'Ta durabilité reste ton plus gros gisement pour la Maxi-Race. Dehors, à Fourvière : du temps debout, de la pente, ' +
+      'et les pieds et les chevilles qui se réhabituent à marcher longtemps avant de recourir.',
+    [
+      heart(model, 'Montées et escaliers de Fourvière', 'Z2', minutes * 60, {
+        exercise: 'marche-cote',
+        part: PART.climbs,
+        elevationGainM: vertM,
+        elevationLossM: vertM,
+        notes:
+          `${pack ? 'Le sac à dos de 6 à 8 kg. ' : 'Sans sac. '}Montée Saint-Barthélemy, Gourguillon, escaliers de Fourvière : ` +
+          'revêtu et sec. Monte sans dépasser le haut de la plage ; redescends lentement, la main valide sur la rampe. Pas de sentier technique.',
+      }),
+      ...armCare(false, true),
+    ]);
+}
+
+/**
+ * La course-marche : `reps` fois `runMin` minutes de course et une de marche. Le
+ * cœur dira que c'est trop facile : c'est le tendon et l'os qu'elle ménage.
+ * Elle n'a lieu qu'avec le feu vert du chirurgien ou de la kiné.
+ */
+export function runWalk(model: PhysiologyModel, reps: number, runMin: number, first = false): SessionTemplate {
+  return template(model, `reprise_${reps}x${runMin}`, 'recovery', 'Course-marche',
+    `${first ? 'Le premier jour de course depuis le 2 octobre, si ton chirurgien ou ta kiné a donné son feu vert ; sinon, la même durée en marche rapide. ' : ''}` +
+      'À plat, sur sol sec : une chute est le seul risque que ton coude ne peut pas prendre. Aussi lent qu\'il faut : ' +
+      'ce n\'est pas le cœur qu\'on entraîne, c\'est le choc qu\'on réapprend.',
+    [
+      heart(model, 'Marche pour commencer', 'Z1', 5 * 60, { notes: 'Les quais ou le parc de la Tête d\'Or : plat, revêtu, sec. L\'attelle, si ta kiné la demande.' }),
+      {
+        ...heart(model, 'Course', 'Z2', runMin * 60, {
+          notes: 'Petits pas, 170 à 180 par minute. Une douleur au-dessus de 3 sur 10, ou qui change ta foulée : tu marches, et la prochaine séance reprend celle d\'avant.',
+        }),
+        hrRange: [0, 155],
+        repeat: reps,
+        recovery: { durationS: 60, zone: 'Z1', active: true, betweenReps: true },
+      },
+      heart(model, 'Marche pour finir', 'Z1', 5 * 60),
+      ...armCare(false, true),
+    ]);
+}
+
+/**
+ * Le jour `index` de la suite. Le programme commence le mardi 03/11 à l'index 0
+ * et rejoint le calendrier le lundi 09/11 à l'index 7 : la récupération de
+ * l'index 6 ne se pose pas la première semaine. Semaine 1, préparer ; semaine
+ * 2, charger une dernière fois ; semaines 3 et 4, la course revient (le 16/11, à
+ * deux semaines, dans les 10 à 15 jours de Pierre) et la force passe à deux séances.
+ */
+export function bridgeDay(model: PhysiologyModel, index: number, w: WeakSides = {}): SessionTemplate {
+  const days: (() => SessionTemplate)[] = [
+    // Semaine 1 : préparer l'impact. La force A sans l'isométrie : les mollets, testés à l'échec le 01/11, attendent la force C.
+    () => blockForceA(model, 4, w, false),
+    () => bridgeVelo(model, 4, w, 45),
+    () => blockForceB(model, 4, w),
+    () => blockMoteur(model, 4, w, jumps(1)),
+    () => blockForceC(model, 4, w, jumps(2)),
+    () => bridgeLong(model, 4, 90, 450, false),
+    () => blockRecup(model, w, true, 4),
+    // Semaine 2 : la dernière charge, puis le critère de la reprise le vendredi.
+    () => blockForceA(model, 5, w),
+    () => bridgeVelo(model, 5, w, 50),
+    () => blockForceB(model, 5, w),
+    () => blockMoteur(model, 5, w, jumps(3)),
+    () => blockForceC(model, 4, w, jumps(4)),
+    () => bridgeLong(model, 5, 105, 550, true),
+    () => blockRecup(model, w, true, 4),
+    // Semaine 3 : la course revient, un jour sur deux ; la force et le moteur entre deux.
+    () => runWalk(model, 6, 2, true),
+    () => blockForceA(model, 4, w),
+    () => runWalk(model, 7, 2),
+    () => blockMoteur(model, 4, w),
+    () => runWalk(model, 8, 2),
+    () => blockForceB(model, 4, w),
+    () => bridgeLong(model, 4, 90, 450, false),
+    // Semaine 4 : la course s'allonge ; les tests le dimanche, avant de construire vers 2027.
+    () => runWalk(model, 6, 3),
+    () => blockForceA(model, 4, w),
+    () => runWalk(model, 5, 4),
+    () => blockMoteur(model, 4, w),
+    () => runWalk(model, 4, 6),
+    () => blockForceB(model, 4, w),
+    () => blockTests(model, 'return'),
+  ];
+  return days[index]!();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Le programme posé dans le plan
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1315,9 +1495,10 @@ export async function layCompensation(
     offset?: number;
     /**
      * Le programme : la salle (`compensationDay`), la semaine 1 à la maison
-     * (`compensationHomeDay`), ou le bloc de force du 09/10 (`blockDay`).
+     * (`compensationHomeDay`), le bloc de force du 09/10 (`blockDay`), ou la
+     * suite, vers la course (`bridgeDay`).
      */
-    program?: 'gym' | 'home' | 'block';
+    program?: 'gym' | 'home' | 'block' | 'bridge';
     /** Ce que la révision du plan en dit, quand ce n'est pas tout le programme. */
     summary?: string;
   },
@@ -1329,7 +1510,7 @@ export async function layCompensation(
   const to = addDays(opts.from, opts.days - 1);
   const existing = await db.listPlannedSessions(athleteId, opts.from, to);
   // Le bloc de force règle ses séries sur le côté faible des derniers tests.
-  const weak = opts.program === 'block' ? weakSides(await db.listStrengthTests(athleteId), opts.from) : {};
+  const weak = opts.program === 'block' || opts.program === 'bridge' ? weakSides(await db.listStrengthTests(athleteId), opts.from) : {};
   const changes: PlanRevision['changes'] = [];
   let updated = 0;
   let inserted = 0;
@@ -1343,12 +1524,16 @@ export async function layCompensation(
     const week = Math.min(4, Math.floor(index / 7) + 1);
     if (program === 'home' && week !== 1) throw new Error('À la maison, seule la semaine 1 est écrite.');
     if (program === 'block' && index >= BLOCK_DAYS) throw new Error('Le bloc de force s\'arrête au 01/11.');
+    if (program === 'bridge' && index >= BRIDGE_DAYS) throw new Error('La suite s\'arrête au 29/11.');
     const t =
-      program === 'block' ? blockDay(model, index, weak)
+      program === 'bridge' ? bridgeDay(model, index, weak)
+      : program === 'block' ? blockDay(model, index, weak)
         : program === 'home' ? compensationHomeDay(model, index)
           : compensationDay(model, index);
     const why =
-      program === 'block'
+      program === 'bridge'
+        ? `${opts.reason} Vers la course, semaine ${Math.floor(index / 7) + 1} sur 4.`
+        : program === 'block'
         ? `${opts.reason} Bloc de force, ${blockWeekOf(index) === 0 ? 'ouverture' : `semaine ${blockWeekOf(index)} sur 3`}.`
         : program === 'home'
           ? `${opts.reason} Programme de compensation, semaine 1 sur 4, à la maison.`

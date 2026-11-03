@@ -1,4 +1,4 @@
-import { DOOR_KIT, EXERCISES, EXERCISE_WORDS, FORCE_BLOCK_DAYS, FORCE_BLOCK_WEEKS } from '@cairn/core/exercises';
+import { DOOR_KIT, EXERCISES, EXERCISE_WORDS, FORCE_BLOCK_DAYS, FORCE_BLOCK_WEEKS, RETURN_WEEKS } from '@cairn/core/exercises';
 import { ExerciseFigure } from '@/components/ExerciseFigure';
 import { nbsp } from '@/lib/api';
 import { EXERCISE_GROUPS } from '@/lib/exerciseGroups';
@@ -23,14 +23,35 @@ export default function ExercisesPage() {
         <div>
           <h1 className="page-title">Exercices</h1>
           <p className="page-sub">
-            Le bloc de force, du 9 octobre au 1er novembre : une séance par jour. Rien ne s&apos;appuie sur le bras
+            Du 3 au 29 novembre, de la force vers la course : une séance par jour. Rien ne s&apos;appuie sur le bras
             blessé, rien ne se tient à deux mains.
           </p>
         </div>
       </header>
 
       <section className="xs-rules xs-block">
-        <h2>Ton bloc de force, du 9 octobre au 1er novembre</h2>
+        <h2>Vers la course, du 3 au 29 novembre</h2>
+        <p className="xs-block-lead">
+          La force est là ; le tendon et l&apos;os ont perdu l&apos;habitude du choc. Deux semaines pour la leur rendre,
+          puis la course revient, à plat, si ton chirurgien ou ta kiné est d&apos;accord.
+        </p>
+        <ul className="xs-weeks">
+          {RETURN_WEEKS.map((w) => (
+            <li key={w.name}>
+              <strong>{w.name}</strong>, du {w.dates}. {nbsp(w.what)}
+            </li>
+          ))}
+        </ul>
+        <h3>Ta jambe gauche</h3>
+        <p>
+          Au 1er novembre, elle a progressé moins vite que la droite : 99 montées contre 134, 40 ponts contre 51. Sur les
+          mollets et la chaîne arrière, elle prend désormais deux séries de plus et commence ; la droite s&apos;arrête au même
+          nombre de répétitions.
+        </p>
+      </section>
+
+      <section className="xs-rules xs-block">
+        <h2>Le bloc de force, du 9 octobre au 1er novembre</h2>
         <p className="xs-block-lead">
           Tous les jours, mais pas dur tous les jours : trois séances de force à 48 h l&apos;une de l&apos;autre, et
           entre elles l&apos;escalier, qui ne les gêne pas. Le muscle se construit entre les séances, pas pendant.

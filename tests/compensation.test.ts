@@ -4,7 +4,7 @@ import {
   type StrengthTestResult,
 } from '@cairn/core';
 import {
-  addDays, blockDay, blockWeekOf, compensationDay, compensationHomeDay, evaluateAdjustments, remeasured, weakSides,
+  addDays, blockDay, blockWeekOf, bridgeDay, compensationDay, compensationHomeDay, evaluateAdjustments, remeasured, weakSides,
 } from '@cairn/coach';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
@@ -465,5 +465,48 @@ describe('L’alternance du 19/10 : un jour de force, un jour d’escalier', () 
     const week2 = [10, 11, 12, 13, 14, 15, 16].reduce((a, i) => a + down(i), 0);
     expect(week2).toBeGreaterThan(1000);
     expect(week2).toBeLessThan(1400);
+  });
+});
+
+describe('Vers la course, du 3 au 29 novembre', () => {
+  const TESTS_0111: StrengthTestResult[] = [
+    { date: '2026-11-01', test: 'test-mollets', left: 99, right: 134, updatedAt: '' },
+    { date: '2026-11-01', test: 'test-pont', left: 40, right: 51, updatedAt: '' },
+    { date: '2026-11-01', test: 'test-equilibre', left: 60, right: 60, updatedAt: '' },
+    { date: '2026-11-01', test: 'test-cheville', left: 11, right: 11, updatedAt: '' },
+  ];
+  const weak = weakSides(TESTS_0111, '2026-11-03');
+  const days = Array.from({ length: 28 }, (_, i) => bridgeDay(PIERRE_MODEL, i, weak));
+
+  it('ne lit plus de côté faible à l’équilibre ni à la cheville, réglés au 01/11', () => {
+    expect(Object.keys(weak).sort()).toEqual(['calves', 'hips']);
+  });
+
+  it('donne deux séries de plus à la gauche, qui commence : une seule n’a pas suffi', () => {
+    const rdl = days[2]!.blocks.find((b) => b.exercise === 'souleve-une-jambe')!;
+    expect(rdl.extra).toEqual({ side: 'gauche', sets: 2 });
+    expect(rdl.notes).toContain('au test, 40 ponts contre 51');
+    expect(rdl.notes).toContain('Elle commence');
+  });
+
+  it('ne fait pas courir avant le 16/11, puis un jour sur deux, en allongeant', () => {
+    const runs = days.flatMap((s, i) => (s.type === 'recovery' ? [i] : []));
+    expect(runs).toEqual([14, 16, 18, 21, 23, 25]);
+    const minutes = runs.map((i) => {
+      const b = days[i]!.blocks.find((x) => x.label === 'Course')!;
+      return (b.durationS! * b.repeat!) / 60;
+    });
+    expect(minutes).toEqual([12, 14, 16, 18, 20, 24]);
+    expect(days[14]!.intent).toContain('feu vert');
+  });
+
+  it('prépare le choc avant la course, et finit la deuxième semaine par le critère sur une jambe', () => {
+    const jumpsOn = (i: number) => days[i]!.blocks.filter((b) => b.exercise?.startsWith('sauts-')).map((b) => b.exercise);
+    expect(jumpsOn(3)).toEqual(['sauts-pieds-joints']);
+    expect(jumpsOn(11)).toEqual(['sauts-pieds-joints', 'sauts-une-jambe']);
+    expect(days[11]!.blocks.find((b) => b.exercise === 'sauts-une-jambe')!.notes).toContain('critère');
+    // Deux forces par semaine quand la course revient.
+    const forces = (from: number) => days.slice(from, from + 7).filter((s) => s.title.startsWith('Force')).length;
+    expect([forces(0), forces(7), forces(14), forces(21)]).toEqual([3, 3, 2, 2]);
   });
 });
