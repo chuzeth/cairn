@@ -23,14 +23,14 @@ export default function ExercisesPage() {
         <div>
           <h1 className="page-title">Exercices</h1>
           <p className="page-sub">
-            Du 3 au 29 novembre, de la force vers la course : une séance par jour. Rien ne s&apos;appuie sur le bras
+            Du 3 au 15 novembre, de la force vers la course : une séance par jour. Rien ne s&apos;appuie sur le bras
             blessé, rien ne se tient à deux mains.
           </p>
         </div>
       </header>
 
       <section className="xs-rules xs-block">
-        <h2>Vers la course, du 3 au 29 novembre</h2>
+        <h2>Vers la course</h2>
         <p className="xs-block-lead">
           La force est là ; le tendon et l&apos;os ont perdu l&apos;habitude du choc. Deux semaines pour la leur rendre,
           puis la course revient, à plat, si ton chirurgien ou ta kiné est d&apos;accord.

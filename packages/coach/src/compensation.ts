@@ -961,7 +961,9 @@ export function blockTests(model: PhysiologyModel, when: 'start' | 'end' | 'retu
 }
 
 /** Force A — les genoux et les descentes : le quadriceps qui freine, chargé. */
-export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSides, calves = week !== 0): SessionTemplate {
+export function blockForceA(
+  model: PhysiologyModel, week: BlockWeek, w: WeakSides, calves = week !== 0, jumps: SessionBlock[] = [],
+): SessionTemplate {
   const d = BLOCK_DOSE[week];
   return template(model, `bloc_force_a_${week}`, 'strength', 'Force A : genoux et descentes',
     'Le quadriceps qui freine en s\'allongeant, chargé : ton aisance en descente, mesurée sur tes sorties, est à ' +
@@ -969,6 +971,7 @@ export function blockForceA(model: PhysiologyModel, week: BlockWeek, w: WeakSide
       'entretient l\'autre.',
     [
       ...blockWarmUp(model),
+      ...jumps,
       ex('split-squat-maison', PART.legs, {
         label: d.pack ? 'Fente bulgare lestée' : 'Fente bulgare', sets: d.main, reps: d.mainReps, sides: 'jambe', restS: 90,
         reserve: d.reserve,
@@ -1237,7 +1240,9 @@ export function blockEndurance(model: PhysiologyModel, week: BlockWeek, w: WeakS
  * La récupération du dimanche : la semaine s'assimile, la souplesse se gagne.
  * `walk` à faux : pas de marche, les hanches et les chevilles en mouvement à la place.
  */
-export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true, week: BlockWeek = 1): SessionTemplate {
+export function blockRecup(
+  model: PhysiologyModel, w: WeakSides, walk = true, week: BlockWeek = 1, jumps: SessionBlock[] = [],
+): SessionTemplate {
   const ankleBalance = [
     ankle(w, PART.ankleBalance),
     balance(w, PART.ankleBalance),
@@ -1276,6 +1281,7 @@ export function blockRecup(model: PhysiologyModel, w: WeakSides, walk = true, we
       heart(model, 'Marche facile, à plat', 'Z1', 30 * 60, {
         exercise: 'marche', part: PART.walk, notes: 'Quais, parc de la Tête d\'Or.',
       }),
+      ...jumps,
       { ...souplesse(900), part: PART.mobility },
       ...ankleBalance,
       ...armCare(false, afterCast(week)),
@@ -1332,7 +1338,12 @@ export function blockDay(model: PhysiologyModel, index: number, weak: WeakSides 
  * course-marche à plat, trois fois par semaine. La force se garde avec moins de
  * séances (Rønnestad & Mujika 2014) : trois, puis deux quand la course revient.
  */
-const BRIDGE_DAYS = 28;
+/**
+ * Deux semaines, pas quatre : le 08/11, Pierre ne veut plus d'un programme écrit
+ * un mois à l'avance. La suite s'écrit semaine par semaine, sur ce qui a été
+ * fait, l'avis du médecin (jeudi 12/11) et le critère des sauts (dimanche 15/11).
+ */
+const BRIDGE_DAYS = 14;
 
 /** Les sauts : le stade dit combien, et s'il se fait sur une jambe. */
 function jumps(stage: 1 | 2 | 3 | 4): SessionBlock[] {
@@ -1424,11 +1435,12 @@ export function runWalk(model: PhysiologyModel, reps: number, runMin: number, fi
 }
 
 /**
- * Le jour `index` de la suite. Le programme commence le mardi 03/11 à l'index 0
- * et rejoint le calendrier le lundi 09/11 à l'index 7 : la récupération de
- * l'index 6 ne se pose pas la première semaine. Semaine 1, préparer ; semaine
- * 2, charger une dernière fois ; semaines 3 et 4, la course revient (le 16/11, à
- * deux semaines, dans les 10 à 15 jours de Pierre) et la force passe à deux séances.
+ * Le jour `index` de la suite, depuis le lundi 02/11. La première semaine
+ * commençait le 03/11 (index 0). La deuxième est refaite le 08/11 sur ce que
+ * Pierre a fait : la force A le 04, la B le 05, le moteur le 06, puis un jour off
+ * et dix montées à bloc le 08. Le lendemain d'un effort maximal, le vélo qu'il n'a
+ * pas fait ; la longue montée le jeudi du médecin ; le moteur le samedi ; le
+ * critère des sauts le dimanche, la veille du premier jour de course possible.
  */
 export function bridgeDay(model: PhysiologyModel, index: number, w: WeakSides = {}): SessionTemplate {
   const days: (() => SessionTemplate)[] = [
@@ -1440,30 +1452,14 @@ export function bridgeDay(model: PhysiologyModel, index: number, w: WeakSides = 
     () => blockForceC(model, 4, w, jumps(2)),
     () => bridgeLong(model, 4, 90, 450, false),
     () => blockRecup(model, w, true, 4),
-    // Semaine 2 : la dernière charge, puis le critère de la reprise le vendredi.
-    () => blockForceA(model, 5, w),
-    () => bridgeVelo(model, 5, w, 50),
+    // Semaine 2, refaite le 08/11.
+    () => bridgeVelo(model, 5, w, 45),
+    () => blockForceA(model, 5, w, true, jumps(2)),
     () => blockForceB(model, 5, w),
-    () => blockMoteur(model, 5, w, jumps(3)),
-    () => blockForceC(model, 4, w, jumps(4)),
-    () => bridgeLong(model, 5, 105, 550, true),
-    () => blockRecup(model, w, true, 4),
-    // Semaine 3 : la course revient, un jour sur deux ; la force et le moteur entre deux.
-    () => runWalk(model, 6, 2, true),
-    () => blockForceA(model, 4, w),
-    () => runWalk(model, 7, 2),
-    () => blockMoteur(model, 4, w),
-    () => runWalk(model, 8, 2),
-    () => blockForceB(model, 4, w),
     () => bridgeLong(model, 4, 90, 450, false),
-    // Semaine 4 : la course s'allonge ; les tests le dimanche, avant de construire vers 2027.
-    () => runWalk(model, 6, 3),
-    () => blockForceA(model, 4, w),
-    () => runWalk(model, 5, 4),
+    () => blockForceC(model, 4, w, jumps(3)),
     () => blockMoteur(model, 4, w),
-    () => runWalk(model, 4, 6),
-    () => blockForceB(model, 4, w),
-    () => blockTests(model, 'return'),
+    () => blockRecup(model, w, true, 4, jumps(4)),
   ];
   return days[index]!();
 }

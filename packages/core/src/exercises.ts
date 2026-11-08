@@ -2177,7 +2177,7 @@ export const FORCE_BLOCK_DAYS: { day: string; title: string; focus: string; why:
   },
 ];
 
-/** La suite du bloc, du 3 au 29 novembre : de la force vers la course. */
+/** La suite du bloc, du 3 au 15 novembre : de la force vers la course ; la suite s'écrit semaine par semaine. */
 export const RETURN_WEEKS: { dates: string; name: string; what: string }[] = [
   {
     dates: '3 au 8 novembre',
@@ -2187,21 +2187,16 @@ export const RETURN_WEEKS: { dates: string; name: string; what: string }[] = [
   },
   {
     dates: '9 au 15 novembre',
-    name: 'Dernière charge',
-    what: 'La même semaine, plus lourde. Le vendredi 13, les sauts sur une jambe : sans douleur, ni pendant ni le ' +
-      'lendemain, c\'est le critère de la reprise.',
+    name: 'Jusqu\'au feu vert',
+    what: 'Vélo lundi, force A et sauts mardi, force B mercredi, longue montée jeudi, le jour du médecin, force C ' +
+      'vendredi, moteur samedi. Dimanche, les sauts sur une jambe : sans douleur, ni pendant ni le lendemain, c\'est ' +
+      'le critère de la reprise.',
   },
   {
-    dates: '16 au 22 novembre',
-    name: 'La course revient',
-    what: 'Avec le feu vert du chirurgien ou de la kiné : lundi, mercredi, vendredi, 2 minutes de course pour 1 de ' +
-      'marche, à plat, sur sol sec. Force A mardi, moteur jeudi, force B samedi, longue montée dimanche.',
-  },
-  {
-    dates: '23 au 29 novembre',
-    name: 'La course s\'allonge',
-    what: '6 × 3 minutes, 5 × 4 minutes, 4 × 6 minutes. Deux forces, un moteur. Les tests le dimanche 29, avant de ' +
-      'construire vers 2027.',
+    dates: '16 novembre',
+    name: 'Ensuite',
+    what: 'Écrit semaine par semaine, sur ce que tu as fait, l\'avis du médecin et le critère des sauts : la ' +
+      'course-marche à plat si tout est vert, deux semaines de plus comme celles-ci sinon.',
   },
 ];
 

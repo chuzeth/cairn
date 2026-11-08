@@ -468,7 +468,7 @@ describe('L’alternance du 19/10 : un jour de force, un jour d’escalier', () 
   });
 });
 
-describe('Vers la course, du 3 au 29 novembre', () => {
+describe('Vers la course, du 3 au 15 novembre', () => {
   const TESTS_0111: StrengthTestResult[] = [
     { date: '2026-11-01', test: 'test-mollets', left: 99, right: 134, updatedAt: '' },
     { date: '2026-11-01', test: 'test-pont', left: 40, right: 51, updatedAt: '' },
@@ -476,7 +476,7 @@ describe('Vers la course, du 3 au 29 novembre', () => {
     { date: '2026-11-01', test: 'test-cheville', left: 11, right: 11, updatedAt: '' },
   ];
   const weak = weakSides(TESTS_0111, '2026-11-03');
-  const days = Array.from({ length: 28 }, (_, i) => bridgeDay(PIERRE_MODEL, i, weak));
+  const days = Array.from({ length: 14 }, (_, i) => bridgeDay(PIERRE_MODEL, i, weak));
 
   it('ne lit plus de côté faible à l’équilibre ni à la cheville, réglés au 01/11', () => {
     expect(Object.keys(weak).sort()).toEqual(['calves', 'hips']);
@@ -489,24 +489,16 @@ describe('Vers la course, du 3 au 29 novembre', () => {
     expect(rdl.notes).toContain('Elle commence');
   });
 
-  it('ne fait pas courir avant le 16/11, puis un jour sur deux, en allongeant', () => {
-    const runs = days.flatMap((s, i) => (s.type === 'recovery' ? [i] : []));
-    expect(runs).toEqual([14, 16, 18, 21, 23, 25]);
-    const minutes = runs.map((i) => {
-      const b = days[i]!.blocks.find((x) => x.label === 'Course')!;
-      return (b.durationS! * b.repeat!) / 60;
-    });
-    expect(minutes).toEqual([12, 14, 16, 18, 20, 24]);
-    expect(days[14]!.intent).toContain('feu vert');
+  it('ne fait pas courir, et ne s’écrit pas au-delà du 15/11 : la suite dépend du médecin et des sauts', () => {
+    expect(days.some((s) => s.type === 'recovery')).toBe(false);
+    expect(() => bridgeDay(PIERRE_MODEL, 14, weak)).toThrow();
   });
 
-  it('prépare le choc avant la course, et finit la deuxième semaine par le critère sur une jambe', () => {
+  it('monte les sauts par paliers, et finit sur le critère sur une jambe, la veille d’une reprise possible', () => {
     const jumpsOn = (i: number) => days[i]!.blocks.filter((b) => b.exercise?.startsWith('sauts-')).map((b) => b.exercise);
-    expect(jumpsOn(3)).toEqual(['sauts-pieds-joints']);
-    expect(jumpsOn(11)).toEqual(['sauts-pieds-joints', 'sauts-une-jambe']);
-    expect(days[11]!.blocks.find((b) => b.exercise === 'sauts-une-jambe')!.notes).toContain('critère');
-    // Deux forces par semaine quand la course revient.
-    const forces = (from: number) => days.slice(from, from + 7).filter((s) => s.title.startsWith('Force')).length;
-    expect([forces(0), forces(7), forces(14), forces(21)]).toEqual([3, 3, 2, 2]);
+    expect([3, 4, 8, 11, 13].map((i) => jumpsOn(i).length)).toEqual([1, 1, 1, 2, 2]);
+    expect(days[13]!.blocks.find((b) => b.exercise === 'sauts-une-jambe')!.notes).toContain('critère');
+    // Le lendemain des montées à bloc du 08/11 : le vélo, sans choc.
+    expect(days[7]!.title.startsWith('Vélo')).toBe(true);
   });
 });
