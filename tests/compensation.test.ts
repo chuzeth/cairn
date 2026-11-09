@@ -498,7 +498,8 @@ describe('Vers la course, du 3 au 15 novembre', () => {
     const jumpsOn = (i: number) => days[i]!.blocks.filter((b) => b.exercise?.startsWith('sauts-')).map((b) => b.exercise);
     expect([3, 4, 8, 11, 13].map((i) => jumpsOn(i).length)).toEqual([1, 1, 1, 2, 2]);
     expect(days[13]!.blocks.find((b) => b.exercise === 'sauts-une-jambe')!.notes).toContain('critère');
-    // Le lendemain des montées à bloc du 08/11 : le vélo, sans choc.
-    expect(days[7]!.title.startsWith('Vélo')).toBe(true);
+    // Le lendemain des montées à bloc du 08/11 : l'escalier facile — Pierre n'a pas de vélo.
+    expect(days[7]!.title.startsWith('Escalier')).toBe(true);
+    expect(days.filter((s) => /vélo/i.test(JSON.stringify(s.blocks) + s.title))).toEqual([]);
   });
 });

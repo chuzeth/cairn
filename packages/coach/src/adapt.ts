@@ -16,7 +16,7 @@ import {
   softenedQuality, totalDuration, transformSession, withoutEccentricStrength,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
-import { repriseRace, repriseRun, repriseVelo, type RepriseDay } from './compensation.js';
+import { repriseRace, repriseRun, repriseSubstitute, type RepriseDay } from './compensation.js';
 import { allowedLevel, raceGate, runSignals } from './reprise.js';
 
 /**
@@ -606,7 +606,8 @@ const GATE_DAYS = 6;
 /**
  * La reprise de la course (`reprise.ts`) : la prochaine course prend la marche
  * que les courses passées permettent, jamais au-dessus de celle que le programme
- * lui avait donnée ; sans l'accord du médecin, elle se fait à vélo. Et à six
+ * lui avait donnée ; sans l'accord du médecin, elle se fait dans l'escalier ; sur
+ * une douleur forte, elle devient une marche à plat. Et à six
  * jours de la course, le dossard se décide sur le critère de la sortie longue.
  * Une seule course est jugée à la fois : la suivante l'est sur ce que celle-ci
  * aura donné.
@@ -635,16 +636,14 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
     if (level !== p.level) {
       const kind = level === 0 ? 'cross' : level === p.planned ? p.plannedKind : level <= 1 ? 'run_walk' : 'easy';
       const t = level === 0
-        ? repriseVelo(state.model, 40, blocked
-          ? 'Ton médecin n\'a pas encore donné son accord : la course attend, le cœur travaille sans le choc.'
-          : 'Pas de course tant que la douleur ne retombe pas : le cœur travaille sans le choc.')
+        ? repriseSubstitute(state.model, blocked ? 'clearance' : 'pain')
         : repriseRun(state.model, level, kind);
       const why = blocked
-        ? `Course remplacée par le vélo : ton médecin n'a pas encore dit oui (${clearance!.value.choice === 'no' ? 'non' : 'pas encore'}).`
+        ? `Course remplacée par l'escalier : ton médecin n'a pas encore dit oui (${clearance!.value.choice === 'no' ? 'non' : 'pas encore'}).`
         : level === p.planned
           ? `Course rendue à sa marche ${level} : ${verdict.reason}.`
           : level === 0
-            ? `Course remplacée par le vélo : ${verdict.reason}.`
+            ? `Course remplacée par la marche : ${verdict.reason}.`
             : `Course ramenée à la marche ${level} au lieu de ${p.planned} : ${verdict.reason}.`;
       out.push({
         sessionId: next.id, date: next.date, action: 'rewrite', rule: 'reprise_progression', reason: why,

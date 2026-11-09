@@ -11,7 +11,7 @@ import { runDurationOf } from '@cairn/physiology';
  * le cœur dans sa zone. Les règles, dans l'ordre où elles s'appliquent :
  *
  *  · douleur de 5 sur 10 ou plus, pendant ou le lendemain : plus de course tant
- *    qu'un matin ne la redit pas sous 3 ; le vélo à sa place ;
+ *    qu'un matin ne la redit pas sous 3 ; la marche à plat à sa place ;
  *  · douleur de 3 ou 4 : une marche plus bas ;
  *  · douleur de 2, course écourtée de plus d'un cinquième, effort perçu de 8 ou
  *    plus sur un footing, ou cœur au-dessus de l'endurance : on reste sur la

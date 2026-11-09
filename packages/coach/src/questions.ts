@@ -64,7 +64,7 @@ const dayName = (date: string, today: string) =>
 
 const isRepriseRun = (s: PlannedSession) =>
   s.program?.name === 'reprise' && s.program.kind !== 'cross' && s.program.kind !== 'race';
-/** Une course prévue par la reprise, même remplacée par le vélo faute d'accord : c'est elle que l'accord rendra. */
+/** Une course prévue par la reprise, même remplacée par l'escalier faute d'accord : c'est elle que l'accord rendra. */
 const plannedAsRun = (s: PlannedSession) =>
   s.program?.name === 'reprise' && s.program.plannedKind !== 'cross' && s.program.plannedKind !== 'race';
 
@@ -94,7 +94,7 @@ export function pendingQuestions(input: {
       out.push({
         id: `clearance:reprise`, question: 'clearance', subject: 'reprise',
         prompt: 'Ton médecin t\'autorise-t-il à recourir ?',
-        why: 'Sans son accord, les courses de la reprise se font à vélo, et le dossard du 28/11 attend.',
+        why: 'Sans son accord, les courses de la reprise se font dans l\'escalier, et le dossard du 28/11 attend.',
         choices: [
           { label: 'Oui', value: { choice: 'yes' } },
           { label: 'Pas encore', value: { choice: 'not_yet' } },

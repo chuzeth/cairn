@@ -653,12 +653,12 @@ const BLOCK_DOSE: Record<BlockWeek, BlockDose> = {
   4: {
     main: 3, second: 3, acc: 2, mainReps: 6, reserve: 2,
     pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: false, isoSets: 4,
-    stairsPack: '', climb: { reps: 5, zone: 'Z4' }, stairsMin: 0, easyStairsMin: 0, wallS: 60, holdS: 45, weakSets: 2,
+    stairsPack: '', climb: { reps: 5, zone: 'Z4' }, stairsMin: 0, easyStairsMin: 30, wallS: 60, holdS: 45, weakSets: 2,
   },
   5: {
     main: 4, second: 3, acc: 2, mainReps: 6, reserve: 1,
     pack: 'Le sac à dos de 10 à 12 kg — sept à huit bouteilles d\'eau de 1,5 L.', harder: true, isoSets: 4,
-    stairsPack: '', climb: { reps: 6, zone: 'Z4' }, stairsMin: 0, easyStairsMin: 0, wallS: 60, holdS: 50, weakSets: 2,
+    stairsPack: '', climb: { reps: 6, zone: 'Z4' }, stairsMin: 0, easyStairsMin: 30, wallS: 60, holdS: 50, weakSets: 2,
   },
 };
 
@@ -1366,30 +1366,6 @@ function jumps(stage: 1 | 2 | 3 | 4): SessionBlock[] {
   ];
 }
 
-/** Le vélo d'appartement, puis les hanches et le tronc : du volume pour le cœur, sans aucun choc. */
-export function bridgeVelo(model: PhysiologyModel, week: BlockWeek, w: WeakSides, minutes: number): SessionTemplate {
-  const d = BLOCK_DOSE[week];
-  return template(model, `pont_velo_${week}`, 'cross_training', 'Vélo, hanches et tronc',
-    'Le cœur a perdu moins que tu ne crains, à condition de lui redonner du volume : une heure sans aucun choc, entre ' +
-      'deux jours qui en portent. Puis le bassin, qui devra tenir dès les premières foulées.',
-    [
-      {
-        label: 'Échauffement', zone: 'Z1', durationS: 600, part: 'Vélo',
-        effort: 'De très facile à facile, cadence 85 à 90 tr/min',
-        notes: 'Assis, le buste droit, la main droite seule sur le guidon et le bras blessé contre toi : rien ne s\'appuie dessus. Jamais en danseuse.',
-      },
-      {
-        label: 'Endurance sur le vélo', zone: 'Z2', durationS: minutes * 60, hrRange: [134, 148], provenance: { hr: 'default' }, part: 'Vélo',
-        notes: 'Tu parles en phrases. C\'est la zone 2 de course, moins les 5 à 10 battements que le vélo retire au même effort. Toutes les 10 minutes, 1 minute à 105–110 tr/min, la résistance d\'un cran plus légère.',
-      },
-      { label: 'Retour au calme', zone: 'Z1', durationS: 300, part: 'Vélo', effort: 'Très facile, les jambes tournent seules' },
-      ...hips(d, w),
-      ...core(d),
-      { ...souplesse(600), part: PART.mobility },
-      ...armCare(true, true),
-    ]);
-}
-
 /** La longue montée, dehors : du temps debout, du dénivelé, et les pieds qui retrouvent le sol. */
 export function bridgeLong(model: PhysiologyModel, week: BlockWeek, minutes: number, vertM: number, pack: boolean): SessionTemplate {
   return template(model, `pont_longue_${week}_${minutes}`, 'cross_training', 'Longue montée dehors',
@@ -1438,22 +1414,23 @@ export function runWalk(model: PhysiologyModel, reps: number, runMin: number, fi
  * Le jour `index` de la suite, depuis le lundi 02/11. La première semaine
  * commençait le 03/11 (index 0). La deuxième est refaite le 08/11 sur ce que
  * Pierre a fait : la force A le 04, la B le 05, le moteur le 06, puis un jour off
- * et dix montées à bloc le 08. Le lendemain d'un effort maximal, le vélo qu'il n'a
- * pas fait ; la longue montée le jeudi du médecin ; le moteur le samedi ; le
- * critère des sauts le dimanche, la veille du premier jour de course possible.
+ * et dix montées à bloc le 08. Le lendemain d'un effort maximal, l'escalier facile
+ * (sans vélo : Pierre n'en a pas) ; la longue montée le jeudi du médecin ; le
+ * moteur le samedi ; le critère des sauts le dimanche, la veille du premier jour
+ * de course possible.
  */
 export function bridgeDay(model: PhysiologyModel, index: number, w: WeakSides = {}): SessionTemplate {
   const days: (() => SessionTemplate)[] = [
     // Semaine 1 : préparer l'impact. La force A sans l'isométrie : les mollets, testés à l'échec le 01/11, attendent la force C.
     () => blockForceA(model, 4, w, false),
-    () => bridgeVelo(model, 4, w, 45),
+    () => blockEscalier(model, 4, w),
     () => blockForceB(model, 4, w),
     () => blockMoteur(model, 4, w, jumps(1)),
     () => blockForceC(model, 4, w, jumps(2)),
     () => bridgeLong(model, 4, 90, 450, false),
     () => blockRecup(model, w, true, 4),
     // Semaine 2, refaite le 08/11.
-    () => bridgeVelo(model, 5, w, 45),
+    () => blockEscalier(model, 5, w),
     () => blockForceA(model, 5, w, true, jumps(2)),
     () => blockForceB(model, 5, w),
     () => bridgeLong(model, 4, 90, 450, false),
@@ -1474,11 +1451,11 @@ export function bridgeDay(model: PhysiologyModel, index: number, w: WeakSides = 
  * La course reprend le 13/11 si le médecin, vu le 12, est d'accord.
  *
  * Six semaines sans courir, mais pas six semaines sans rien : la force a gagné
- * 25 à 42 % au pont, le cœur a travaillé dans l'escalier et sur le vélo. Ce qui
+ * 25 à 42 % au pont, le cœur a travaillé dans l'escalier. Ce qui
  * a perdu, c'est l'habitude du choc — le tendon d'Achille, le tibia, le pied —,
  * et elle revient plus lentement que le cœur (Warden 2014). D'où une échelle :
  * cinq marches de course, chacune ne s'ouvre que si la précédente s'est bien
- * passée (`reprise.ts`) ; entre elles, la force et le vélo gardent ce qui a été
+ * passée (`reprise.ts`) ; entre elles, la force et l'escalier gardent ce qui a été
  * gagné sans ajouter un seul choc.
  *
  * Les marches, celles que la course demande au corps :
@@ -1583,21 +1560,33 @@ export function repriseRun(model: PhysiologyModel, level: number, kind: SessionP
     [...easy(minutes, level >= 3 ? [strides(level >= 4 ? 4 : 6)] : []), ...armCare(false, true)]);
 }
 
-/** Le jour sans course que la règle substitue : le vélo, pour le cœur, sans aucun choc. */
-export function repriseVelo(model: PhysiologyModel, minutes: number, why?: string): SessionTemplate {
-  return template(model, `reprise_velo_${minutes}`, 'cross_training', 'Vélo d\'appartement',
-    why ?? 'Le cœur sans le choc : un jour de vélo entre deux courses.',
+/**
+ * Le jour sans course que la règle substitue, sans vélo — Pierre n'en a pas
+ * (09/11). Sans l'accord du médecin : l'escalier de l'immeuble, en montées
+ * faciles, comme pendant le bloc. Sur une douleur : la marche à plat, et
+ * seulement si elle ne fait pas mal — l'escalier, qui se redescend, chargerait
+ * le tendon qui proteste.
+ */
+export function repriseSubstitute(model: PhysiologyModel, cause: 'clearance' | 'pain'): SessionTemplate {
+  if (cause === 'clearance') {
+    const climbs = climbsIn(40 * 60);
+    return template(model, 'reprise_escalier', 'cross_training', 'Escalier facile',
+      'Ton médecin n\'a pas encore donné son accord : la course attend, le cœur travaille dans l\'escalier, comme pendant le bloc.',
+      [
+        ...blockWarmUp(model, false),
+        heart(model, 'Montées faciles dans l\'escalier', 'Z2', 40 * 60, {
+          exercise: 'escalier-immeuble', part: PART.stairs,
+          elevationGainM: stairsGain(climbs), elevationLossM: stairsGain(climbs),
+          notes: `Environ ${climbs} montées, sans le sac, en parlant ; la descente toujours au pas.`,
+        }),
+        ...armCare(true, true),
+      ]);
+  }
+  return template(model, 'reprise_marche', 'cross_training', 'Marche à plat',
+    'Pas de course tant que la douleur ne retombe pas : 40 min de marche à plat, d\'un bon pas — et seulement si elle ne ' +
+      'fait pas mal. Si la marche réveille la douleur, tu t\'arrêtes, et tu le dis demain matin.',
     [
-      {
-        label: 'Échauffement', zone: 'Z1', durationS: 600, part: 'Vélo',
-        effort: 'De très facile à facile, cadence 85 à 90 tr/min',
-        notes: 'Assis, la main droite seule sur le guidon, le bras blessé contre toi. Jamais en danseuse.',
-      },
-      {
-        label: 'Endurance sur le vélo', zone: 'Z2', durationS: minutes * 60, hrRange: [134, 148], provenance: { hr: 'default' },
-        part: 'Vélo', notes: 'Tu parles en phrases : la zone 2 de course, moins les 5 à 10 battements que le vélo retire.',
-      },
-      { label: 'Retour au calme', zone: 'Z1', durationS: 300, part: 'Vélo', effort: 'Très facile, les jambes tournent seules' },
+      heart(model, 'Marche à plat, d\'un bon pas', 'Z1', 40 * 60, { exercise: 'marche', part: PART.walk, notes: 'Quais, parc de la Tête d\'Or : plat et revêtu.' }),
       ...armCare(true, true),
     ]);
 }
@@ -1651,7 +1640,7 @@ const onStep = (t: SessionTemplate, program: SessionProgram, priority: PlannedSe
 
 /**
  * Le jour `index` de la reprise (0 = le vendredi 13/11). La course un jour sur
- * deux, la force deux fois par semaine sur les jours sans course, le vélo entre
+ * deux, la force deux fois par semaine sur les jours sans course, l'escalier entre
  * deux ; la dernière force le mercredi 18, dix jours avant la course ; plus
  * rien de dur après le mardi 24.
  */
@@ -1664,11 +1653,11 @@ export function repriseDay(model: PhysiologyModel, index: number, w: WeakSides =
     () => run(1, 'run_walk'),
     () => blockForceB(model, 3, w),
     () => run(2, 'easy'),
-    () => bridgeVelo(model, 4, w, 45),
+    () => blockEscalier(model, 4, w),
     () => run(3, 'easy'),
     () => blockForceA(model, 3, w),
     () => run(4, 'tempo'),
-    () => repriseVelo(model, 40),
+    () => blockRecup(model, w, true, 3),
     () => run(5, 'long'),
     () => blockRecup(model, w, true, 3),
     () => run(3, 'easy', 'support'),

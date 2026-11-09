@@ -12,7 +12,7 @@ import { PIERRE_MODEL } from './fixtures/pierre.js';
  * données ne disent pas. Une course de la reprise monte d'une marche si la
  * précédente s'est bien passée, reste si un signal l'inquiète, redescend sur une
  * douleur, s'arrête sur une douleur forte ; sans l'accord du médecin, elle se
- * fait à vélo ; et le dossard de la SaintéSprint se décide six jours avant, sur
+ * fait dans l'escalier ; et le dossard de la SaintéSprint se décide six jours avant, sur
  * la sortie longue.
  */
 
@@ -87,7 +87,7 @@ beforeEach(() => {
 });
 
 describe('La reprise, du 13 au 29/11', () => {
-  it('monte la course une marche à la fois, la force et le vélo entre deux, la SaintéSprint le 28', () => {
+  it('monte la course une marche à la fois, la force et l’escalier entre deux, sans vélo, la SaintéSprint le 28', () => {
     const runs = store.sessions.filter((s) => s.program && s.program.kind !== 'race');
     expect(runs.map((s) => [s.date, s.program!.level])).toEqual([
       ['2026-11-13', 1], ['2026-11-15', 2], ['2026-11-17', 3], ['2026-11-19', 4], ['2026-11-21', 5],
@@ -99,6 +99,8 @@ describe('La reprise, du 13 au 29/11', () => {
     expect([race.date, race.title.startsWith('SaintéSprint')]).toEqual(['2026-11-28', true]);
     // Rien de dur les trois jours avant la course, la veille au repos.
     expect(store.sessions.filter((s) => s.date >= '2026-11-25' && s.date < '2026-11-28').map((s) => s.type)).toEqual(['cross_training', 'endurance', 'rest']);
+    // Pierre n'a pas de vélo (09/11) : aucune séance n'en demande.
+    expect(store.sessions.filter((s) => /vélo/i.test(JSON.stringify(s.blocks) + s.title))).toEqual([]);
     // Deux courses rapprochées ne sont pas toutes deux « clefs » : la règle des 48 h ne déplacerait rien.
     expect(store.sessions.find((s) => s.date === '2026-11-23')!.priority).toBe('support');
   });
@@ -141,6 +143,15 @@ describe('La reprise, du 13 au 29/11', () => {
     expect(evaluateAdjustments(stateOn(day(1), answers, activities), store.sessions.map((s) => ({ ...s }))).filter((a) => a.rule === 'reprise_progression')).toEqual([]);
   });
 
+  it('remplace la course par la marche à plat sur une douleur forte, sans escalier qui la redescende', async () => {
+    const activities = [doneFirst()];
+    const answers = [answer('run_pain', 'r0', { score: 5, site: 'tibia' })];
+    await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(1), answers, activities), store.sessions.map((s) => ({ ...s }))), 'readiness');
+    const next = store.sessions.find((s) => s.id === 'r2')!;
+    expect([next.title, next.program!.level]).toEqual([expect.stringMatching(/^Marche à plat/), 0]);
+    expect(next.blocks.some((b) => b.exercise === 'escalier-immeuble')).toBe(false);
+  });
+
   it('rend sa marche à la course quand la douleur est retombée et que la marche d’avant est passée', async () => {
     const activities = [doneFirst()];
     const answers = [answer('run_pain', 'r0', { score: 0 }), answer('morning_pain', day(1), { score: 0 })];
@@ -149,12 +160,12 @@ describe('La reprise, du 13 au 29/11', () => {
     expect(level('r2')).toBe(2);
   });
 
-  it('fait la course à vélo tant que le médecin n’a pas dit oui', async () => {
+  it('fait la course dans l’escalier tant que le médecin n’a pas dit oui', async () => {
     const answers = [answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-12T19:00:00Z')];
     await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(0), answers), store.sessions.map((s) => ({ ...s }))), 'readiness');
     const first = store.sessions.find((s) => s.id === 'r0')!;
-    expect([first.type, first.program!.level, first.program!.kind]).toEqual(['cross_training', 0, 'cross']);
-    // Remplacée par le vélo, la course reste celle que l'accord rendra : la question se repose le lendemain.
+    expect([first.type, first.title, first.program!.level, first.program!.kind]).toEqual(['cross_training', expect.stringMatching(/^Escalier facile/), 0, 'cross']);
+    // Remplacée par l'escalier, la course reste celle que l'accord rendra : la question se repose le lendemain.
     const early = [answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-09T19:00:00Z')];
     const asked = (today: string, said = early) => pendingQuestions({ today, sessions: store.sessions, activities: [], answers: said }).map((q) => q.question);
     // Le 10/11, la prochaine course encore à courir est le 15 : sans la course remplacée, la question se tairait.
