@@ -10,7 +10,7 @@ import * as db from '@cairn/db';
 import {
   ACWR_SPIKE, EASY_SPEED_WINDOW_DAYS, EASY_TERRAINS, ECCENTRIC_MOVEMENTS, MOUNTAIN_M_PER_KM, VERTICAL_CURVE_DURATIONS,
   describeZone, easySpeedOf, formatClock, formatDuration, formatPace, goalProbability, hrProvenanceOf, interpretAcwr,
-  interpretDurability, isEasyZone, isRunFree, msToKmh, runDurationOf, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
+  interpretDurability, isEasyZone, isRunFree, msToKmh, pacingFor, runDurationOf, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
   summarizeForCoach,
   targetRaceDayTsb, verticalCapacity,
   type LoadRatioExceedance,
@@ -1208,6 +1208,22 @@ export async function executeTool(
             temps_cumule: formatClock(p.cumulativeTimeS),
             consigne: p.cue,
           })),
+          // Pierre vise le haut de la fourchette (09/11) : le temps le plus rapide que
+          // la prédiction juge plausible, celui qu'un jour sur dix seulement bat.
+          scenario_rapide: {
+            temps: formatClock(prediction.rangeS[0]),
+            temps_s: prediction.rangeS[0],
+            probabilite_pct: goalProbability(prediction, prediction.rangeS[0]),
+            consigne:
+              "La borne rapide de l'intervalle à 80 % : c'est l'objectif que Pierre se fixe. Chaque tronçon garde sa part " +
+              "du temps total ; la FC n'est pas extrapolée, elle se lit à l'effort.",
+            plan_allure: pacingFor(prediction.pacing, prediction.rangeS[0]).map((p) => ({
+              troncon: p.label,
+              allure_cible: formatPace(p.targetSpeedMs),
+              duree: formatClock(p.estimatedDurationS),
+              temps_cumule: formatClock(p.cumulativeTimeS),
+            })),
+          },
           ravitaillement: prediction.fueling,
           facteurs_limitants: prediction.limiters.map((l) => ({
             facteur: l.factor,

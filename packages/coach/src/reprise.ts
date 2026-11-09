@@ -88,6 +88,12 @@ export interface RepriseVerdict {
   reason: string;
   /** Vrai : l'arrêt attend l'accord d'un médecin, et non un matin sans douleur. */
   medical?: boolean;
+  /**
+   * Vrai : c'est une douleur qui retient ou fait redescendre. La course suivante
+   * se court alors facile, quelle que soit sa marche : on ne cherche pas
+   * l'intensité sur un tendon qui proteste.
+   */
+  painful?: boolean;
 }
 
 /** Le seuil de douleur au-delà duquel on ne court plus. */
@@ -96,6 +102,9 @@ export const PAIN_STOP = 5;
 export const PAIN_DOWN = 3;
 /** Le seuil de douleur qui retient sur la même marche. */
 export const PAIN_HOLD = 2;
+
+/** Ce que permet l'absence de toute course passée : la marche prévue de la première, quelle qu'elle soit. */
+const FIRST_RUN = Number.POSITIVE_INFINITY;
 
 const isReprise = (s: PlannedSession) => s.program?.name === 'reprise';
 const isRun = (s: PlannedSession) => isReprise(s) && s.program!.kind !== 'cross' && s.program!.kind !== 'race';
@@ -161,7 +170,7 @@ export function deviationOf(run: RunSignal, easyCeiling: number): RunDeviation |
 }
 
 /** Le verdict d'une course faite, pris seul. */
-export function judgeRun(run: RunSignal, easyCeiling: number): { step: RepriseStep; reason: string; medical?: boolean } {
+export function judgeRun(run: RunSignal, easyCeiling: number): { step: RepriseStep; reason: string; medical?: boolean; painful?: boolean } {
   const pain = Math.max(run.painDuring ?? 0, run.painMorning ?? 0);
   const said = run.painDuring != null || run.painMorning != null;
   const when = run.painMorning != null && run.painMorning >= (run.painDuring ?? 0) ? 'le lendemain matin' : 'pendant la course';
@@ -175,8 +184,8 @@ export function judgeRun(run: RunSignal, easyCeiling: number): { step: RepriseSt
         `c'est le motif d'une fracture de fatigue — plus de course avant l'avis d'un médecin`,
     };
   }
-  if (pain >= PAIN_DOWN) return { step: 'down', reason: `une douleur de ${pain} sur 10 ${when}` };
-  if (pain >= PAIN_HOLD) return { step: 'hold', reason: `une douleur de ${pain} sur 10 ${when}` };
+  if (pain >= PAIN_DOWN) return { step: 'down', painful: true, reason: `une douleur de ${pain} sur 10 ${when}` };
+  if (pain >= PAIN_HOLD) return { step: 'hold', painful: true, reason: `une douleur de ${pain} sur 10 ${when}` };
   const deviation = deviationOf(run, easyCeiling);
   if (deviation === 'short') {
     return {
@@ -227,9 +236,11 @@ export function allowedLevel(
 ): RepriseVerdict {
   const done = runs.filter((r) => r.done);
   const last = runs.at(-1);
-  if (!last) return { step: 'up', level: 1, reason: 'la première course de la reprise' };
+  // Aucune course encore : la première se court à la marche que le programme lui donne — la reprise du 09/11
+  // commence à la marche 3, Pierre ayant couru 50 min avant qu'elle ne s'écrive.
+  if (!last) return { step: 'up', level: FIRST_RUN, reason: 'la première course de la reprise' };
   const lastDone = done.at(-1);
-  if (!lastDone) return { step: 'hold', level: 1, reason: 'aucune course de la reprise n\'a encore été faite' };
+  if (!lastDone) return { step: 'hold', level: runs[0]!.level, reason: 'aucune course de la reprise n\'a encore été faite' };
 
   // Un arrêt médical : le motif d'une fracture de fatigue. Seul un oui du médecin, donné après, le lève.
   const bone = bonePattern(done);
@@ -250,7 +261,7 @@ export function allowedLevel(
       };
     }
     if (after.length === 0) {
-      return { step: 'down', level: Math.max(1, medical.level - 1), reason: 'ton médecin a dit oui : on repart une marche sous la course qui avait inquiété' };
+      return { step: 'down', level: Math.max(1, medical.level - 1), painful: true, reason: 'ton médecin a dit oui : on repart une marche sous la course qui avait inquiété' };
     }
   }
 
@@ -266,7 +277,7 @@ export function allowedLevel(
     }
     if (after.length === 0) {
       return {
-        step: 'down', level: Math.max(1, stopped.level - 1),
+        step: 'down', level: Math.max(1, stopped.level - 1), painful: true,
         reason: `la douleur est retombée (${relief!.value.score} sur 10 le ${relief!.subject}) : on repart une marche plus bas`,
       };
     }
@@ -293,24 +304,29 @@ export function allowedLevel(
       : verdict.step === 'hold' ? lastDone.level
         : verdict.step === 'down' ? Math.max(1, lastDone.level - 1)
           : 0;
-  return { step: verdict.step, level, reason: verdict.reason, ...(verdict.medical ? { medical: true } : {}) };
+  return {
+    step: verdict.step, level, reason: verdict.reason,
+    ...(verdict.medical ? { medical: true } : {}), ...(verdict.painful ? { painful: true } : {}),
+  };
 }
 
 /** Le sujet de la question au médecin qu'un arrêt médical rouvre. */
 export const medicalSubject = (sessionId: string) => `after:${sessionId}`;
 
 /**
- * Le critère du dossard : la sortie longue (marche 5) faite au plus tard le
- * jour du critère, sans douleur au-dessus de 2, ni elle ni aucune course après
- * elle, et aucun arrêt en cours.
+ * Le critère du dossard : la dernière sortie longue de la reprise (marche 5)
+ * faite, sans douleur au-dessus de 2, ni elle ni aucune course après elle, et
+ * aucun arrêt en cours. Une sortie longue plus ancienne ne la remplace pas :
+ * c'est la plus longue avant la course qui dit si les tissus tiendront.
  */
 export function raceGate(
   runs: readonly RunSignal[],
   answers: readonly AthleteAnswer[],
   easyCeiling: number,
 ): { met: boolean; reason: string } {
-  const long = runs.filter((r) => r.done && r.level >= 5).at(-1);
-  if (!long) return { met: false, reason: 'la sortie longue de 1 h 15 n\'a pas été faite' };
+  const long = runs.filter((r) => r.level >= 5 && r.kind === 'long').at(-1) ?? runs.filter((r) => r.level >= 5).at(-1);
+  if (!long) return { met: false, reason: 'la sortie longue n\'a pas encore eu lieu' };
+  if (!long.done) return { met: false, reason: `la sortie longue du ${long.date} n'a pas été faite` };
   const since = runs.filter((r) => r.done && r.date >= long.date);
   const sore = since.find((r) => Math.max(r.painDuring ?? 0, r.painMorning ?? 0) > PAIN_HOLD);
   if (sore) {
@@ -318,4 +334,26 @@ export function raceGate(
   }
   if (allowedLevel(runs, answers, easyCeiling).step === 'stop') return { met: false, reason: 'un arrêt pour douleur est en cours' };
   return { met: true, reason: `la sortie longue du ${long.date} faite sans douleur` };
+}
+
+/** La dernière réponse sur l'accord du médecin pour la reprise (hors arrêt médical). */
+export function latestClearance(answers: readonly AthleteAnswer[]): AthleteAnswer | undefined {
+  return answers
+    .filter((a) => a.question === 'clearance' && !a.subject.startsWith('after:'))
+    .sort((a, b) => b.answeredAt.localeCompare(a.answeredAt))[0];
+}
+
+/**
+ * L'accord manquant retient-il la course ?
+ *
+ * Un non du médecin, oui. Un « pas encore » aussi — sauf quand Pierre a dit
+ * reprendre de lui-même (`self`, le 09/11) : c'est alors l'avis qui n'est pas
+ * encore venu, et la décision de courir reste la sienne. Rien dit : la course a
+ * lieu, comme avant la question.
+ */
+export function clearanceBlocks(answers: readonly AthleteAnswer[]): boolean {
+  const last = latestClearance(answers);
+  if (!last || last.value.choice === 'yes' || last.value.choice === 'self') return false;
+  if (last.value.choice === 'no') return true;
+  return !answers.some((a) => a.question === 'clearance' && a.value.choice === 'self');
 }

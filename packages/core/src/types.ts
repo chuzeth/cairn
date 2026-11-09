@@ -1519,6 +1519,12 @@ export interface SessionProgram {
   kind: SessionProgramKind;
   /** Ce que la séance était à sa marche prévue : ce qu'elle redevient quand la règle la rend. */
   plannedKind: SessionProgramKind;
+  /**
+   * Son jour dans le programme (0 = le premier) : la règle qui la rend à sa
+   * marche prévue réécrit la séance que le programme y avait mise, pas une
+   * séance générique de même marche.
+   */
+  day?: number;
 }
 
 export type SessionProgramKind = 'run_walk' | 'easy' | 'tempo' | 'long' | 'race_pace' | 'race' | 'cross';
@@ -1551,7 +1557,11 @@ export type AnswerQuestion =
  * vient, vide si aucun.
  */
 export interface AnswerValue {
-  choice?: 'yes' | 'not_yet' | 'no';
+  /**
+   * `self` : Pierre reprend de lui-même, avant l'avis du médecin (09/11). Sa
+   * décision, pas celle du médecin : elle laisse courir, et l'avis reste à dire.
+   */
+  choice?: 'yes' | 'not_yet' | 'no' | 'self';
   score?: number;
   site?: PainSite;
   cause?: DeviationCause;

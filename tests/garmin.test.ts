@@ -104,9 +104,10 @@ describe('Codec : séance → Garmin → séance', () => {
     expect(w.name).toBe(PROBE_NAME);
     const all = steps(w);
     expect(new Set(all.map((s) => s.end.type))).toEqual(new Set(['time', 'distance', 'lap']));
-    expect(new Set(all.map((s) => s.target.type))).toEqual(new Set(['hr', 'none']));
+    expect(new Set(all.map((s) => s.target.type))).toEqual(new Set(['hr', 'none', 'pace']));
     expect(all.some((s) => s.target.type === 'hr' && s.target.low === 0)).toBe(true);
-    expect(all.some((s) => s.target.type === 'hr' && s.target.low > 0)).toBe(true);
+    // La qualité à plat sonne à l'allure, plancher et plafond (09/11) : c'est la plage de la séance de test.
+    expect(all.some((s) => s.target.type === 'pace' && s.target.slow > s.target.fast)).toBe(true);
     expect(w.items.some((i) => i.kind === 'repeat')).toBe(true);
     expect(decodeWorkout(wire(encodeWorkout(w)))).toEqual(w);
   });
@@ -231,8 +232,25 @@ describe('Codec : séance → Garmin → séance', () => {
       type: 'tempo', title: 'Tempo', intent: '',
       blocks: [{ label: 'Tempo', zone: 'Z3', distanceM: 4000, durationS: 1200, hrRange: [155, 171], speedRangeMs: [3.0, 3.8] }],
     });
-    expect(steps(w)[0]).toMatchObject({ end: { type: 'distance', meters: 4000 }, target: { type: 'hr', low: 155, high: 171 } });
+    // Une qualité à plat qui prescrit son allure sonne à l'allure (09/11) ; la FC reste écrite, en garde-fou.
+    expect(steps(w)[0]).toMatchObject({ end: { type: 'distance', meters: 4000 }, target: { type: 'pace', slow: 333, fast: 263 } });
     expect(steps(w)[0]!.note).toContain('environ 20 min');
+    expect(steps(w)[0]!.note).toContain('FC 155–171');
+    expect(steps(w)[0]!.note).not.toContain('allure à plat');
+    expect(decodeWorkout(wire(encodeWorkout(w)))).toEqual(w);
+  });
+
+  it('sonne au cœur, pas à l’allure, la qualité en côte et l’endurance', () => {
+    const hill = workoutOf({
+      type: 'tempo', title: 'Tempo', intent: '',
+      blocks: [{ label: 'Tempo en côte', zone: 'Z3', durationS: 600, elevationGainM: 80, hrRange: [155, 171], speedRangeMs: [3.0, 3.8] }],
+    });
+    expect(steps(hill)[0]!.target.type).toBe('hr');
+    const easy = workoutOf({
+      type: 'endurance', title: 'Footing', intent: '',
+      blocks: [{ label: 'Footing', zone: 'Z2', durationS: 2400, hrRange: [141, 155], speedRangeMs: [2.4, 3.0] }],
+    });
+    expect(steps(easy)[0]!.target).toEqual({ type: 'hr', low: 0, high: 155 });
   });
 
   it('une note plus longue que ce que Garmin garde se coupe à un blanc, et sa suite part dans la description', () => {

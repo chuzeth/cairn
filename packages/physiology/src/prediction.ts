@@ -532,3 +532,33 @@ export function placingToTargetTime(
         .join(', ')}. Pondération vers les éditions récentes.`,
   };
 }
+
+/**
+ * Le plan d'allure d'un temps visé, tiré du plan prédit : chaque tronçon garde sa
+ * part du temps total, et sa vitesse suit.
+ *
+ * Pierre vise le haut de la fourchette — le temps le plus rapide que la
+ * prédiction juge plausible (09/11). Courir ce temps, c'est courir chaque
+ * tronçon dans la même proportion plus vite : la répartition de l'effort entre
+ * montées et descentes est celle que le modèle a calculée, seul le niveau
+ * change. C'est une approximation : à une allure plus haute, la part des
+ * montées grandit un peu. La FC n'est pas extrapolée : un cœur se lit à
+ * l'effort, pas à une règle de trois.
+ */
+export function pacingFor(pacing: readonly PacingSegment[], targetS: number): PacingSegment[] {
+  const total = pacing.at(-1)?.cumulativeTimeS ?? 0;
+  if (!(total > 0) || !(targetS > 0)) return [...pacing];
+  const k = targetS / total;
+  let cumulative = 0;
+  return pacing.map((p) => {
+    const estimatedDurationS = Math.round(p.estimatedDurationS * k);
+    cumulative += estimatedDurationS;
+    return {
+      ...p,
+      targetSpeedMs: p.targetSpeedMs / k,
+      ...(p.targetVamMh != null ? { targetVamMh: Math.round(p.targetVamMh / k) } : {}),
+      estimatedDurationS,
+      cumulativeTimeS: cumulative,
+    };
+  });
+}

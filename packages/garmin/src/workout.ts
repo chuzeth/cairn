@@ -148,6 +148,24 @@ export function alarmRule(type: SessionType, block: SessionBlock, part: 'work' |
   return rules.reduce((a, b) => (STRICTNESS[b.alarm] > STRICTNESS[a.alarm] ? b : a));
 }
 
+/**
+ * Sur le plat, une séance de qualité qui prescrit son allure sonne à l'allure.
+ *
+ * Le cœur d'un jour varie de cinq à dix battements avec la chaleur, la caféine,
+ * une nuit courte : piloté au cœur, un seuil se court trop lent un jour chaud
+ * sans que rien ne le dise. L'allure ne ment pas — sur route, c'est elle que
+ * suivent les entraîneurs (« Dans la tête d'un coureur », 02/11/2026) — et une
+ * allure qui ne tient pas pose la question que Cairn sait poser : pourquoi. La
+ * plage cardiaque reste écrite dans la note, comme garde-fou. Partout ailleurs —
+ * en côte, sur le sentier, en endurance —, le cœur guide.
+ */
+function paceTargetFor(rule: AlarmRule, block: SessionBlock): WatchTarget | null {
+  if (rule.alarm !== 'range' || rule.why !== 'qualité à plat' || !block.speedRangeMs) return null;
+  const [lo, hi] = block.speedRangeMs;
+  if (!(lo > 0) || !(hi > lo)) return null;
+  return { type: 'pace', slow: paceSeconds(lo), fast: paceSeconds(hi) };
+}
+
 /** L'alarme qu'une règle pose sur une plage cardiaque prescrite. */
 function targetFor(rule: AlarmRule, hr: [number, number] | undefined): WatchTarget {
   if (rule.alarm === 'none' || !hr || hr[1] <= 0) return { type: 'none' };
@@ -310,7 +328,8 @@ function mainStep(block: SessionBlock, type: SessionType): WatchStep {
       note: note(block.label, setDose(block), exerciseSaid(block)),
     };
   }
-  const target = targetFor(alarmRule(type, block, 'work'), block.hrRange);
+  const rule = alarmRule(type, block, 'work');
+  const target = paceTargetFor(rule, block) ?? targetFor(rule, block.hrRange);
   const extra = end.type === 'distance' && block.durationS ? [`environ ${sessionDuration(block.durationS)}`] : [];
   // La consigne d'effort et le tronçon passent avant les conseils : c'est ce
   // qu'une descente a à tenir, et où elle fait demi-tour.
@@ -433,7 +452,7 @@ function quantities(seg: Segment, target: WatchTarget, followPace = true): strin
   const sounded = target.type === 'hr' && hr && target.low === Math.max(0, Math.round(hr[0])) && target.high === Math.round(hr[1]);
   if (hr && !sounded) out.push(`FC ${hrText(hr[0], hr[1])}`);
   // Sur un sentier, la FC guide : l'allure à plat ne s'y suit pas (`followsPace`).
-  if (followPace && seg.speedRangeMs) {
+  if (followPace && seg.speedRangeMs && target.type !== 'pace') {
     const [lo, hi] = seg.speedRangeMs;
     if (hi > 0) out.push(`allure à plat ${lo > 0 ? `${pace(paceSeconds(hi))}–${pace(paceSeconds(lo))}` : `plus lente que ${pace(paceSeconds(hi))}`}/km`);
   }

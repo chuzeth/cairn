@@ -26,7 +26,7 @@ import { isIntensityBlock } from './sessionLibrary.js';
 
 export interface Choice {
   label: string;
-  value: { choice?: 'yes' | 'not_yet' | 'no'; score?: number; cause?: DeviationCause; pattern?: PainPattern };
+  value: { choice?: 'yes' | 'not_yet' | 'no' | 'self'; score?: number; cause?: DeviationCause; pattern?: PainPattern };
 }
 
 /** Un jour à cocher, pour une question qui en prend plusieurs. */
@@ -137,24 +137,41 @@ export function pendingQuestions(input: {
   const runs = sessions.filter(isRepriseRun).sort((a, b) => a.date.localeCompare(b.date));
 
   // L'accord du médecin : à partir de trois jours avant la première course de la reprise, jusqu'à un oui.
+  // Pierre peut reprendre de lui-même (`self`) : l'avis se redemande alors trois jours plus tard, chaque jour
+  // jusqu'à ce qu'il soit dit.
   const first = sessions.filter(plannedAsRun).sort((a, b) => a.date.localeCompare(b.date))[0];
-  const cleared = answers.some((a) => a.question === 'clearance' && a.value.choice === 'yes');
-  if (first && !cleared && first.date <= shift(today, 3)) {
-    const lastNo = answers.filter((a) => a.question === 'clearance').sort((a, b) => b.answeredAt.localeCompare(a.answeredAt))[0];
-    // « Pas encore » se redemande le lendemain : l'avis peut venir d'un jour à l'autre.
-    if (!lastNo || lastNo.answeredAt.slice(0, 10) < today) {
-      out.push({
-        id: `clearance:reprise`, question: 'clearance', subject: 'reprise',
-        prompt: 'Ton médecin t\'autorise-t-il à recourir ?',
-        why: 'Sans son accord, les courses de la reprise se font dans l\'escalier, et le dossard du 28/11 attend.',
-        choices: [
-          { label: 'Oui', value: { choice: 'yes' } },
-          { label: 'Pas encore', value: { choice: 'not_yet' } },
-          { label: 'Non', value: { choice: 'no' } },
-        ],
-        asksSite: false,
-      });
-    }
+  const clearances = answers
+    .filter((a) => a.question === 'clearance' && !a.subject.startsWith('after:'))
+    .sort((a, b) => b.answeredAt.localeCompare(a.answeredAt));
+  const cleared = clearances.some((a) => a.value.choice === 'yes');
+  const self = clearances.find((a) => a.value.choice === 'self');
+  const last = clearances[0];
+  const due = self ? shift(self.answeredAt.slice(0, 10), 3) <= today : first != null && first.date <= shift(today, 3);
+  if (!cleared && due && (!last || last.answeredAt.slice(0, 10) < today)) {
+    out.push(self
+      ? {
+          id: 'clearance:reprise', question: 'clearance', subject: 'reprise',
+          prompt: 'Ton médecin a-t-il vu ton coude, et est-il d\'accord pour que tu coures ?',
+          why: `Tu as repris de toi-même le ${dayMonth(self.answeredAt.slice(0, 10))}. Un non arrête la course — l'escalier la remplace — jusqu'à son accord.`,
+          choices: [
+            { label: 'Oui', value: { choice: 'yes' } },
+            { label: 'Pas encore vu', value: { choice: 'not_yet' } },
+            { label: 'Non', value: { choice: 'no' } },
+          ],
+          asksSite: false,
+        }
+      : {
+          id: 'clearance:reprise', question: 'clearance', subject: 'reprise',
+          prompt: 'Ton médecin t\'autorise-t-il à recourir ?',
+          why: 'Sans son accord, les courses de la reprise se font dans l\'escalier, et le dossard du 28/11 attend — sauf si tu reprends de toi-même.',
+          choices: [
+            { label: 'Oui', value: { choice: 'yes' } },
+            { label: 'Pas encore', value: { choice: 'not_yet' } },
+            { label: 'Non', value: { choice: 'no' } },
+            { label: 'Je reprends sans attendre', value: { choice: 'self' } },
+          ],
+          asksSite: false,
+        });
   }
 
   // La douleur pendant la course, puis au réveil le lendemain.
@@ -282,7 +299,9 @@ export function validAnswer(
   value: { choice?: unknown; score?: unknown; site?: unknown; cause?: unknown; pattern?: unknown; days?: unknown },
 ): string | null {
   if (question === 'clearance') {
-    return value.choice === 'yes' || value.choice === 'not_yet' || value.choice === 'no' ? null : 'choice : yes, not_yet ou no.';
+    return value.choice === 'yes' || value.choice === 'not_yet' || value.choice === 'no' || value.choice === 'self'
+      ? null
+      : 'choice : yes, not_yet, no ou self.';
   }
   if (question === 'deviation_cause') {
     return typeof value.cause === 'string' && CAUSE_KEYS.has(value.cause) ? null : `cause : ${[...CAUSE_KEYS].join(', ')}.`;

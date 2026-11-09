@@ -17,8 +17,8 @@ import {
   softenedQuality, totalDuration, transformSession, withoutEccentricStrength,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
-import { repriseRace, repriseRun, repriseSubstitute, type RepriseDay } from './compensation.js';
-import { allowedLevel, raceGate, runSignals } from './reprise.js';
+import { repriseDay, repriseRace, repriseRun, repriseSubstitute, type RepriseDay } from './compensation.js';
+import { allowedLevel, clearanceBlocks, latestClearance, raceGate, runSignals } from './reprise.js';
 
 /**
  * Ajustement automatique du plan.
@@ -626,9 +626,6 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
   const ceiling = Math.round(z2?.hrMax ?? 155);
   const runs = runSignals(reprise, state.recentActivities, state.answers, today);
   const verdict = allowedLevel(runs, state.answers, ceiling);
-  const clearance = state.answers
-    .filter((a) => a.question === 'clearance')
-    .sort((a, b) => b.answeredAt.localeCompare(a.answeredAt))[0];
   const standing = (s: PlannedSession) => (s.status === 'planned' || s.status === 'moved') && s.date >= today;
   const out: Adjustment[] = [];
 
@@ -638,23 +635,31 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
   if (next) {
     const p = next.program!;
     // Un arrêt médical l'emporte sur tout : ni course, ni escalier — l'os ne se charge pas avant l'avis.
-    const blocked = !verdict.medical && clearance != null && clearance.value.choice !== 'yes';
+    const blocked = !verdict.medical && clearanceBlocks(state.answers);
     const level = blocked ? 0 : Math.min(p.planned, verdict.level);
-    const kind = level === 0 ? 'cross' : level === p.planned ? p.plannedKind : level <= 1 ? 'run_walk' : 'easy';
+    // Sur une douleur, la course suivante se court facile, quelle que soit sa marche.
+    const intense = p.plannedKind === 'tempo' || p.plannedKind === 'race_pace';
+    const eased = verdict.painful === true && intense && level >= 2;
+    const kind = level === 0 ? 'cross' : level === p.planned && !eased ? p.plannedKind : level <= 1 ? 'run_walk' : 'easy';
     const t = level === 0
       ? repriseSubstitute(state.model, blocked ? 'clearance' : 'pain')
-      : repriseRun(state.model, level, kind);
+      : level === p.planned && !eased && p.day != null
+        ? repriseDay(state.model, p.day)
+        : repriseRun(state.model, level, kind);
     // Sans course, le substitut suit sa cause : l'escalier faute d'accord, la marche sur une douleur.
-    if (level !== p.level || (level === 0 && next.title !== t.title)) {
+    if (level !== p.level || kind !== p.kind || (level === 0 && next.title !== t.title)) {
+      const said = latestClearance(state.answers);
       const why = blocked
-        ? `Course remplacée par l'escalier : ton médecin n'a pas encore dit oui (${clearance!.value.choice === 'no' ? 'non' : 'pas encore'}).`
+        ? `Course remplacée par l'escalier : ton médecin ${said?.value.choice === 'no' ? 'a dit non' : 'n\'a pas encore dit oui'}.`
         : verdict.medical
           ? `Course remplacée par la marche à plat : ${verdict.reason}. Montre-lui la douleur ; Cairn te demandera sa réponse.`
-          : level === p.planned
-          ? `Course rendue à sa marche ${level} : ${verdict.reason}.`
-          : level === 0
-            ? `Course remplacée par la marche : ${verdict.reason}.`
-            : `Course ramenée à la marche ${level} au lieu de ${p.planned} : ${verdict.reason}.`;
+          : eased
+            ? `Course courue facile, sans intensité : ${verdict.reason}. On ne cherche pas l'intensité sur un tendon qui proteste.`
+            : level === p.planned
+              ? `Course rendue à sa marche ${level} : ${verdict.reason}.`
+              : level === 0
+                ? `Course remplacée par la marche : ${verdict.reason}.`
+                : `Course ramenée à la marche ${level} au lieu de ${p.planned} : ${verdict.reason}.`;
       out.push({
         sessionId: next.id, date: next.date, action: 'rewrite', rule: 'reprise_progression', reason: why,
         content: { ...t, priority: next.priority, program: { ...p, level, kind } },
@@ -673,7 +678,7 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
         out.push({
           sessionId: race.id, date: race.date, action: 'rewrite', rule: 'reprise_race_gate',
           reason: fallback
-            ? `Le dossard passe à la Saintétic : ${gate.reason}. La SaintéSprint demandait 1 h 15 sans douleur.`
+            ? `Le dossard passe à la Saintétic : ${gate.reason}. La SaintéSprint demandait la dernière sortie longue sans douleur.`
             : `La SaintéSprint est confirmée : ${gate.reason}.`,
           content: { ...t, priority: 'key', program: { ...race.program!, level: fallback ? race.program!.planned - 1 : race.program!.planned } },
         });

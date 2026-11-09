@@ -66,13 +66,25 @@ export function buildCoachingBrief(
   for (const q of asked) lines.push(`- ${q.prompt} (${q.why})`);
 
   // Ce que les règles ont décidé ces derniers jours, dans l'ordre.
-  const revisions = (state.plan?.plan.revisionLog ?? [])
-    .filter((r) => daysBetween(r.at.slice(0, 10), today) <= 10)
-    .flatMap((r) => r.changes.map((c) => ({ at: r.at.slice(0, 10), ...c })))
-    .slice(-8);
+  // Une même décision qui a touché plusieurs séances se dit une fois, avec les jours qu'elle couvre.
+  const grouped: { at: string; from: string; to: string; n: number; reason: string }[] = [];
+  for (const r of (state.plan?.plan.revisionLog ?? []).filter((x) => daysBetween(x.at.slice(0, 10), today) <= 10)) {
+    for (const c of r.changes) {
+      const reason = first(c.reason);
+      const last = grouped.at(-1);
+      if (last && last.reason === reason && last.at === r.at.slice(0, 10)) {
+        last.n++;
+        if (c.date < last.from) last.from = c.date;
+        if (c.date > last.to) last.to = c.date;
+      } else grouped.push({ at: r.at.slice(0, 10), from: c.date, to: c.date, n: 1, reason });
+    }
+  }
   lines.push('', '## Décisions récentes');
-  if (revisions.length === 0) lines.push('- Aucune en dix jours.');
-  for (const r of revisions) lines.push(`- ${dm(r.at)}, séance du ${dm(r.date)} : ${first(r.reason)}`);
+  if (grouped.length === 0) lines.push('- Aucune en dix jours.');
+  for (const g of grouped.slice(-8)) {
+    const what = g.n === 1 ? `séance du ${dm(g.from)}` : `${g.n} séances du ${dm(g.from)} au ${dm(g.to)}`;
+    lines.push(`- ${dm(g.at)}, ${what} : ${g.reason}`);
+  }
 
   // Ce que Pierre a dit — douleurs, causes —, la matière des règles.
   const said = state.answers

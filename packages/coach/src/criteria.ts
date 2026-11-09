@@ -1,5 +1,5 @@
 import type { AthleteAnswer, PlannedSession } from '@cairn/core';
-import { classifySpike, SPIKE_HAZARD } from '@cairn/physiology';
+import { classifySpike, runDurationOf, SPIKE_HAZARD } from '@cairn/physiology';
 import { repriseRace } from './compensation.js';
 import { allowedLevel, raceGate, runSignals, PAIN_HOLD } from './reprise.js';
 import { describeSpike, planSpikes } from './spikes.js';
@@ -61,6 +61,7 @@ export function raceCriteria(state: AthleteState, sessions: readonly PlannedSess
 
   // L'accord du médecin.
   const clearance = latest(state.answers, 'clearance', 'reprise');
+  const self = state.answers.find((a) => a.question === 'clearance' && a.subject === 'reprise' && a.value.choice === 'self');
   const firstRun = reprise
     .filter((s) => s.program!.plannedKind !== 'race' && s.program!.plannedKind !== 'cross')
     .sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -71,6 +72,8 @@ export function raceCriteria(state: AthleteState, sessions: readonly PlannedSess
     status: clearance?.value.choice === 'yes' ? 'met' : clearance?.value.choice === 'no' ? 'failed' : 'open',
     evidence: clearance?.value.choice === 'yes'
       ? `oui, dit le ${dm(clearance.answeredAt.slice(0, 10))}`
+      : self && clearance?.value.choice !== 'no'
+        ? `tu as repris de toi-même le ${dm(self.answeredAt.slice(0, 10))} ; son avis reste à dire`
       : clearance
         ? `${clearance.value.choice === 'no' ? 'non' : 'pas encore'}, dit le ${dm(clearance.answeredAt.slice(0, 10))}`
         : asksFrom && asksFrom > today
@@ -88,7 +91,7 @@ export function raceCriteria(state: AthleteState, sessions: readonly PlannedSess
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   criteria.push({
     key: 'ladder',
-    label: 'Les cinq marches de course, une à une',
+    label: 'Les marches de la reprise, une à une, jusqu\'à la sortie longue',
     status: top >= 5 ? 'met' : 'open',
     evidence:
       (top > 0 ? `marche ${top} franchie` : 'aucune marche franchie encore') +
@@ -98,12 +101,20 @@ export function raceCriteria(state: AthleteState, sessions: readonly PlannedSess
 
   // Le critère du dossard : la sortie longue.
   const gate = raceGate(runs, state.answers, ceiling);
-  const long = reprise.find((s) => s.program!.planned >= 5 && s.program!.plannedKind === 'long');
+  const long = reprise
+    .filter((s) => s.program!.planned >= 5 && s.program!.plannedKind === 'long' && s.date <= gateDate)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .at(-1);
+  const minutes = long ? Math.round(runDurationOf(long) / 60) : 0;
   criteria.push({
     key: 'long',
-    label: 'La sortie longue de 1 h 15, sans douleur au-dessus de 2',
+    label: 'La dernière sortie longue, sans douleur au-dessus de 2',
     status: gate.met ? 'met' : today > gateDate ? 'failed' : 'open',
-    evidence: gate.met ? gate.reason : long ? `prévue le ${dm(long.date)}` : gate.reason,
+    evidence: gate.met
+      ? gate.reason
+      : long && long.date >= today
+        ? `prévue le ${dm(long.date)} (${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')})`
+        : gate.reason,
   });
 
   // Aucun arrêt pour douleur en cours.

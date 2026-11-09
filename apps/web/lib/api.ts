@@ -371,7 +371,7 @@ export interface AskedQuestion {
   subject: string;
   prompt: string;
   why: string;
-  choices: { label: string; value: { choice?: 'yes' | 'not_yet' | 'no'; score?: number; cause?: string; pattern?: string } }[];
+  choices: { label: string; value: { choice?: 'yes' | 'not_yet' | 'no' | 'self'; score?: number; cause?: string; pattern?: string } }[];
   asksSite: boolean;
   /** Des jours à cocher, plusieurs à la fois (`week_load`). */
   days?: { label: string; day: string }[];

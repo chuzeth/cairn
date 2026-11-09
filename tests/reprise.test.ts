@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PIERRE, type Activity, type AthleteAnswer, type PlannedSession, type TrainingPlan } from '@cairn/core';
-import { buildZones } from '@cairn/physiology';
+import { buildZones, runDurationOf, spikesAlong } from '@cairn/physiology';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
 /**
- * La reprise de la course, du 13 au 29/11 (`reprise.ts`, règle
+ * La reprise de la course, du 09 au 29/11 (`reprise.ts`, règle
  * `reprise_progression` d'`adapt.ts`).
  *
- * Le 09/11, Pierre veut un programme qui ne soit pas figé, qui se réajuste sur
- * ce qui arrive sans qu'il ait à le raconter, et qui lui demande ce que les
- * données ne disent pas. Une course de la reprise monte d'une marche si la
- * précédente s'est bien passée, reste si un signal l'inquiète, redescend sur une
- * douleur, s'arrête sur une douleur forte ; sans l'accord du médecin, elle se
- * fait dans l'escalier ; et le dossard de la SaintéSprint se décide six jours avant, sur
- * la sortie longue.
+ * Le 09/11, Pierre court 50 min sans attendre le médecin du 12, et veut un
+ * programme de course seulement, pour une SaintéSprint visée au haut de la
+ * fourchette (2:11:30). Il ne doit pas être figé : une course de la reprise
+ * monte d'une marche si la précédente s'est bien passée, reste si un signal
+ * l'inquiète, redescend sur une douleur — facile alors, sans intensité —,
+ * s'arrête sur une douleur forte ; un non du médecin la fait dans l'escalier ;
+ * et le dossard se décide six jours avant, sur la dernière sortie longue.
  */
 
 const store = vi.hoisted(() => ({
@@ -39,20 +39,21 @@ vi.mock('@cairn/db', () => ({
 }));
 
 const lib = await import('@cairn/coach');
-const { allowedLevel, applyAdjustments, evaluateAdjustments, judgeRun, pendingQuestions, raceGate, repriseDay, runSignals, validAnswer } = lib;
+const { allowedLevel, applyAdjustments, evaluateAdjustments, judgeRun, pendingQuestions, raceGate, repriseDay, runSignals, validAnswer, SAINTESPRINT_TARGET_S } = lib;
 
-const START = '2026-11-13';
+const START = '2026-11-09';
 const day = (i: number) => new Date(Date.parse(`${START}T12:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10);
 const CEILING = 155;
 
 /** La reprise telle que `layCompensation` la pose : une séance par jour, sa marche avec elle. */
 function laid(): PlannedSession[] {
-  return Array.from({ length: 17 }, (_, i) => {
+  return Array.from({ length: 21 }, (_, i) => {
     const t = repriseDay(PIERRE_MODEL, i);
     return {
       id: `r${i}`, athleteId: 'pierre', date: day(i), type: t.type, title: t.title, intent: t.intent, blocks: t.blocks,
       plannedLoad: t.plannedLoad, plannedMechanicalLoad: t.plannedMechanicalLoad, plannedDurationS: t.durationS,
       priority: t.priority, status: 'planned', ...(t.program ? { program: t.program } : {}),
+      ...(t.plannedDistanceM ? { plannedDistanceM: t.plannedDistanceM } : {}),
       decision: { at: '2026-11-09T10:00:00Z', by: 'coach', summary: 'Reprise.' },
     } as PlannedSession;
   });
@@ -72,12 +73,13 @@ const stateOn = (date: string, answers: AthleteAnswer[] = [], activities: Activi
     plan: { plan: { id: 'plan' }, weeks: [] }, answers, recentActivities: activities,
   }) as never;
 
-/** Le 13/11 fait : sa course rattachée à une activité de `minutes`. */
-function doneFirst(minutes = 34): Activity {
-  const s = store.sessions.find((x) => x.id === 'r0')!;
-  Object.assign(s, { status: 'completed', completedActivityId: 'a0' });
-  return run({ id: 'a0', startDateLocal: `${day(0)}T18:00:00`, movingTimeS: minutes * 60 });
+/** Une course de la reprise faite : rattachée à une activité qui en court toute la durée. */
+function done(id: string, over: Partial<Activity> = {}): Activity {
+  const s = store.sessions.find((x) => x.id === id)!;
+  Object.assign(s, { status: 'completed', completedActivityId: `a-${id}` });
+  return run({ id: `a-${id}`, startDateLocal: `${s.date}T18:00:00`, movingTimeS: runDurationOf(s), distanceM: s.plannedDistanceM ?? 8000, ...over });
 }
+const doneFirst = () => done('r0');
 
 const level = (id: string) => store.sessions.find((s) => s.id === id)!.program!.level;
 
@@ -86,35 +88,63 @@ beforeEach(() => {
   store.revisions = [];
 });
 
-describe('La reprise, du 13 au 29/11', () => {
-  it('monte la course une marche à la fois, la force et l’escalier entre deux, sans vélo, la SaintéSprint le 28', () => {
+const at = (id: string) => store.sessions.find((s) => s.id === id)!;
+const rules = async (today: string, answers: AthleteAnswer[] = [], activities: Activity[] = []) =>
+  applyAdjustments('pierre', evaluateAdjustments(stateOn(today, answers, activities), store.sessions.map((s) => ({ ...s }))), 'readiness');
+
+describe('La reprise, du 09 au 29/11', () => {
+  it('ne porte que de la course, une marche à la fois, la SaintéSprint le 28 au haut de la fourchette', () => {
+    // Rien d'autre que de la course et du repos : ni force, ni escalier, ni vélo.
+    expect(new Set(store.sessions.map((s) => s.type))).toEqual(
+      new Set(['endurance', 'rest', 'threshold', 'long_run', 'hill_repeats', 'race_pace', 'race']),
+    );
+    expect(store.sessions.filter((s) => /vélo|escalier|\bforce\b/i.test(JSON.stringify(s.blocks) + s.title))).toEqual([]);
     const runs = store.sessions.filter((s) => s.program && s.program.kind !== 'race');
-    expect(runs.map((s) => [s.date, s.program!.level])).toEqual([
-      ['2026-11-13', 1], ['2026-11-15', 2], ['2026-11-17', 3], ['2026-11-19', 4], ['2026-11-21', 5],
-      ['2026-11-23', 3], ['2026-11-24', 4], ['2026-11-26', 2],
+    expect(runs.map((s) => [s.date.slice(8), s.program!.level, s.program!.kind])).toEqual([
+      ['09', 3, 'easy'], ['11', 3, 'easy'], ['13', 4, 'tempo'], ['15', 5, 'long'], ['17', 4, 'tempo'], ['18', 3, 'easy'],
+      ['19', 4, 'race_pace'], ['21', 5, 'long'], ['22', 3, 'easy'], ['24', 4, 'race_pace'], ['25', 3, 'easy'], ['27', 2, 'easy'],
     ]);
-    // Jamais deux marches d'un coup : chaque course ne demande au plus qu'une marche de plus que la précédente.
+    // Chaque course ne demande au plus qu'une marche de plus que la précédente, et porte son jour dans le programme.
     runs.forEach((s, i) => i > 0 && expect(s.program!.level - runs[i - 1]!.program!.level).toBeLessThanOrEqual(1));
-    const race = store.sessions.find((s) => s.type === 'race')!;
+    runs.forEach((s) => expect(s.program!.day).toBe(Math.round((Date.parse(s.date) - Date.parse(START)) / 86_400_000)));
+    // La course : 2:11:30, la borne rapide prédite le 09/11, et son plan d'allure.
+    const race = at('r19');
     expect([race.date, race.title.startsWith('SaintéSprint')]).toEqual(['2026-11-28', true]);
-    // Rien de dur les trois jours avant la course, la veille au repos.
-    expect(store.sessions.filter((s) => s.date >= '2026-11-25' && s.date < '2026-11-28').map((s) => s.type)).toEqual(['cross_training', 'endurance', 'rest']);
-    // Pierre n'a pas de vélo (09/11) : aucune séance n'en demande.
-    expect(store.sessions.filter((s) => /vélo/i.test(JSON.stringify(s.blocks) + s.title))).toEqual([]);
-    // Deux courses rapprochées ne sont pas toutes deux « clefs » : la règle des 48 h ne déplacerait rien.
-    expect(store.sessions.find((s) => s.date === '2026-11-23')!.priority).toBe('support');
+    expect(SAINTESPRINT_TARGET_S).toBe(7890);
+    expect(race.blocks[0]!.notes).toMatch(/2 h 11 30.*Chaponost, km 11 : 5:34\/km, au ravitaillement en 1 h 00/s);
+    // Les trois jours avant la course : un footing, du repos, 25 min de trot.
+    expect(store.sessions.filter((s) => s.date >= '2026-11-25' && s.date < '2026-11-28').map((s) => [s.type, s.plannedDurationS > 0 ? Math.round(runDurationOf(s) / 60) : 0]))
+      .toEqual([['endurance', 39], ['rest', 0], ['endurance', 28]]);
+  });
+
+  it('pose l’allure de course à 5:10-5:20/km, le seuil à 4:30-4:40, et les footings au cœur sous 155', () => {
+    const paces = (id: string) => at(id).blocks.filter((b) => b.paceRange).map((b) => b.paceRange);
+    expect(paces('r10')).toEqual([['5:10', '5:20']]);
+    expect(paces('r15')).toEqual([['5:10', '5:20']]);
+    expect(paces('r4')).toEqual([['4:30', '4:40']]);
+    // Le 09/11 dit ce qui a été couru — 151 bpm de moyenne, 168 au plus — : il n'a pas de plafond à tenir.
+    expect(at('r0').blocks[0]!.hrRange).toEqual([141, 168]);
+    expect(at('r6').type).toBe('long_run');
+    for (const id of ['r2', 'r6', 'r9', 'r13', 'r16', 'r18']) {
+      expect(at(id).blocks.filter((b) => !b.kind && b.zone === 'Z2').every((b) => b.hrRange?.[1] === CEILING)).toBe(true);
+    }
+  });
+
+  it('ne pique qu’à la longue du 21/11 et à la course : la plus longue monte par paliers de moins de 10 %', () => {
+    const planned = store.sessions.filter((s) => s.program && s.date > START).map((s) => ({ id: s.id, date: s.date, distanceM: s.plannedDistanceM ?? 0 }));
+    const spikes = spikesAlong([{ date: START, distanceM: 10_184 }], planned).filter((v) => v.cls !== 'none').map((v) => [v.id, v.cls]);
+    expect(spikes).toEqual([['r12', 'moderate'], ['r19', 'moderate']]);
   });
 
   it('juge une course : la douleur d’abord, puis la durée, l’effort, le cœur', () => {
     const base = { sessionId: 'x', date: day(0), level: 2, kind: 'easy' as const, done: true };
     expect(judgeRun({ ...base, painDuring: 6 }, CEILING).step).toBe('stop');
-    expect(judgeRun({ ...base, painMorning: 3 }, CEILING).step).toBe('down');
-    expect(judgeRun({ ...base, painDuring: 2 }, CEILING).step).toBe('hold');
+    expect(judgeRun({ ...base, painMorning: 3 }, CEILING)).toMatchObject({ step: 'down', painful: true });
+    expect(judgeRun({ ...base, painDuring: 2 }, CEILING)).toMatchObject({ step: 'hold', painful: true });
     expect(judgeRun({ ...base, completion: 0.7 }, CEILING).step).toBe('hold');
     expect(judgeRun({ ...base, rpe: 8 }, CEILING).step).toBe('hold');
     expect(judgeRun({ ...base, avgHr: 162 }, CEILING).step).toBe('hold');
     expect(judgeRun({ ...base, painDuring: 0, completion: 1 }, CEILING)).toEqual({ step: 'up', reason: 'sans douleur' });
-    // Sans réponse, la reprise continue — et le dit.
     expect(judgeRun(base, CEILING).reason).toContain('pas été dite');
   });
 
@@ -128,85 +158,104 @@ describe('La reprise, du 13 au 29/11', () => {
   it('écrit la prochaine course à la marche que la précédente permet, et seulement elle', async () => {
     const activities = [doneFirst()];
     const answers = [answer('run_pain', 'r0', { score: 3, site: 'achille' })];
-    const signals = runSignals(store.sessions, activities, answers, day(1));
-    expect(signals[0]).toMatchObject({ level: 1, done: true, painDuring: 3 });
     const adjustments = evaluateAdjustments(stateOn(day(1), answers, activities), store.sessions.map((s) => ({ ...s })));
-    const progression = adjustments.filter((a) => a.rule === 'reprise_progression');
-    // Seule la course suivante est réécrite : celle d'après se jugera sur ce que celle-ci aura donné.
-    expect(progression.map((a) => a.sessionId)).toEqual(['r2']);
+    expect(adjustments.filter((a) => a.rule === 'reprise_progression').map((a) => a.sessionId)).toEqual(['r2']);
     await applyAdjustments('pierre', adjustments, 'readiness');
-    // Une marche plus bas que 1, c'est encore la course-marche : la marche 2 attend.
-    expect(level('r2')).toBe(1);
-    expect(store.sessions.find((s) => s.id === 'r2')!.title).toMatch(/Course-marche/);
-    expect(store.sessions.find((s) => s.id === 'r2')!.rationale).toMatch(/douleur de 3 sur 10/);
+    expect([level('r2'), at('r2').title]).toEqual([2, expect.stringMatching(/^Footing de reprise 37 min/)]);
+    expect(at('r2').rationale).toMatch(/douleur de 3 sur 10/);
     // Réévaluée sur le même état, la règle ne réécrit plus rien.
     expect(evaluateAdjustments(stateOn(day(1), answers, activities), store.sessions.map((s) => ({ ...s }))).filter((a) => a.rule === 'reprise_progression')).toEqual([]);
   });
 
   it('remplace la course par la marche à plat sur une douleur forte, sans escalier qui la redescende', async () => {
-    const activities = [doneFirst()];
-    const answers = [answer('run_pain', 'r0', { score: 5, site: 'tibia' })];
-    await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(1), answers, activities), store.sessions.map((s) => ({ ...s }))), 'readiness');
-    const next = store.sessions.find((s) => s.id === 'r2')!;
-    expect([next.title, next.program!.level]).toEqual([expect.stringMatching(/^Marche à plat/), 0]);
-    expect(next.blocks.some((b) => b.exercise === 'escalier-immeuble')).toBe(false);
+    await rules(day(1), [answer('run_pain', 'r0', { score: 5, site: 'tibia' })], [doneFirst()]);
+    expect([at('r2').title, level('r2')]).toEqual([expect.stringMatching(/^Marche à plat/), 0]);
+    expect(at('r2').blocks.some((b) => b.exercise === 'escalier-immeuble')).toBe(false);
   });
 
-  it('rend sa marche à la course quand la douleur est retombée et que la marche d’avant est passée', async () => {
-    const activities = [doneFirst()];
-    const answers = [answer('run_pain', 'r0', { score: 0 }), answer('morning_pain', day(1), { score: 0 })];
-    const adj = evaluateAdjustments(stateOn(day(1), answers, activities), store.sessions.map((s) => ({ ...s }))).filter((a) => a.rule === 'reprise_progression');
-    expect(adj).toEqual([]);
-    expect(level('r2')).toBe(2);
+  it('court facile la séance de qualité qui suit une douleur, même à sa marche', async () => {
+    // La longue du 15/11 laisse une douleur de 3 au tendon : la marche 4 reste permise, l'intensité non.
+    const activities = ['r0', 'r2', 'r4', 'r6'].map((id) => done(id));
+    const answers = [
+      ...['r0', 'r2', 'r4'].map((id) => answer('run_pain', id, { score: 0 })),
+      answer('run_pain', 'r6', { score: 3, site: 'achille' }), answer('pain_pattern', 'r6', { pattern: 'eases' }),
+    ];
+    await rules(day(7), answers, activities);
+    expect([level('r8'), at('r8').program!.kind, at('r8').type]).toEqual([4, 'easy', 'endurance']);
+    expect(at('r8').rationale).toMatch(/sans intensité/);
   });
 
-  it('fait la course dans l’escalier tant que le médecin n’a pas dit oui', async () => {
-    const answers = [answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-12T19:00:00Z')];
-    await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(0), answers), store.sessions.map((s) => ({ ...s }))), 'readiness');
-    const first = store.sessions.find((s) => s.id === 'r0')!;
-    expect([first.type, first.title, first.program!.level, first.program!.kind]).toEqual(['cross_training', expect.stringMatching(/^Escalier facile/), 0, 'cross']);
-    // Remplacée par l'escalier, la course reste celle que l'accord rendra : la question se repose le lendemain.
-    const early = [answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-09T19:00:00Z')];
-    const asked = (today: string, said = early) => pendingQuestions({ today, sessions: store.sessions, activities: [], answers: said }).map((q) => q.question);
-    // Le 10/11, la prochaine course encore à courir est le 15 : sans la course remplacée, la question se tairait.
-    expect([asked('2026-11-10'), asked('2026-11-09')]).toEqual([['clearance'], []]);
-    // Le oui arrivé, la course revient à sa marche.
-    const yes = [answer('clearance', 'reprise', { choice: 'yes' }, '2026-11-13T08:00:00Z'), ...answers];
-    await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(0), yes), store.sessions.map((s) => ({ ...s }))), 'readiness');
-    expect([store.sessions.find((s) => s.id === 'r0')!.program!.level, store.sessions.find((s) => s.id === 'r0')!.title]).toEqual([1, expect.stringMatching(/Course-marche/)]);
+  it('rend sa séance à la course qui retrouve sa marche : celle du programme, pas une séance de même marche', async () => {
+    const activities = [doneFirst(), done('r2')];
+    const answers = [answer('run_pain', 'r0', { score: 0 }), answer('run_pain', 'r2', { score: 0 })];
+    // Le seuil du 13/11 avait été ramené à la marche 3.
+    Object.assign(at('r4'), { program: { ...at('r4').program!, level: 3, kind: 'easy' }, type: 'endurance', title: 'Footing de reprise 40 min' });
+    await rules(day(3), answers, activities);
+    expect([level('r4'), at('r4').type, at('r4').title]).toEqual([4, 'threshold', expect.stringMatching(/^Seuil en trois blocs/)]);
   });
 
-  it('décide le dossard six jours avant : la SaintéSprint sur une sortie longue sans douleur, la Saintétic sinon', async () => {
-    const gateDay = day(9); // 22/11
-    // Rien n'a été couru : au critère, le dossard passe à la Saintétic.
-    await applyAdjustments('pierre', evaluateAdjustments(stateOn(gateDay), store.sessions.map((s) => ({ ...s }))), 'readiness');
-    const race = store.sessions.find((s) => s.type === 'race')!;
-    expect(race.title).toMatch(/Saintétic/);
-    expect(race.rationale).toMatch(/sortie longue de 1 h 15 n'a pas été faite/);
-    // La sortie longue faite sans douleur : le critère est rempli.
-    const long = { sessionId: 'r8', date: day(8), level: 5, kind: 'long' as const, done: true, painDuring: 0, painMorning: 1 };
-    expect(raceGate([long], [], CEILING).met).toBe(true);
-    expect(raceGate([{ ...long, painMorning: 3 }], [], CEILING).met).toBe(false);
+  it('laisse courir celui qui reprend de lui-même ; un non du médecin fait la course dans l’escalier', async () => {
+    const self = [answer('clearance', 'reprise', { choice: 'self' }, '2026-11-09T19:00:00Z')];
+    const runs = [doneFirst()];
+    await rules(day(1), self, runs);
+    expect(at('r2').type).toBe('endurance');
+    // Son avis se redemande trois jours plus tard, et chaque jour jusqu'à ce qu'il soit dit.
+    const asked = (today: string, said = self) => pendingQuestions({ today, sessions: store.sessions, activities: [], answers: said }).filter((q) => q.question === 'clearance');
+    expect([asked('2026-11-10').length, asked('2026-11-11').length, asked('2026-11-12').length]).toEqual([0, 0, 1]);
+    expect(asked('2026-11-12')[0]!.choices.map((c) => c.value.choice)).toEqual(['yes', 'not_yet', 'no']);
+    // « Pas encore vu » ne l'arrête pas : la décision reste la sienne.
+    const notSeen = [...self, answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-12T19:00:00Z')];
+    runs.push(done('r2'));
+    await rules(day(3), notSeen, runs);
+    expect(at('r4').type).toBe('threshold');
+    // Un non, si : l'escalier, jusqu'à son accord.
+    const no = [...self, answer('clearance', 'reprise', { choice: 'no' }, '2026-11-12T19:00:00Z')];
+    await rules(day(3), no, runs);
+    expect([at('r4').type, at('r4').title, level('r4')]).toEqual(['cross_training', expect.stringMatching(/^Escalier facile/), 0]);
+    expect(at('r4').rationale).toMatch(/a dit non/);
+  });
+
+  it('fait la course dans l’escalier quand le médecin n’a pas encore dit oui, sans décision de Pierre', async () => {
+    await rules(day(0), [answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-08T19:00:00Z')]);
+    expect([at('r0').type, level('r0')]).toEqual(['cross_training', 0]);
+    await rules(day(0), [answer('clearance', 'reprise', { choice: 'yes' }, '2026-11-09T08:00:00Z')]);
+    expect([at('r0').type, level('r0'), at('r0').title]).toEqual(['endurance', 3, expect.stringMatching(/^Footing/)]);
+  });
+
+  it('décide le dossard six jours avant, sur la dernière sortie longue : une plus ancienne ne la remplace pas', async () => {
+    const gateDay = day(13); // 22/11
+    // La longue du 15 faite sans douleur, celle du 21 manquée : la Saintétic.
+    const activities = ['r0', 'r2', 'r4', 'r6', 'r8', 'r9', 'r10'].map((id) => done(id));
+    const answers = ['r0', 'r2', 'r4', 'r6', 'r8', 'r9', 'r10'].map((id) => answer('run_pain', id, { score: 0 }));
+    await rules(gateDay, answers, activities);
+    expect(at('r19').title).toMatch(/Saintétic/);
+    expect(at('r19').rationale).toMatch(/sortie longue du 2026-11-21 n'a pas été faite/);
+    // Faite sans douleur, le critère est rempli ; une douleur de 3 le lendemain, non.
+    const long = { sessionId: 'r12', date: day(12), level: 5, kind: 'long' as const, done: true, painDuring: 0, painMorning: 1 };
+    const older = { ...long, sessionId: 'r6', date: day(6) };
+    expect(raceGate([older, long], [], CEILING).met).toBe(true);
+    expect(raceGate([older, { ...long, painMorning: 3 }], [], CEILING).met).toBe(false);
+    expect(raceGate([older, { ...long, done: false }], [], CEILING).met).toBe(false);
   });
 });
 
 describe('Ce que Cairn demande', () => {
-  it('l’accord du médecin à trois jours de la première course, puis la douleur et le réveil après chaque course', () => {
-    expect(pendingQuestions({ today: '2026-11-09', sessions: store.sessions, activities: [], answers: [] })).toEqual([]);
-    expect(pendingQuestions({ today: '2026-11-10', sessions: store.sessions, activities: [], answers: [] }).map((q) => q.question)).toEqual(['clearance']);
+  it('l’accord du médecin avant la première course, puis la douleur et le réveil après chaque course', () => {
+    expect(pendingQuestions({ today: '2026-11-05', sessions: store.sessions, activities: [], answers: [] })).toEqual([]);
+    expect(pendingQuestions({ today: '2026-11-06', sessions: store.sessions, activities: [], answers: [] }).map((q) => q.question)).toEqual(['clearance']);
     const activities = [doneFirst()];
     const cleared = [answer('clearance', 'reprise', { choice: 'yes' })];
-    // Le soir de la course : la douleur ; une course sans montre : l'effort.
-    expect(pendingQuestions({ today: day(0), sessions: store.sessions, activities, answers: cleared }).map((q) => q.question)).toEqual(['run_pain', 'run_rpe']);
+    // Le soir de la course : la douleur ; une course sans montre : l'effort. Un lundi, la semaine et son seuil du 13 : les jours chargés.
+    expect(pendingQuestions({ today: day(0), sessions: store.sessions, activities, answers: cleared }).map((q) => q.question)).toEqual(['run_pain', 'run_rpe', 'week_load']);
     // Le lendemain matin, en plus : le réveil.
     const asked = pendingQuestions({ today: day(1), sessions: store.sessions, activities, answers: [...cleared, answer('run_pain', 'r0', { score: 0 })] });
-    // Le 14/11 est un samedi : la semaine qui vient porte le tempo du 19, Cairn demande ses jours chargés, en dernier.
-    expect(asked.map((q) => q.question)).toEqual(['morning_pain', 'run_rpe', 'week_load']);
+    expect(asked.map((q) => q.question)).toEqual(['morning_pain', 'run_rpe']);
     expect(asked[0]!.why).toMatch(/lendemain/);
   });
 
   it('n’accepte que les réponses que la question attend', () => {
     expect(validAnswer('clearance', { choice: 'yes' })).toBeNull();
+    expect(validAnswer('clearance', { choice: 'self' })).toBeNull();
     expect(validAnswer('clearance', { choice: 'peut-être' })).not.toBeNull();
     expect(validAnswer('run_pain', { score: 11 })).not.toBeNull();
     expect(validAnswer('run_pain', { score: 3, site: 'achille' })).toBeNull();

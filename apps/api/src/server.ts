@@ -601,7 +601,7 @@ export async function buildServer() {
       question: asked,
       subject,
       value: {
-        ...(raw.choice != null ? { choice: raw.choice as 'yes' | 'not_yet' | 'no' } : {}),
+        ...(raw.choice != null ? { choice: raw.choice as 'yes' | 'not_yet' | 'no' | 'self' } : {}),
         ...(raw.score != null ? { score: raw.score as number } : {}),
         ...(raw.site != null ? { site: raw.site as never } : {}),
         ...(raw.cause != null ? { cause: raw.cause as never } : {}),
