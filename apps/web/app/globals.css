@@ -997,6 +997,26 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 }
 .m-q-choice:hover { border-color: var(--text); }
 .m-q-choice:disabled { opacity: 0.5; cursor: default; }
+/* Un jour coché se lit plein ; le bouton qui envoie se lit encre. */
+.m-q-choice[data-on] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.m-q-choice[data-primary] { color: var(--bg); background: var(--text); border-color: var(--text); }
+
+/* ── Les critères du dossard ─────────────────────────────────────────────── */
+
+/* Une colonne étroite pour l'état, une large pour le critère et sa preuve. L'état
+   se lit d'un mot, en petites capitales ; seul « manqué » prend la couleur. */
+.m-crit { display: flex; flex-direction: column; gap: 10px; }
+.m-crit-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.m-crit-item { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 0 12px; align-items: baseline; }
+.m-crit-mark {
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.m-crit-item[data-status='met'] .m-crit-mark { color: var(--text); }
+.m-crit-item[data-status='failed'] .m-crit-mark { color: var(--warn); }
+.m-crit-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.m-crit-label { font-size: 14px; line-height: 1.35; color: var(--text); text-wrap: pretty; }
+.m-crit-evidence { font-size: 12.5px; line-height: 1.45; color: var(--text-faint); text-wrap: pretty; overflow-wrap: break-word; }
 
 /* ── Le point du jour, répondable d'un pouce ─────────────────────────────── */
 

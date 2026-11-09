@@ -261,3 +261,61 @@ describe('declare_absence montre avant d\'écrire', () => {
     expect(db.absences).toHaveLength(1);
   });
 });
+
+/**
+ * Le 09/11 : un modèle de langage va dans le sens de qui lui parle (« IA, applis,
+ * montres : a-t-on encore besoin d'un coach ? », Dans la tête d'un coureur,
+ * 02/11/2026 ; et les mesures de complaisance des modèles). « Je me sens bien,
+ * remets-moi une vraie sortie » ne doit pas faire monter une course de la
+ * reprise : sa marche se décide sur la douleur, la durée tenue et l'accord du
+ * médecin. La conversation peut alléger ; elle ne fait pas monter.
+ */
+describe('Une course de la reprise ne monte pas par la conversation', () => {
+  const footing = (over: Partial<PlannedSession> = {}): PlannedSession => ({
+    id: 'r2', athleteId: 'pierre', date: '2026-10-01', type: 'endurance', title: 'Footing de reprise 30 min',
+    intent: '', priority: 'key', status: 'planned',
+    blocks: [{ label: 'Footing', zone: 'Z2', durationS: 1800 }],
+    plannedLoad: 30, plannedMechanicalLoad: 8, plannedDurationS: 1800, plannedElevationGainM: 0,
+    program: { name: 'reprise', level: 2, planned: 2, kind: 'easy', plannedKind: 'easy' },
+    ...over,
+  });
+
+  it('refuse une course plus longue que sa marche, et ne l’écrit pas', async () => {
+    db.sessions = [footing()];
+    await expect(
+      executeTool('pierre', 'modify_session', {
+        session_id: 'r2', blocks: [{ label: 'Footing', zone: 'Z2', durationS: 3600 }],
+        rationale: 'Pierre se sent bien et veut une vraie sortie.', apply: true,
+      }),
+    ).rejects.toThrow(/marche de la reprise/);
+    expect(db.updates).toHaveLength(0);
+  });
+
+  it('refuse une intensité au-dessus de la marche', async () => {
+    db.sessions = [footing()];
+    await expect(
+      executeTool('pierre', 'modify_session', {
+        session_id: 'r2', blocks: [{ label: 'Seuil', zone: 'Z4', durationS: 1800 }], rationale: 'Il veut du seuil.',
+      }),
+    ).rejects.toThrow(/intensité au-dessus/);
+  });
+
+  it('refuse de remettre une course là où la règle a mis l’escalier', async () => {
+    db.sessions = [footing({
+      type: 'cross_training', title: 'Escalier facile 40 min', blocks: [{ label: 'Escalier', zone: 'Z2', durationS: 2400 }],
+      program: { name: 'reprise', level: 0, planned: 2, kind: 'cross', plannedKind: 'easy' },
+    })];
+    await expect(
+      executeTool('pierre', 'modify_session', {
+        session_id: 'r2', type: 'endurance', blocks: [{ label: 'Footing', zone: 'Z2', durationS: 1800 }],
+        rationale: 'Le médecin dira oui de toute façon.',
+      }),
+    ).rejects.toThrow(/marche de la reprise/);
+  });
+
+  it('laisse alléger : un quart de moins s’écrit', async () => {
+    db.sessions = [footing()];
+    await executeTool('pierre', 'modify_session', { session_id: 'r2', scale_load: 0.75, rationale: 'Journée chargée.', apply: true });
+    expect(db.updates).toHaveLength(1);
+  });
+});

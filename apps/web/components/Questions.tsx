@@ -9,9 +9,11 @@ import { sendOrQueue } from '@/lib/offline';
  *
  * Elles ne viennent que quand une décision en dépend (`@cairn/coach`,
  * `questions.ts`) — l'accord du médecin avant la première course, la douleur
- * après chaque course et le lendemain matin, l'effort d'une course faite sans
- * montre. Chacune dit ce que sa réponse décide : une question dont on ne voit
- * pas l'usage est une question à laquelle on ne répond plus.
+ * après chaque course, le lendemain matin et la façon dont elle se comporte,
+ * l'effort d'une course faite sans montre, la raison d'une course qui s'est
+ * écartée du prévu, les jours chargés de la semaine qui vient. Chacune dit ce
+ * que sa réponse décide : une question dont on ne voit pas l'usage est une
+ * question à laquelle on ne répond plus.
  */
 
 const SITES: { site: string; label: string }[] = [
@@ -33,6 +35,7 @@ interface AnswerResult {
 export function Questions({ questions, onReload }: { questions: AskedQuestion[]; onReload: () => Promise<void> | void }) {
   const [list, setList] = useState(questions);
   const [painFor, setPainFor] = useState<{ id: string; score: number } | null>(null);
+  const [picked, setPicked] = useState<{ id: string; days: string[] }>({ id: '', days: [] });
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
@@ -46,13 +49,14 @@ export function Questions({ questions, onReload }: { questions: AskedQuestion[];
   const q = list[0];
   if (!q && !summary) return null;
 
-  const send = async (value: AskedQuestion['choices'][number]['value'] & { site?: string }) => {
+  const send = async (value: AskedQuestion['choices'][number]['value'] & { site?: string; days?: string[] }) => {
     if (!q) return;
     setSending(true);
     setError(null);
     try {
       const sent = await sendOrQueue<AnswerResult>('/api/answers', { question: q.question, subject: q.subject, value });
       setPainFor(null);
+      setPicked({ id: '', days: [] });
       if (!sent) {
         // Faute de réseau, la réponse attend dans la file : la question suivante peut venir.
         setQueued(true);
@@ -78,6 +82,12 @@ export function Questions({ questions, onReload }: { questions: AskedQuestion[];
     void send(choice.value);
   };
 
+  const days = q?.id === picked.id ? picked.days : [];
+  const toggle = (day: string) => {
+    if (!q) return;
+    setPicked({ id: q.id, days: days.includes(day) ? days.filter((d) => d !== day) : [...days, day] });
+  };
+
   return (
     <section className="m-q" aria-live="polite">
       {q && (
@@ -93,6 +103,23 @@ export function Questions({ questions, onReload }: { questions: AskedQuestion[];
                     {s.label}
                   </button>
                 ))}
+              </div>
+            </>
+          ) : q.days ? (
+            <>
+              <div className="m-q-choices">
+                {q.days.map((d) => (
+                  <button key={d.day} type="button" className="m-q-choice" aria-pressed={days.includes(d.day)}
+                    data-on={days.includes(d.day) || undefined} disabled={sending} onClick={() => toggle(d.day)}>
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <div className="m-q-choices">
+                <button type="button" className="m-q-choice" data-primary disabled={sending}
+                  onClick={() => send({ days })}>
+                  {days.length === 0 ? 'Aucun' : `Valider ${days.length} jour${days.length > 1 ? 's' : ''}`}
+                </button>
               </div>
             </>
           ) : (

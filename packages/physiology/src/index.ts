@@ -18,3 +18,4 @@ export * from './streams.js';
 export * from './sessionMatch.js';
 export * from './analysis.js';
 export * from './lapRace.js';
+export * from './spike.js';

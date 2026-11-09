@@ -200,7 +200,8 @@ describe('Ce que Cairn demande', () => {
     expect(pendingQuestions({ today: day(0), sessions: store.sessions, activities, answers: cleared }).map((q) => q.question)).toEqual(['run_pain', 'run_rpe']);
     // Le lendemain matin, en plus : le réveil.
     const asked = pendingQuestions({ today: day(1), sessions: store.sessions, activities, answers: [...cleared, answer('run_pain', 'r0', { score: 0 })] });
-    expect(asked.map((q) => q.question)).toEqual(['morning_pain', 'run_rpe']);
+    // Le 14/11 est un samedi : la semaine qui vient porte le tempo du 19, Cairn demande ses jours chargés, en dernier.
+    expect(asked.map((q) => q.question)).toEqual(['morning_pain', 'run_rpe', 'week_load']);
     expect(asked[0]!.why).toMatch(/lendemain/);
   });
 

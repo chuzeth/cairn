@@ -25,3 +25,6 @@ export * from './presentation.js';
 export * from './compensation.js';
 export * from './reprise.js';
 export * from './questions.js';
+export * from './spikes.js';
+export * from './criteria.js';
+export * from './brief.js';

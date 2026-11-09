@@ -10,12 +10,13 @@ import * as db from '@cairn/db';
 import {
   ACWR_SPIKE, EASY_SPEED_WINDOW_DAYS, EASY_TERRAINS, ECCENTRIC_MOVEMENTS, MOUNTAIN_M_PER_KM, VERTICAL_CURVE_DURATIONS,
   describeZone, easySpeedOf, formatClock, formatDuration, formatPace, goalProbability, hrProvenanceOf, interpretAcwr,
-  interpretDurability, isEasyZone, isRunFree, msToKmh, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
+  interpretDurability, isEasyZone, isRunFree, msToKmh, runDurationOf, predictLapRace, predictRace, quantile, speedProvenanceOf, steadyRunLoad,
   summarizeForCoach,
   targetRaceDayTsb, verticalCapacity,
   type LoadRatioExceedance,
 } from '@cairn/physiology';
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
+import { buildCoachingBrief } from './brief.js';
 import { describeDirectives } from './directives.js';
 import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
@@ -410,6 +411,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       ['session_id', 'rationale'],
     ),
+  },
+  {
+    name: 'get_coaching_brief',
+    description:
+      "Le fil de la préparation, recalculé à chaque appel : l'objectif et ses critères (tenus, ouverts, manqués, avec la donnée " +
+      "qui les fonde), la séance du jour et la règle qui l'a écrite, les questions qui attendent Pierre, les décisions des règles " +
+      "des dix derniers jours, ce qu'il a répondu, et ce que Cairn ne sait pas. À appeler en premier dans toute conversation de " +
+      "coaching, et à nouveau dès qu'elle s'allonge : il fait foi sur tout ce qui a été dit plus haut.",
+    input_schema: obj({}),
   },
   {
     name: 'get_check_ins',
@@ -1569,6 +1579,10 @@ export async function executeTool(
         decision,
         rationale: reasoning,
       };
+      // Une séance de la reprise ne monte que par sa règle : la conversation peut
+      // l'alléger, la décaler, la retirer ; elle ne la fait pas monter.
+      const raised = repriseRaise(target, decided);
+      if (raised) throw new Error(raised);
       // Le titre suit le contenu : un type changé, ou des blocs remplacés. Une séance
       // passée ne repasse pas par la présentation des séances à venir — sans cela,
       // elle gardait le titre de ce qui avait été prévu (le 13/10, le 17/10).
@@ -1689,6 +1703,14 @@ export async function executeTool(
           historique: presented.history ?? [],
         },
       };
+    }
+
+    case 'get_coaching_brief': {
+      const state = await loadAthleteState(athleteId);
+      const sessions = await db.listPlannedSessions(athleteId, daysAgo(21), iso(new Date(Date.now() + 21 * dayMs)));
+      const last = (await db.listCheckIns(athleteId, daysAgo(120))).map((c) => c.date).sort().at(-1);
+      const text = buildCoachingBrief(state, sessions, { lastCheckInDate: last });
+      return { summary: text.split('\n').slice(0, 3).join(' '), content: text };
     }
 
     case 'get_check_ins': {
@@ -2268,4 +2290,35 @@ function predictLapRaceTool(
       })),
     },
   };
+}
+
+
+/**
+ * Ce qu'une modification fait monter dans une séance de la reprise, s'il y a
+ * quelque chose : la phrase du refus.
+ *
+ * Un modèle de langage va dans le sens de qui lui parle, et une consigne de ne
+ * pas le faire s'use au fil de l'échange — c'est la limite la mieux documentée
+ * de ces modèles (« tu as raison, on remet la séance »). La marche d'une course
+ * de reprise se décide sur la douleur, la durée tenue et l'accord du médecin
+ * (`reprise.ts`) ; une conversation n'en fait pas partie. Elle peut alléger,
+ * décaler, retirer, marquer faite : rien de ce qui protège ne s'y perd. Ce qui
+ * la ferait monter — plus de course, une zone plus haute, une course là où la
+ * règle a mis l'escalier ou la marche — passe par les réponses, que la règle
+ * relit.
+ */
+export function repriseRaise(before: PlannedSession, after: PlannedSession): string | null {
+  const p = before.program;
+  if (p?.name !== 'reprise' || p.kind === 'race' || after.status !== 'planned') return null;
+  const zoneOf = (s: PlannedSession) =>
+    Math.max(0, ...s.blocks.filter((b) => !b.kind && !b.circuit).map((b) => Number(String(b.zone ?? 'Z1').slice(1)) || 1));
+  const runs = (s: PlannedSession) => (isRunFree(s.type) ? 0 : runDurationOf(s));
+  const why =
+    `Cette séance est une marche de la reprise (${p.level === 0 ? 'sans course' : `marche ${p.level} sur ${p.planned}`}) : ` +
+    `la règle reprise_progression l'écrit d'après la course d'avant — douleur, durée tenue, cœur — et l'accord du médecin. ` +
+    `Ce qui la fera monter, ce sont ces réponses, pas la conversation. L'alléger, la décaler ou la retirer reste possible. ` +
+    `Rien n'a été modifié.`;
+  if (runs(after) > runs(before) * 1.02 + 30) return `Plus de course que la marche n'en permet (${Math.round(runs(after) / 60)} min au lieu de ${Math.round(runs(before) / 60)}). ${why}`;
+  if (runs(after) > 0 && zoneOf(after) > zoneOf(before)) return `Une intensité au-dessus de la marche (Z${zoneOf(after)} au lieu de Z${zoneOf(before)}). ${why}`;
+  return null;
 }

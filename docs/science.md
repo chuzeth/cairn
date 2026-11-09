@@ -106,6 +106,47 @@ augmente nettement. **Monotonie et contrainte de Foster** en complément : un
 entraînement trop uniforme est un facteur de risque documenté indépendamment du
 volume.
 
+### Écart assumé : le pic de séance avant le ratio
+
+Le ratio est contesté : diviser la charge aiguë par des valeurs arbitraires
+reproduit ses associations (Impellizzeri et al., *Sports Med* 2021), et chez
+5 205 coureurs suivis au GPS ni lui ni la variation hebdomadaire ne prédisent la
+blessure (Frandsen et al., *BJSM* 2025). Ce qui la prédit, dans cette cohorte,
+c'est la sortie qui dépasse la plus longue des trente jours précédents : ×1,64
+entre +10 et +30 %, ×1,52 jusqu'au double, ×2,28 au-delà. Le ratio reste, comme
+alerte ; la règle `single_session_spike` ramène une sortie à +10 % de cette
+référence, hors course, test et reprise, et dès trois sorties dans la fenêtre.
+L'étude est observationnelle et ses blessures déclarées : un pic choisi — une
+course — se chiffre et se dit (`criteria.ts`), il ne s'interdit pas.
+
+## Ce que les données ne disent pas
+
+Le cœur d'un jour varie de cinq à dix battements avec la chaleur, la caféine,
+la déshydratation, une nuit courte ou une journée de stress ; le prendre seul
+pour juge retient une progression sur un jour chaud. Cairn demande la cause d'un
+écart (`deviation_cause`) : une cause qui passe ne compte pas, une fatigue qui
+dure, si, et deux écarts de suite comptent quoi qu'il en soit.
+
+La douleur se lit à son comportement (modèle de surveillance de la douleur,
+Silbernagel et al., *AJSM* 2007 : jusqu'à 5/10 pendant l'effort, sans
+aggravation le lendemain). Une douleur qui monte en courant, qui reste au repos
+ou la nuit, ou qui revient à l'os deux fois en quinze jours, est le motif d'une
+fracture de fatigue : la course s'arrête jusqu'à l'accord d'un médecin.
+
+## Ce qu'un modèle de langage ne doit pas porter
+
+Trois limites documentées, et ce qui y répond :
+
+- **Le fil se perd.** Les performances baissent avec la longueur du contexte,
+  bien avant sa limite (Liu et al., *TACL* 2024 ; Chroma, 2025). La préparation
+  vit en base, et `get_coaching_brief` la relit à chaque appel.
+- **Il va dans le sens de qui lui parle.** Sous contradiction, les modèles
+  abandonnent une réponse juste dans une part importante des cas (SycEval,
+  2025), et la consigne contraire s'use. Les décisions de charge sont des
+  règles ; `modify_session` refuse de faire monter une séance de la reprise.
+- **Il varie d'une génération à l'autre**, surtout sur l'intensité prescrite
+  (Lee, 2026, 120 générations). Rien de ce qui se prescrit ne passe par lui.
+
 ## Durabilité
 
 Troisième dimension de la performance d'endurance, après la VO2max et l'économie

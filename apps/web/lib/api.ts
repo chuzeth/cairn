@@ -367,17 +367,38 @@ export interface LoadRatioAlertRow {
 /** Une question que Cairn pose, quand une décision en dépend (`questions.ts`). */
 export interface AskedQuestion {
   id: string;
-  question: 'clearance' | 'run_pain' | 'morning_pain' | 'run_rpe';
+  question: 'clearance' | 'run_pain' | 'morning_pain' | 'run_rpe' | 'deviation_cause' | 'pain_pattern' | 'week_load';
   subject: string;
   prompt: string;
   why: string;
-  choices: { label: string; value: { choice?: 'yes' | 'not_yet' | 'no'; score?: number } }[];
+  choices: { label: string; value: { choice?: 'yes' | 'not_yet' | 'no'; score?: number; cause?: string; pattern?: string } }[];
   asksSite: boolean;
+  /** Des jours à cocher, plusieurs à la fois (`week_load`). */
+  days?: { label: string; day: string }[];
+}
+
+export interface RaceCriterion {
+  key: 'clearance' | 'ladder' | 'long' | 'pain' | 'spike';
+  label: string;
+  status: 'met' | 'open' | 'failed' | 'info';
+  evidence: string;
+}
+
+export interface RaceCriteria {
+  raceId: string;
+  raceDate: string;
+  raceTitle: string;
+  gateDate: string;
+  decided: boolean;
+  fallbackTitle: string;
+  criteria: RaceCriterion[];
 }
 
 export interface StateResponse {
   /** Absentes d'une réponse gardée avant le 09/11. */
   questions?: AskedQuestion[];
+  /** Les critères du dossard de la reprise ; absents hors reprise, et des réponses d'avant le 09/11. */
+  criteria?: RaceCriteria | null;
   athlete: {
     id: string; name: string; constraints: Record<string, unknown>;
     /** L'ambition n'a pas de date : elle oriente, elle ne se coche pas. */

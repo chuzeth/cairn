@@ -1540,17 +1540,48 @@ export interface AthleteAnswer {
   answeredAt: string;
 }
 
-export type AnswerQuestion = 'clearance' | 'run_pain' | 'morning_pain' | 'run_rpe';
+export type AnswerQuestion =
+  | 'clearance' | 'run_pain' | 'morning_pain' | 'run_rpe' | 'deviation_cause' | 'pain_pattern' | 'week_load';
 
 /**
  * `clearance` : `yes` / `not_yet` / `no`. `run_pain`, `morning_pain` : 0 à 10 et
- * l'endroit. `run_rpe` : 1 à 10.
+ * l'endroit. `run_rpe` : 1 à 10. `deviation_cause` : ce qui explique une course
+ * qui n'a pas ressemblé à ce qui était prévu. `pain_pattern` : comment une
+ * douleur s'est comportée. `week_load` : les jours chargés de la semaine qui
+ * vient, vide si aucun.
  */
 export interface AnswerValue {
   choice?: 'yes' | 'not_yet' | 'no';
   score?: number;
   site?: PainSite;
+  cause?: DeviationCause;
+  pattern?: PainPattern;
+  /** Jours chargés, YYYY-MM-DD. */
+  days?: string[];
 }
+
+/**
+ * Pourquoi une course n'a pas ressemblé à ce qui était prévu — cœur haut,
+ * effort dur, course écourtée.
+ *
+ * Une allure qui n'est pas tenue, un cœur qui monte, ne disent pas pourquoi :
+ * la chaleur, une nuit courte, une journée de travail, un rhume en font autant
+ * qu'une fatigue qui s'installe. Les premières passent, la dernière s'aggrave
+ * si on n'en tient pas compte. C'est la question qu'un entraîneur pose, et la
+ * réponse change la décision (`reprise.ts`).
+ */
+export type DeviationCause =
+  | 'heat' | 'sleep' | 'stress' | 'terrain' | 'time' | 'illness' | 'fatigue' | 'pain' | 'unknown';
+
+/**
+ * Comment une douleur s'est comportée pendant la course.
+ *
+ * Une douleur de tendon qui s'estompe à l'échauffement se gère en courant
+ * (modèle de surveillance de la douleur, Silbernagel 2007). Une douleur qui
+ * monte à mesure qu'on court, ou qui reste au repos et la nuit, est le motif
+ * d'une fracture de fatigue : on arrête, et c'est un médecin qui dit la suite.
+ */
+export type PainPattern = 'eases' | 'steady' | 'worsens' | 'at_rest';
 
 export type PainSite = 'tibia' | 'achille' | 'pied' | 'genou' | 'hanche' | 'mollet' | 'autre';
 

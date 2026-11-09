@@ -28,6 +28,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { WatchLine } from '@/components/Watch';
 import { ChargeLine, Figures, SessionFlow, sessionFigures } from '@/components/Today';
 import { Questions } from '@/components/Questions';
+import { Criteria } from '@/components/Criteria';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -185,6 +186,9 @@ export function Morning({
       <div className="m-rule" />
 
       <Availability state={state} onReload={onReload} />
+
+      {/* Ce qui doit être vrai pour courir le dossard, avec ses preuves. */}
+      {state.criteria && <Criteria criteria={state.criteria} />}
 
       {state.pendingNotes.map((n) => (
         <section className="m-note" key={n.date}>

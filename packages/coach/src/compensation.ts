@@ -1624,7 +1624,9 @@ export function repriseRace(model: PhysiologyModel, fallback = false): SessionTe
             'Jusqu\'au km 11 (Chaponost) : deux crans sous ce que tu crois tenir, le cœur sous 160. Au ravitaillement, ' +
             'bois et mange (30 g de glucides). Puis la descente vers Lyon : petits pas, regard loin, frontale réglée bas ; ' +
             'sur les passages raides et glissants, tu marches — le coude d\'abord. Les 5 derniers km, sur les quais, tu ' +
-            'donnes ce qu\'il reste.',
+            'donnes ce qu\'il reste. Si une douleur apparaît : sous 3 et stable, tu continues en l\'écoutant ; si elle ' +
+            'monte en courant ou passe 4, tu marches — avant Chaponost, tu t\'arrêtes au ravitaillement du km 11 ; après, ' +
+            'tu rentres en marchant ou tu le dis à un signaleur. Une course de reprise ne vaut pas une saison.',
         }),
       },
     ]), plannedDistanceM: 24800 };

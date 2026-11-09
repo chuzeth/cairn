@@ -4,7 +4,8 @@ import type {
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { decimal, directivesFor, localDate, sessionDuration, writtenOn } from '@cairn/core';
-import { ACWR_SPIKE, isRunFree } from '@cairn/physiology';
+import { ACWR_SPIKE, SPIKE_BANDS, SPIKE_WINDOW_DAYS, isRunFree } from '@cairn/physiology';
+import { SPIKE_MIN_RUNS, describeSpike, doneRunsWithin, planSpikes } from './spikes.js';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
 import { addDays, mondayOf } from './periodization.js';
@@ -186,6 +187,11 @@ export function withdrawalsFor(
 }
 
 const dayMonth = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+
+/** Les jours que Pierre a dits chargés, semaine par semaine (`week_load`). */
+function chargedDays(answers: readonly { question: string; value: { days?: string[] } }[]): Set<string> {
+  return new Set(answers.filter((a) => a.question === 'week_load').flatMap((a) => a.value.days ?? []));
+}
 
 /** Le pire des cinq crans du point du jour : fatigue « vidé », courbatures « sévères ». */
 const WORST = 5;
@@ -631,16 +637,20 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   if (next) {
     const p = next.program!;
-    const blocked = clearance != null && clearance.value.choice !== 'yes';
+    // Un arrêt médical l'emporte sur tout : ni course, ni escalier — l'os ne se charge pas avant l'avis.
+    const blocked = !verdict.medical && clearance != null && clearance.value.choice !== 'yes';
     const level = blocked ? 0 : Math.min(p.planned, verdict.level);
-    if (level !== p.level) {
-      const kind = level === 0 ? 'cross' : level === p.planned ? p.plannedKind : level <= 1 ? 'run_walk' : 'easy';
-      const t = level === 0
-        ? repriseSubstitute(state.model, blocked ? 'clearance' : 'pain')
-        : repriseRun(state.model, level, kind);
+    const kind = level === 0 ? 'cross' : level === p.planned ? p.plannedKind : level <= 1 ? 'run_walk' : 'easy';
+    const t = level === 0
+      ? repriseSubstitute(state.model, blocked ? 'clearance' : 'pain')
+      : repriseRun(state.model, level, kind);
+    // Sans course, le substitut suit sa cause : l'escalier faute d'accord, la marche sur une douleur.
+    if (level !== p.level || (level === 0 && next.title !== t.title)) {
       const why = blocked
         ? `Course remplacée par l'escalier : ton médecin n'a pas encore dit oui (${clearance!.value.choice === 'no' ? 'non' : 'pas encore'}).`
-        : level === p.planned
+        : verdict.medical
+          ? `Course remplacée par la marche à plat : ${verdict.reason}. Montre-lui la douleur ; Cairn te demandera sa réponse.`
+          : level === p.planned
           ? `Course rendue à sa marche ${level} : ${verdict.reason}.`
           : level === 0
             ? `Course remplacée par la marche : ${verdict.reason}.`
@@ -853,6 +863,31 @@ export function evaluateAdjustments(
   // des cibles au bas de leur fourchette.
   if (readiness?.rule === 'readiness_amber') push(readiness);
 
+  // ── Règle 4 bis : séance dure un jour chargé ──────────────────────────────
+  // Pierre a dit, la veille de la semaine, quels jours seraient chargés —
+  // travail, déplacement, nuit courte. Le stress de la vie pèse plus que tout
+  // autre facteur sur ce qu'une séance rapporte : la séance garde sa forme et se
+  // court progressive, partie du bas de sa fourchette, comme un jour de
+  // vigilance. Elle n'est pas décalée : le jour d'après est peut-être chargé
+  // aussi, et la semaine de reprise n'a pas de jour vide où la loger.
+  const charged = chargedDays(state.answers ?? []);
+  for (const s of future) {
+    if (!charged.has(s.date) || !isQualitySession(s, state.model) || isMaximalTest(s, state.model)) continue;
+    const soft = softenedQuality(s.blocks);
+    if (!soft.lowered && !soft.lastOptional && !soft.shortened) continue;
+    push({
+      sessionId: s.id,
+      date: s.date,
+      action: 'soften',
+      rule: 'charged_day',
+      reason:
+        `Tu as annoncé une journée chargée le ${dayMonth(s.date)} : « ${formatOf(s.title)} » se court progressive — ` +
+        `pars du bas de la fourchette, monte seulement si les jambes répondent après l'échauffement` +
+        `${soft.lastOptional ? ', et la dernière répétition devient facultative' : ''}. Ce qu'on force un jour chargé ` +
+        `fatigue sans s'assimiler.`,
+    });
+  }
+
   // ── Règle 5 : progression de charge trop rapide ───────────────────────────
   if (state.today.rampRate > 8) {
     for (const s of future.filter((x) => daysUntil(x.date) <= 7 && x.priority === 'optional')) {
@@ -867,6 +902,35 @@ export function evaluateAdjustments(
           `Séances facultatives allégées le temps que ton corps suive${repsCut(s, 0.7)} : ta forme de fond monte de ` +
           `${decimal(state.today.rampRate)} points par semaine, au-dessus des 8 qu'on s'autorise — ` +
           `au-delà, c'est le tendon qui encaisse la progression.`,
+      });
+    }
+  }
+
+  // ── Règle 5 bis : pic d'une séance ────────────────────────────────────────
+  // Une sortie plus longue de 10 % que la plus longue des trente jours qui la
+  // précèdent (Frandsen et al., BJSM 2025) : c'est le signal de charge le mieux
+  // étayé chez le coureur, mieux que le ratio aigu:chronique. Elle est ramenée à
+  // +10 %. Pas une course — un pic choisi —, pas un test, pas une séance de la
+  // reprise, dont l'échelle part de zéro et se juge course après course ; et pas
+  // tant que les trente derniers jours n'ont pas trois sorties : sans elles, la
+  // plus longue ne dit pas ce que les tissus tolèrent.
+  if (doneRunsWithin(state.recentActivities ?? [], today, SPIKE_WINDOW_DAYS) >= SPIKE_MIN_RUNS) {
+    for (const v of planSpikes(state.model, upcoming, state.recentActivities ?? [], today)) {
+      if (v.cls === 'none' || v.cls === 'no_reference' || daysUntil(v.date) > 14) continue;
+      const s = byId.get(v.id);
+      if (!s || s.type === 'race' || s.program || isMaximalTest(s, state.model) || absenceCovering(absences, s.date)) continue;
+      const factor = Math.max(0.5, Math.floor((((1 + SPIKE_BANDS.small) * v.referenceM!) / v.distanceM) * 100) / 100);
+      if (factor >= 0.97) continue;
+      push({
+        sessionId: s.id,
+        date: s.date,
+        action: 'scale',
+        factor,
+        ...repetitionScaling(s, factor),
+        rule: 'single_session_spike',
+        reason:
+          `Séance ramenée à ${decimal(v.distanceM * factor / 1000, 1)} km au lieu de ${decimal(v.distanceM / 1000, 1)} : ` +
+          `${describeSpike(v)}. ${v.cls === 'large' ? 'Au-delà du double, le risque de blessure de surmenage fait plus que doubler' : 'Au-delà de +10 %, le risque de blessure de surmenage monte de moitié'} (BJSM 2025).`,
       });
     }
   }
