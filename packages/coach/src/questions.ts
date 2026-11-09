@@ -64,6 +64,9 @@ const dayName = (date: string, today: string) =>
 
 const isRepriseRun = (s: PlannedSession) =>
   s.program?.name === 'reprise' && s.program.kind !== 'cross' && s.program.kind !== 'race';
+/** Une course prévue par la reprise, même remplacée par le vélo faute d'accord : c'est elle que l'accord rendra. */
+const plannedAsRun = (s: PlannedSession) =>
+  s.program?.name === 'reprise' && s.program.plannedKind !== 'cross' && s.program.plannedKind !== 'race';
 
 /**
  * Les questions du jour, la plus utile d'abord : l'accord du médecin avant tout
@@ -82,7 +85,7 @@ export function pendingQuestions(input: {
   const runs = sessions.filter(isRepriseRun).sort((a, b) => a.date.localeCompare(b.date));
 
   // L'accord du médecin : à partir de trois jours avant la première course de la reprise, jusqu'à un oui.
-  const first = runs[0];
+  const first = sessions.filter(plannedAsRun).sort((a, b) => a.date.localeCompare(b.date))[0];
   const cleared = answers.some((a) => a.question === 'clearance' && a.value.choice === 'yes');
   if (first && !cleared && first.date <= shift(today, 3)) {
     const lastNo = answers.filter((a) => a.question === 'clearance').sort((a, b) => b.answeredAt.localeCompare(a.answeredAt))[0];

@@ -1370,8 +1370,8 @@ function jumps(stage: 1 | 2 | 3 | 4): SessionBlock[] {
 export function bridgeVelo(model: PhysiologyModel, week: BlockWeek, w: WeakSides, minutes: number): SessionTemplate {
   const d = BLOCK_DOSE[week];
   return template(model, `pont_velo_${week}`, 'cross_training', 'Vélo, hanches et tronc',
-    'Le cœur a perdu moins que tu ne crains, à condition de lui redonner du volume : une heure sans aucun choc, le ' +
-      'lendemain d\'une force. Puis le bassin, qui devra tenir dès les premières foulées.',
+    'Le cœur a perdu moins que tu ne crains, à condition de lui redonner du volume : une heure sans aucun choc, entre ' +
+      'deux jours qui en portent. Puis le bassin, qui devra tenir dès les premières foulées.',
     [
       {
         label: 'Échauffement', zone: 'Z1', durationS: 600, part: 'Vélo',

@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { markdown, nbsp, type AskedQuestion } from '@/lib/api';
 import { sendOrQueue } from '@/lib/offline';
 
@@ -37,6 +37,12 @@ export function Questions({ questions, onReload }: { questions: AskedQuestion[];
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
+  // L'écran relu après une réponse apporte ses questions : elles remplacent la liste, le réajustement dit reste.
+  const ids = questions.map((x) => x.id).join('|');
+  useEffect(() => {
+    if (!sending) setList(questions);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids]);
   const q = list[0];
   if (!q && !summary) return null;
 

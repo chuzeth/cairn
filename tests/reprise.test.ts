@@ -154,6 +154,11 @@ describe('La reprise, du 13 au 29/11', () => {
     await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(0), answers), store.sessions.map((s) => ({ ...s }))), 'readiness');
     const first = store.sessions.find((s) => s.id === 'r0')!;
     expect([first.type, first.program!.level, first.program!.kind]).toEqual(['cross_training', 0, 'cross']);
+    // Remplacée par le vélo, la course reste celle que l'accord rendra : la question se repose le lendemain.
+    const early = [answer('clearance', 'reprise', { choice: 'not_yet' }, '2026-11-09T19:00:00Z')];
+    const asked = (today: string, said = early) => pendingQuestions({ today, sessions: store.sessions, activities: [], answers: said }).map((q) => q.question);
+    // Le 10/11, la prochaine course encore à courir est le 15 : sans la course remplacée, la question se tairait.
+    expect([asked('2026-11-10'), asked('2026-11-09')]).toEqual([['clearance'], []]);
     // Le oui arrivé, la course revient à sa marche.
     const yes = [answer('clearance', 'reprise', { choice: 'yes' }, '2026-11-13T08:00:00Z'), ...answers];
     await applyAdjustments('pierre', evaluateAdjustments(stateOn(day(0), yes), store.sessions.map((s) => ({ ...s }))), 'readiness');
