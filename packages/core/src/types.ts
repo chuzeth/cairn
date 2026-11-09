@@ -1497,7 +1497,62 @@ export interface PlannedSession {
   successCriteria?: SessionSuccessCriterion[];
   /** Directives du dossier qui ont façonné cette séance, avec leur origine. */
   directives?: AppliedDirective[];
+  /**
+   * Le programme qui a écrit la séance et la marche qu'elle y occupe. La reprise
+   * de la course (`reprise`) la lit pour décider de la suivante : monter d'une
+   * marche, rester, redescendre (`@cairn/coach`, `reprise.ts`).
+   */
+  program?: SessionProgram;
 }
+
+/**
+ * La place d'une séance dans un programme à paliers.
+ *
+ * `level` est la marche que la séance demande, `planned` celle que le programme
+ * lui avait fixée : une règle peut la faire redescendre, jamais au-dessus de ce
+ * qui était écrit. `kind` dit ce qu'elle est à cette marche.
+ */
+export interface SessionProgram {
+  name: 'reprise';
+  level: number;
+  planned: number;
+  kind: SessionProgramKind;
+  /** Ce que la séance était à sa marche prévue : ce qu'elle redevient quand la règle la rend. */
+  plannedKind: SessionProgramKind;
+}
+
+export type SessionProgramKind = 'run_walk' | 'easy' | 'tempo' | 'long' | 'race_pace' | 'race' | 'cross';
+
+/**
+ * Une réponse de l'athlète à une question que Cairn lui a posée.
+ *
+ * Les données disent beaucoup, pas tout : une douleur, un effort perçu sans
+ * montre, l'avis d'un médecin ne se mesurent pas. Cairn ne les demande que
+ * quand une décision en dépend (`questions.ts`), et la règle qui décide les lit
+ * ici. `subject` désigne ce sur quoi porte la réponse : une activité, un jour,
+ * ou rien (`clearance`).
+ */
+export interface AthleteAnswer {
+  athleteId: string;
+  question: AnswerQuestion;
+  subject: string;
+  value: AnswerValue;
+  answeredAt: string;
+}
+
+export type AnswerQuestion = 'clearance' | 'run_pain' | 'morning_pain' | 'run_rpe';
+
+/**
+ * `clearance` : `yes` / `not_yet` / `no`. `run_pain`, `morning_pain` : 0 à 10 et
+ * l'endroit. `run_rpe` : 1 à 10.
+ */
+export interface AnswerValue {
+  choice?: 'yes' | 'not_yet' | 'no';
+  score?: number;
+  site?: PainSite;
+}
+
+export type PainSite = 'tibia' | 'achille' | 'pied' | 'genou' | 'hanche' | 'mollet' | 'autre';
 
 export type TrainingPhase =
   | 'transition' | 'base' | 'build' | 'specific' | 'peak' | 'taper' | 'race' | 'recovery';

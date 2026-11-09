@@ -1,13 +1,13 @@
 import {
   HOME_STAIRS,
   type ExerciseKey, type PhysiologyModel, type PlanRevision, type PlannedSession, type SessionBlock, type SessionDecision,
-  type SessionType, type StrengthTestResult, type ZoneKey,
+  type SessionProgram, type SessionType, type StrengthTestResult, type ZoneKey,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { buildZones, hrProvenanceOf } from '@cairn/physiology';
 import { addDays, mondayOf } from './periodization.js';
 import { withHistory } from './presentation.js';
-import { sessionTitle, sessionTotals, type SessionTemplate } from './sessionLibrary.js';
+import { restDay, sessionTitle, sessionTotals, type SessionTemplate } from './sessionLibrary.js';
 import { currentModel } from './state.js';
 
 /**
@@ -1465,6 +1465,225 @@ export function bridgeDay(model: PhysiologyModel, index: number, w: WeakSides = 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// La reprise de la course : du 13 au 29 novembre, vers la SaintéSprint
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Le 09/11, Pierre veut un dossard le 28/11, la SaintéSprint (24,8 km de nuit,
+ * environ 450 m D+ et 620 m D−, de Soucieu à Lyon), et le courir pour de bon.
+ * La course reprend le 13/11 si le médecin, vu le 12, est d'accord.
+ *
+ * Six semaines sans courir, mais pas six semaines sans rien : la force a gagné
+ * 25 à 42 % au pont, le cœur a travaillé dans l'escalier et sur le vélo. Ce qui
+ * a perdu, c'est l'habitude du choc — le tendon d'Achille, le tibia, le pied —,
+ * et elle revient plus lentement que le cœur (Warden 2014). D'où une échelle :
+ * cinq marches de course, chacune ne s'ouvre que si la précédente s'est bien
+ * passée (`reprise.ts`) ; entre elles, la force et le vélo gardent ce qui a été
+ * gagné sans ajouter un seul choc.
+ *
+ * Les marches, celles que la course demande au corps :
+ *  1. course-marche, 6 × 4 min ;
+ *  2. 30 min de footing continu ;
+ *  3. 40 min, et des lignes droites ;
+ *  4. 45 min avec 3 × 6 min au tempo (ou 4 × 5 min à l'allure de course) ;
+ *  5. 1 h 15 vallonnée, la plus longue avant la course.
+ * Une marche que la règle refuse se court à sa place sur une marche plus basse,
+ * et toujours facile : on ne cherche pas l'intensité sur un tendon qui proteste.
+ */
+const REPRISE_DAYS = 17;
+
+/** Le plafond de l'endurance, en course : la zone 2. */
+const EASY_CEILING = (model: PhysiologyModel): [number, number] => {
+  const z2 = buildZones(model).find((z) => z.key === 'Z2')!;
+  return [0, Math.round(z2.hrMax)];
+};
+
+/** Des lignes droites : courtes, vites, relâchées — la foulée, pas le cœur. */
+const strides = (n: number): SessionBlock => ({
+  label: 'Lignes droites',
+  zone: 'Z4',
+  durationS: 20,
+  repeat: n,
+  effort: 'Vite et relâché, 90 % de ta vitesse, sans jamais forcer',
+  notes: 'Sur du plat et du sec. La marche du retour est la récupération.',
+  recovery: { durationS: 60, zone: 'Z1', active: true, betweenReps: true },
+});
+
+/** Ce que dit chaque course de la reprise, au même endroit. */
+const REPRISE_GROUND =
+  'À plat ou presque, sur du revêtu et du sec — quais, parc de la Tête d\'Or : une chute est le seul risque que ton coude ne peut pas prendre.';
+const REPRISE_PAIN =
+  'Une douleur au-dessus de 3 sur 10, ou qui change ta foulée : tu marches, et Cairn adapte la suite.';
+
+/** La séance d'une marche de la reprise, dans sa nature. */
+export function repriseRun(model: PhysiologyModel, level: number, kind: SessionProgram['kind']): SessionTemplate {
+  const ceiling = EASY_CEILING(model);
+  const easy = (minutes: number, extra: SessionBlock[] = [], label = 'Footing') => [
+    heart(model, 'Marche, puis trot', 'Z1', 4 * 60, { notes: REPRISE_GROUND }),
+    { ...heart(model, label, 'Z2', minutes * 60, { notes: `Petits pas, 170 à 180 par minute. ${REPRISE_PAIN}` }), hrRange: ceiling },
+    ...extra,
+    heart(model, 'Marche pour finir', 'Z1', 3 * 60),
+  ];
+  if (level <= 1) return runWalk(model, 6, 4, true);
+  if (kind === 'long' && level >= 5) {
+    return template(model, 'reprise_longue', 'long_run', 'Sortie longue vallonnée',
+      'La plus longue avant la course, et le critère du dossard : 1 h 15 sans douleur, ni pendant ni demain matin. ' +
+        'Des côtes et des descentes, mais revêtues et sèches : la descente se court en petits pas, le regard loin.',
+      [
+        heart(model, 'Marche, puis trot', 'Z1', 4 * 60, { notes: 'Vers Fourvière ou Sainte-Foy : du vallonné, revêtu, sec.' }),
+        {
+          ...heart(model, 'Sortie vallonnée', 'Z2', 75 * 60, {
+            elevationGainM: 250,
+            elevationLossM: 250,
+            notes:
+              'Montées au cœur, sans dépasser le haut de la zone 2 ; descentes en petits pas rapides, pieds sous le bassin. ' +
+              `Les 10 dernières minutes, si tout va bien, un peu plus vite. ${REPRISE_PAIN}`,
+          }),
+          hrRange: ceiling,
+        },
+        heart(model, 'Marche pour finir', 'Z1', 3 * 60),
+        ...armCare(false, true),
+      ]);
+  }
+  if ((kind === 'tempo' || kind === 'race_pace') && level >= 4) {
+    const race = kind === 'race_pace';
+    const z3 = buildZones(model).find((z) => z.key === 'Z3')!;
+    const range: [number, number] = race ? [Math.round(z3.hrMin) + 5, Math.round(z3.hrMin) + 13] : [Math.round(z3.hrMin), Math.round(z3.hrMin) + 10];
+    return template(model, race ? 'reprise_allure' : 'reprise_tempo', race ? 'race_pace' : 'tempo',
+      race ? 'L\'allure de la SaintéSprint' : 'Tempo de reprise',
+      race
+        ? 'L\'allure du 28/11, dans les jambes : 4 × 5 min au cœur que la course demandera, à plat. Ce n\'est pas une séance ' +
+            'pour gagner : c\'est la dernière pour régler.'
+        : 'Le premier effort soutenu depuis le 2 octobre : 3 × 6 min au tempo, à plat. Le moteur a été entretenu dans ' +
+            'l\'escalier ; il s\'agit de le reconnecter à la foulée.',
+      [
+        heart(model, 'Marche, puis trot', 'Z1', 4 * 60, { notes: REPRISE_GROUND }),
+        { ...heart(model, 'Footing', 'Z2', 15 * 60), hrRange: ceiling },
+        {
+          ...heart(model, race ? 'Allure de course' : 'Tempo', 'Z3', (race ? 5 : 6) * 60, {
+            notes: race
+              ? 'L\'allure à tenir de Soucieu à Chaponost : soutenue, la respiration posée.'
+              : 'Soutenu mais en contrôle : tu pourrais dire une phrase courte.',
+          }),
+          hrRange: range,
+          repeat: race ? 4 : 3,
+          recovery: { durationS: 120, zone: 'Z1', active: true, betweenReps: true },
+        },
+        ...(race ? [strides(4)] : []),
+        { ...heart(model, 'Footing', 'Z2', 8 * 60), hrRange: ceiling },
+        ...armCare(false, true),
+      ]);
+  }
+  const minutes = [0, 0, 30, 40, 45, 60][Math.min(5, level)]!;
+  return template(model, `reprise_footing_${level}`, 'endurance', 'Footing de reprise',
+    level === 2
+      ? 'Courir sans t\'arrêter : 30 min faciles, la première fois depuis le 2 octobre. Le cœur trouvera ça facile, ' +
+          'et c\'est voulu : c\'est le choc qu\'on réapprend, pas l\'effort.'
+      : `${minutes} min faciles : le tendon et l'os prennent la charge qu'ils supportaient avant l'arrêt, marche après marche.`,
+    [...easy(minutes, level >= 3 ? [strides(level >= 4 ? 4 : 6)] : []), ...armCare(false, true)]);
+}
+
+/** Le jour sans course que la règle substitue : le vélo, pour le cœur, sans aucun choc. */
+export function repriseVelo(model: PhysiologyModel, minutes: number, why?: string): SessionTemplate {
+  return template(model, `reprise_velo_${minutes}`, 'cross_training', 'Vélo d\'appartement',
+    why ?? 'Le cœur sans le choc : un jour de vélo entre deux courses.',
+    [
+      {
+        label: 'Échauffement', zone: 'Z1', durationS: 600, part: 'Vélo',
+        effort: 'De très facile à facile, cadence 85 à 90 tr/min',
+        notes: 'Assis, la main droite seule sur le guidon, le bras blessé contre toi. Jamais en danseuse.',
+      },
+      {
+        label: 'Endurance sur le vélo', zone: 'Z2', durationS: minutes * 60, hrRange: [134, 148], provenance: { hr: 'default' },
+        part: 'Vélo', notes: 'Tu parles en phrases : la zone 2 de course, moins les 5 à 10 battements que le vélo retire.',
+      },
+      { label: 'Retour au calme', zone: 'Z1', durationS: 300, part: 'Vélo', effort: 'Très facile, les jambes tournent seules' },
+      ...armCare(true, true),
+    ]);
+}
+
+/**
+ * La course du 28/11 : la SaintéSprint, ou, si la reprise ne l'a pas permise
+ * au 22/11, la Saintétic (13 km, de Chaponost à Lyon), le même soir.
+ */
+export function repriseRace(model: PhysiologyModel, fallback = false): SessionTemplate {
+  if (fallback) {
+    return { ...template(model, 'reprise_course_repli', 'race', 'Saintétic, 13 km',
+      'Le repli de la reprise : la SaintéSprint demandait une sortie longue de 1 h 15 sans douleur au 22/11, et la ' +
+        'reprise ne l\'a pas permise. 13 km de Chaponost à Lyon, courus vite mais sans risque. Change ton inscription ' +
+        'sur le site de la SaintéLyon (le transfert est payant).',
+      [
+        {
+          ...heart(model, 'Saintétic', 'Z3', 70 * 60, {
+            distanceM: 13000,
+            notes: 'Départ contenu sur 3 km, puis ton allure ; la fin sur les quais se court vite.',
+          }),
+        },
+      ]), plannedDistanceM: 13000 };
+  }
+  return { ...template(model, 'reprise_course', 'race', 'SaintéSprint, 24,8 km de nuit',
+    'De Soucieu-en-Jarrest à Lyon, environ 450 m D+ et 620 m D− : le dossard de la reprise, couru pour de bon, avec la ' +
+      'tête. Le temps qui compte se fait dans la seconde moitié, en descendant vers Lyon : ceux qui sont partis trop ' +
+      'vite y marchent.',
+    [
+      {
+        ...heart(model, 'SaintéSprint', 'Z3', 150 * 60, {
+          distanceM: 24800,
+          elevationGainM: 450,
+          elevationLossM: 620,
+          notes:
+            'Jusqu\'au km 11 (Chaponost) : deux crans sous ce que tu crois tenir, le cœur sous 160. Au ravitaillement, ' +
+            'bois et mange (30 g de glucides). Puis la descente vers Lyon : petits pas, regard loin, frontale réglée bas ; ' +
+            'sur les passages raides et glissants, tu marches — le coude d\'abord. Les 5 derniers km, sur les quais, tu ' +
+            'donnes ce qu\'il reste.',
+        }),
+      },
+    ]), plannedDistanceM: 24800 };
+}
+
+/** Une séance de la reprise, et la marche qu'elle y occupe. */
+export interface RepriseDay extends SessionTemplate {
+  program?: SessionProgram;
+}
+
+const onStep = (t: SessionTemplate, program: SessionProgram, priority: PlannedSession['priority'] = 'key'): RepriseDay =>
+  ({ ...t, priority, program });
+
+/**
+ * Le jour `index` de la reprise (0 = le vendredi 13/11). La course un jour sur
+ * deux, la force deux fois par semaine sur les jours sans course, le vélo entre
+ * deux ; la dernière force le mercredi 18, dix jours avant la course ; plus
+ * rien de dur après le mardi 24.
+ */
+export function repriseDay(model: PhysiologyModel, index: number, w: WeakSides = {}): RepriseDay {
+  const run = (level: number, kind: SessionProgram['kind'], priority: PlannedSession['priority'] = 'key') =>
+    onStep(repriseRun(model, level, kind), {
+      name: 'reprise', level, planned: level, kind: level <= 1 ? 'run_walk' : kind, plannedKind: level <= 1 ? 'run_walk' : kind,
+    }, priority);
+  const days: (() => RepriseDay)[] = [
+    () => run(1, 'run_walk'),
+    () => blockForceB(model, 3, w),
+    () => run(2, 'easy'),
+    () => bridgeVelo(model, 4, w, 45),
+    () => run(3, 'easy'),
+    () => blockForceA(model, 3, w),
+    () => run(4, 'tempo'),
+    () => repriseVelo(model, 40),
+    () => run(5, 'long'),
+    () => blockRecup(model, w, true, 3),
+    () => run(3, 'easy', 'support'),
+    () => run(4, 'race_pace'),
+    () => blockRecup(model, w, false, 3),
+    () => run(2, 'easy', 'support'),
+    () => restDay(),
+    () => onStep(repriseRace(model), { name: 'reprise', level: 6, planned: 6, kind: 'race', plannedKind: 'race' }),
+    () => restDay(),
+  ];
+  if (index < 0 || index >= REPRISE_DAYS) throw new Error('La reprise va du 13 au 29/11.');
+  return days[index]!();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Le programme posé dans le plan
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1494,7 +1713,7 @@ export async function layCompensation(
      * (`compensationHomeDay`), le bloc de force du 09/10 (`blockDay`), ou la
      * suite, vers la course (`bridgeDay`).
      */
-    program?: 'gym' | 'home' | 'block' | 'bridge';
+    program?: 'gym' | 'home' | 'block' | 'bridge' | 'reprise';
     /** Ce que la révision du plan en dit, quand ce n'est pas tout le programme. */
     summary?: string;
   },
@@ -1506,7 +1725,7 @@ export async function layCompensation(
   const to = addDays(opts.from, opts.days - 1);
   const existing = await db.listPlannedSessions(athleteId, opts.from, to);
   // Le bloc de force règle ses séries sur le côté faible des derniers tests.
-  const weak = opts.program === 'block' || opts.program === 'bridge' ? weakSides(await db.listStrengthTests(athleteId), opts.from) : {};
+  const weak = opts.program === 'block' || opts.program === 'bridge' || opts.program === 'reprise' ? weakSides(await db.listStrengthTests(athleteId), opts.from) : {};
   const changes: PlanRevision['changes'] = [];
   let updated = 0;
   let inserted = 0;
@@ -1521,13 +1740,17 @@ export async function layCompensation(
     if (program === 'home' && week !== 1) throw new Error('À la maison, seule la semaine 1 est écrite.');
     if (program === 'block' && index >= BLOCK_DAYS) throw new Error('Le bloc de force s\'arrête au 01/11.');
     if (program === 'bridge' && index >= BRIDGE_DAYS) throw new Error('La suite s\'arrête au 29/11.');
-    const t =
-      program === 'bridge' ? bridgeDay(model, index, weak)
+    if (program === 'reprise' && index >= REPRISE_DAYS) throw new Error('La reprise s\'arrête au 29/11.');
+    const t: RepriseDay =
+      program === 'reprise' ? repriseDay(model, index, weak)
+      : program === 'bridge' ? bridgeDay(model, index, weak)
       : program === 'block' ? blockDay(model, index, weak)
         : program === 'home' ? compensationHomeDay(model, index)
           : compensationDay(model, index);
     const why =
-      program === 'bridge'
+      program === 'reprise'
+        ? `${opts.reason} Reprise de la course, jour ${index + 1} sur ${REPRISE_DAYS}.`
+        : program === 'bridge'
         ? `${opts.reason} Vers la course, semaine ${Math.floor(index / 7) + 1} sur 4.`
         : program === 'block'
         ? `${opts.reason} Bloc de force, ${blockWeekOf(index) === 0 ? 'ouverture' : `semaine ${blockWeekOf(index)} sur 3`}.`
@@ -1549,8 +1772,9 @@ export async function layCompensation(
       plannedMechanicalLoad: t.plannedMechanicalLoad,
       plannedDurationS: t.durationS,
       plannedElevationGainM: t.elevationGainM,
-      plannedDistanceM: null,
+      plannedDistanceM: t.plannedDistanceM || null,
       priority: t.priority,
+      program: t.program ?? null,
       status: 'planned' as const,
       completedActivityId: null,
       plannedDate: null,
@@ -1596,7 +1820,9 @@ export async function layCompensation(
         plannedMechanicalLoad: t.plannedMechanicalLoad,
         plannedDurationS: t.durationS,
         plannedElevationGainM: t.elevationGainM,
+        ...(t.plannedDistanceM ? { plannedDistanceM: t.plannedDistanceM } : {}),
         priority: t.priority,
+        ...(t.program ? { program: t.program } : {}),
         status: 'planned',
         rationale: why,
         decision,

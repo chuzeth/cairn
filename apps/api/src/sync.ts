@@ -38,6 +38,9 @@ export function stravaClientFor(athleteId: string): StravaClient {
   });
 }
 
+/** Le jour où les règles ont tourné pour la dernière fois dans ce processus : la relève les fait tourner une fois par jour. */
+let dailyRulesDone: string | null = null;
+
 /** Les règles de charge sur le plan, de deux semaines en arrière à trois devant. */
 async function adjustPlan(
   athleteId: string,
@@ -274,7 +277,15 @@ export async function backfill(
       // se compte avec le modèle du jour avant que les règles ne la jugent.
       await recountDecisions(athleteId, new Date().toISOString().slice(0, 10));
       const matched = await rematchRecent(athleteId, model, new Date().toISOString().slice(0, 10));
-      if (matched.length > 0) await adjustPlan(athleteId, await loadAthleteState(athleteId));
+      // Et une fois par jour, même sans rien de neuf : une séance manquée, un
+      // matin qui change la marche de la prochaine course, la veille du critère
+      // du dossard — le plan se juge chaque jour, pas seulement quand Strava
+      // apporte une activité.
+      const day = new Date().toISOString().slice(0, 10);
+      if (matched.length > 0 || dailyRulesDone !== day) {
+        await adjustPlan(athleteId, await loadAthleteState(athleteId));
+        dailyRulesDone = day;
+      }
     }
 
     // Les séances de terrain à venir se posent sur les montées du jour, à chaque

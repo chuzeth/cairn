@@ -7,6 +7,7 @@ import {
   describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, isQualitySession, labGaps,
   loadAthleteState, loadRatioView, projectPlanRatios, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, routeBasis,
   routeUpcoming, summarizeWeek, type SessionState,
+  pendingQuestions, validAnswer,
 } from '@cairn/coach';
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
@@ -65,6 +66,13 @@ const scale = (v: unknown): number | undefined => {
 const REVISIONS_SHOWN = 6;
 
 /** Ce que les écrans lisent d'un plan : ni ses semaines, ni tout son journal. */
+/** Les questions du jour, sur les séances des trois dernières semaines et des dix prochains jours. */
+async function questionsFor(state: Awaited<ReturnType<typeof loadAthleteState>>) {
+  const today = state.today.date;
+  const sessions = await db.listPlannedSessions(state.profile.id, daysAgo(21), iso(new Date(Date.now() + 10 * dayMs)));
+  return pendingQuestions({ today, sessions, activities: state.recentActivities, answers: state.answers });
+}
+
 function planHead({ weeks: _weeks, revisionLog, ...head }: TrainingPlan) {
   return { ...head, revisionLog: revisionLog.slice(-REVISIONS_SHOWN) };
 }
@@ -373,6 +381,9 @@ export async function buildServer() {
         checkInPurpose: CHECK_IN_PURPOSE,
         // Ce que le planificateur lit du dossier, et l'extrait qui le fonde.
         directives: directivesFor(s.profile),
+        // Ce que Cairn a besoin de savoir et qu'aucune donnée ne lui dit : une
+        // douleur, l'accord du médecin, l'effort d'une course sans montre.
+        questions: await questionsFor(s),
       };
     } catch (e) {
       return reply.code(500).send({ error: e instanceof Error ? e.message : String(e) });
@@ -559,6 +570,44 @@ export async function buildServer() {
    * ceux du premier jour à côté de ceux du dernier.
    */
   app.get('/api/tests', async () => db.listStrengthTests(A));
+
+  // Les questions du jour, et leurs réponses (`questions.ts`). Une réponse peut
+  // changer la prochaine course : les règles se réévaluent aussitôt, comme
+  // après un point du jour.
+  app.get('/api/questions', async () => questionsFor(await loadAthleteState(A)));
+
+  app.post('/api/answers', async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const question = body.question;
+    if (question !== 'clearance' && question !== 'run_pain' && question !== 'morning_pain' && question !== 'run_rpe') {
+      return reply.code(400).send({ error: 'question : clearance, run_pain, morning_pain ou run_rpe.' });
+    }
+    const subject = typeof body.subject === 'string' ? body.subject.slice(0, 80) : '';
+    if (!subject) return reply.code(400).send({ error: 'subject attendu.' });
+    const raw = (body.value ?? {}) as { choice?: unknown; score?: unknown; site?: unknown };
+    const invalid = validAnswer(question, raw);
+    if (invalid) return reply.code(400).send({ error: invalid });
+    await db.saveAnswer({
+      athleteId: A,
+      question,
+      subject,
+      value: {
+        ...(raw.choice != null ? { choice: raw.choice as 'yes' | 'not_yet' | 'no' } : {}),
+        ...(raw.score != null ? { score: raw.score as number } : {}),
+        ...(raw.site != null ? { site: raw.site as never } : {}),
+      },
+      answeredAt: new Date().toISOString(),
+    });
+    const state = await loadAthleteState(A);
+    const upcoming = await db.listPlannedSessions(A, daysAgo(14), iso(new Date(Date.now() + 21 * dayMs)));
+    const adjustments = evaluateAdjustments(state, upcoming);
+    const applied = await applyAdjustments(A, adjustments, 'readiness');
+    return {
+      adjustments: applied,
+      adjustmentSummary: applied > 0 ? describeAdjustments(adjustments) : null,
+      questions: await questionsFor(applied > 0 ? await loadAthleteState(A) : state),
+    };
+  });
 
   app.post('/api/tests', async (req, reply) => {
     const body = (req.body ?? {}) as Record<string, unknown>;

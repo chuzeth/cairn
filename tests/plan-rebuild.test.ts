@@ -60,6 +60,7 @@ vi.mock('@cairn/db', () => ({
     sessionsOf().filter((s) => s.date >= from && s.date <= to),
   listAbsences: async () => store.absences,
   listActivities: async () => [],
+  listAnswers: async () => [],
   listCheckIns: async () => [],
   getDailyLoads: async () => [],
   listAnalysedActivityIds: async () => new Set(),

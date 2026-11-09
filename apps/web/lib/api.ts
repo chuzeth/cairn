@@ -364,7 +364,20 @@ export interface LoadRatioAlertRow {
   date: string; channel: 'metabolic' | 'mechanical'; value: number; limit: number; text: string;
 }
 
+/** Une question que Cairn pose, quand une décision en dépend (`questions.ts`). */
+export interface AskedQuestion {
+  id: string;
+  question: 'clearance' | 'run_pain' | 'morning_pain' | 'run_rpe';
+  subject: string;
+  prompt: string;
+  why: string;
+  choices: { label: string; value: { choice?: 'yes' | 'not_yet' | 'no'; score?: number } }[];
+  asksSite: boolean;
+}
+
 export interface StateResponse {
+  /** Absentes d'une réponse gardée avant le 09/11. */
+  questions?: AskedQuestion[];
   athlete: {
     id: string; name: string; constraints: Record<string, unknown>;
     /** L'ambition n'a pas de date : elle oriente, elle ne se coche pas. */

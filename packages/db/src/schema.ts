@@ -260,6 +260,11 @@ export const plannedSessions = sqliteTable(
      * `ensureSessionColumns`.
      */
     lightenings: text('lightenings', { mode: 'json' }),
+    /**
+     * SessionProgram — le programme à paliers qui a écrit la séance et sa marche
+     * (la reprise de la course). Ajoutée par `ensureSessionColumns`.
+     */
+    program: text('program', { mode: 'json' }),
     createdAt: text('created_at').notNull().default(now),
     updatedAt: text('updated_at').notNull().default(now),
   },
@@ -489,6 +494,25 @@ export const strengthTests = sqliteTable('strength_tests', {
   value: text('value', { mode: 'json' }).notNull(),
   updatedAt: text('updated_at').notNull(),
 });
+
+/**
+ * Les réponses de l'athlète aux questions de Cairn (`AthleteAnswer`) : une par
+ * question et par sujet — la dernière remplace la précédente. Créée au
+ * démarrage par `ensureAnswerTables`, le service ne passant pas `db:push`.
+ */
+export const athleteAnswers = sqliteTable(
+  'athlete_answers',
+  {
+    /** `athleteId:question:subject`. */
+    id: text('id').primaryKey(),
+    athleteId: text('athlete_id').notNull(),
+    question: text('question').notNull(),
+    subject: text('subject').notNull(),
+    value: text('value', { mode: 'json' }).notNull(),
+    answeredAt: text('answered_at').notNull(),
+  },
+  (t) => ({ byAthlete: index('athlete_answers_athlete_idx').on(t.athleteId, t.answeredAt) }),
+);
 
 export type AthleteRow = typeof athletes.$inferSelect;
 export type ActivityRow = typeof activities.$inferSelect;

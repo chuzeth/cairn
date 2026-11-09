@@ -23,3 +23,5 @@ export * from './agent.js';
 export * from './insights.js';
 export * from './presentation.js';
 export * from './compensation.js';
+export * from './reprise.js';
+export * from './questions.js';

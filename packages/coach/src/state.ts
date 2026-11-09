@@ -1,5 +1,5 @@
 import type {
-  Activity, ActivityAnalysis, AthleteProfile, DailyCheckIn, DeclaredAbsence, PhysiologyModel,
+  Activity, ActivityAnalysis, AthleteAnswer, AthleteProfile, DailyCheckIn, DeclaredAbsence, PhysiologyModel,
   PlannedSession, PmcSeries, RaceGoal, ReadinessScore, SessionCompliance, TrainingPlan, TrainingWeek,
 } from '@cairn/core';
 import * as db from '@cairn/db';
@@ -87,6 +87,12 @@ export interface AthleteState {
   absences: DeclaredAbsence[];
   upcomingRaces: RaceGoal[];
   recentActivities: Activity[];
+  /**
+   * Les réponses de l'athlète aux questions de Cairn des trente derniers jours
+   * — douleur, effort perçu, accord du médecin —, la plus récente d'abord. La
+   * reprise de la course s'en décide (`reprise.ts`).
+   */
+  answers: AthleteAnswer[];
   /** Courbe vitesse-durée corrigée de la pente, enveloppe 90 jours. */
   speedCurve: MmpCurve;
   /** FC moyenne de l'effort qui a produit chaque point de `speedCurve`. */
@@ -487,6 +493,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const absences = await db.listAbsences(athleteId, { from: daysAgo(60) });
   const upcomingRaces = await db.listRaceGoals(athleteId, today);
   const recentActivities = await db.listActivities(athleteId, { from: daysAgo(45), limit: 60 });
+  const answers = await db.listAnswers(athleteId, `${daysAgo(30)}T00:00:00.000Z`);
 
   // La disponibilité se calcule après le plan et les absences, et pas avant :
   // ce qu'il faut faire d'un score dépend de ce que la journée tient, et le
@@ -552,6 +559,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     absences,
     upcomingRaces,
     recentActivities,
+    answers,
     speedCurve,
     speedCurveHr: envelope.companion,
     vamCurve,

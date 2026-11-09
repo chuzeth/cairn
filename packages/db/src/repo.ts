@@ -1,4 +1,5 @@
 import type {
+  AthleteAnswer,
   Activity, ActivityAnalysis, ActivityStreams, AthleteHome, AthleteProfile, ChatMessage,
   CoachInsight, DailyCheckIn, DeclaredAbsence, LabTest, PhysiologyModel, PlannedSession,
   RaceGoal, SessionRoute, StrengthTestResult, TrainingPlan, TrainingWeek,
@@ -749,6 +750,7 @@ function sessionRow(
     directives: s.directives ?? null,
     history: s.history?.length ? s.history : null,
     lightenings: s.lightenings?.length ? s.lightenings : null,
+    program: s.program ?? null,
   };
 }
 
@@ -836,6 +838,7 @@ function rowToSession(row: typeof t.plannedSessions.$inferSelect): PlannedSessio
     directives: (row.directives as PlannedSession['directives']) ?? undefined,
     history: (row.history as PlannedSession['history']) ?? undefined,
     lightenings: (row.lightenings as PlannedSession['lightenings']) ?? undefined,
+    program: (row.program as PlannedSession['program']) ?? undefined,
   };
 }
 
@@ -1260,6 +1263,52 @@ export async function putSessionRoute(sessionId: string, route: SessionRoute): P
 export async function purgeSessionRoutes(): Promise<void> {
   await ensureRouteTables();
   await getDb().run(sql`delete from session_routes where session_id not in (select id from planned_sessions)`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Réponses aux questions
+// ─────────────────────────────────────────────────────────────────────────────
+
+let answersReady: Promise<unknown> | null = null;
+
+/** Crée la table des réponses si elle manque — le service ne passe pas `db:push`. */
+export function ensureAnswerTables(): Promise<unknown> {
+  answersReady ??= (async () => {
+    for (const statement of createStatements(t.athleteAnswers)) await getDb().run(sql.raw(statement));
+  })().catch((e) => {
+    answersReady = null;
+    throw e;
+  });
+  return answersReady;
+}
+
+/** Enregistre une réponse : elle remplace la précédente à la même question sur le même sujet. */
+export async function saveAnswer(answer: AthleteAnswer): Promise<AthleteAnswer> {
+  await ensureAnswerTables();
+  const id = `${answer.athleteId}:${answer.question}:${answer.subject}`;
+  const row = { id, ...answer };
+  await getDb()
+    .insert(t.athleteAnswers)
+    .values(row)
+    .onConflictDoUpdate({ target: t.athleteAnswers.id, set: { value: answer.value, answeredAt: answer.answeredAt } });
+  return answer;
+}
+
+/** Les réponses de l'athlète depuis `since` (ISO), la plus récente d'abord. */
+export async function listAnswers(athleteId: string, since: string): Promise<AthleteAnswer[]> {
+  await ensureAnswerTables();
+  const rows = await getDb()
+    .select()
+    .from(t.athleteAnswers)
+    .where(and(eq(t.athleteAnswers.athleteId, athleteId), gte(t.athleteAnswers.answeredAt, since)))
+    .orderBy(desc(t.athleteAnswers.answeredAt));
+  return rows.map((r) => ({
+    athleteId: r.athleteId,
+    question: r.question as AthleteAnswer['question'],
+    subject: r.subject,
+    value: r.value as AthleteAnswer['value'],
+    answeredAt: r.answeredAt,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

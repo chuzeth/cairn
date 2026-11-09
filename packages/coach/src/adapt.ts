@@ -16,6 +16,8 @@ import {
   softenedQuality, totalDuration, transformSession, withoutEccentricStrength,
 } from './sessionLibrary.js';
 import { currentModel, type AthleteState } from './state.js';
+import { repriseRace, repriseRun, repriseVelo, type RepriseDay } from './compensation.js';
+import { allowedLevel, raceGate, runSignals } from './reprise.js';
 
 /**
  * Ajustement automatique du plan.
@@ -48,7 +50,9 @@ export interface Adjustment {
    */
   action:
     | 'scale' | 'move' | 'swap' | 'mark_missed' | 'withdraw' | 'drop_strength' | 'recover' | 'free'
-    | 'soften' | 'ease' | 'defer';
+    | 'soften' | 'ease' | 'defer' | 'rewrite';
+  /** Sur `rewrite` : le contenu que la séance prend, et sa marche dans la reprise. */
+  content?: RepriseDay;
   /** Sur `defer` : le footing que la séance décalée remplace à `newDate`, retiré. */
   displaces?: string;
   /** Sur `ease` : la semaine fermée qui a arrêté le report — affûtage ou semaine de course. */
@@ -596,6 +600,80 @@ function easyContent(model: PhysiologyModel, durationS: number) {
   };
 }
 
+/** Le jour du critère du dossard : six jours avant la course. */
+const GATE_DAYS = 6;
+
+/**
+ * La reprise de la course (`reprise.ts`) : la prochaine course prend la marche
+ * que les courses passées permettent, jamais au-dessus de celle que le programme
+ * lui avait donnée ; sans l'accord du médecin, elle se fait à vélo. Et à six
+ * jours de la course, le dossard se décide sur le critère de la sortie longue.
+ * Une seule course est jugée à la fois : la suivante l'est sur ce que celle-ci
+ * aura donné.
+ */
+function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Adjustment[] {
+  const today = state.today.date;
+  const reprise = sessions.filter((s) => s.program?.name === 'reprise');
+  if (reprise.length === 0) return [];
+  const z2 = state.zones.find((z) => z.key === 'Z2');
+  const ceiling = Math.round(z2?.hrMax ?? 155);
+  const runs = runSignals(reprise, state.recentActivities, state.answers, today);
+  const verdict = allowedLevel(runs, state.answers, ceiling);
+  const clearance = state.answers
+    .filter((a) => a.question === 'clearance')
+    .sort((a, b) => b.answeredAt.localeCompare(a.answeredAt))[0];
+  const standing = (s: PlannedSession) => (s.status === 'planned' || s.status === 'moved') && s.date >= today;
+  const out: Adjustment[] = [];
+
+  const next = reprise
+    .filter((s) => standing(s) && s.program!.plannedKind !== 'race' && s.program!.plannedKind !== 'cross')
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (next) {
+    const p = next.program!;
+    const blocked = clearance != null && clearance.value.choice !== 'yes';
+    const level = blocked ? 0 : Math.min(p.planned, verdict.level);
+    if (level !== p.level) {
+      const kind = level === 0 ? 'cross' : level === p.planned ? p.plannedKind : level <= 1 ? 'run_walk' : 'easy';
+      const t = level === 0
+        ? repriseVelo(state.model, 40, blocked
+          ? 'Ton médecin n\'a pas encore donné son accord : la course attend, le cœur travaille sans le choc.'
+          : 'Pas de course tant que la douleur ne retombe pas : le cœur travaille sans le choc.')
+        : repriseRun(state.model, level, kind);
+      const why = blocked
+        ? `Course remplacée par le vélo : ton médecin n'a pas encore dit oui (${clearance!.value.choice === 'no' ? 'non' : 'pas encore'}).`
+        : level === p.planned
+          ? `Course rendue à sa marche ${level} : ${verdict.reason}.`
+          : level === 0
+            ? `Course remplacée par le vélo : ${verdict.reason}.`
+            : `Course ramenée à la marche ${level} au lieu de ${p.planned} : ${verdict.reason}.`;
+      out.push({
+        sessionId: next.id, date: next.date, action: 'rewrite', rule: 'reprise_progression', reason: why,
+        content: { ...t, priority: next.priority, program: { ...p, level, kind } },
+      });
+    }
+  }
+
+  const race = reprise.find((s) => s.program!.plannedKind === 'race' && standing(s));
+  if (race) {
+    const daysLeft = Math.round((midnight(race.date) - midnight(today)) / dayMs);
+    if (daysLeft <= GATE_DAYS) {
+      const gate = raceGate(runs, state.answers, ceiling);
+      const fallback = !gate.met;
+      if (fallback !== (race.program!.level < race.program!.planned)) {
+        const t = repriseRace(state.model, fallback);
+        out.push({
+          sessionId: race.id, date: race.date, action: 'rewrite', rule: 'reprise_race_gate',
+          reason: fallback
+            ? `Le dossard passe à la Saintétic : ${gate.reason}. La SaintéSprint demandait 1 h 15 sans douleur.`
+            : `La SaintéSprint est confirmée : ${gate.reason}.`,
+          content: { ...t, priority: 'key', program: { ...race.program!, level: fallback ? race.program!.planned - 1 : race.program!.planned } },
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function evaluateAdjustments(
   state: AthleteState,
   upcoming: PlannedSession[],
@@ -628,6 +706,11 @@ export function evaluateAdjustments(
   for (const absence of absences) {
     for (const adj of withdrawalsFor(absence, upcoming)) push(adj);
   }
+
+  // ── Règle R : la reprise de la course, une marche à la fois ─────────────────
+  // Avant toute règle de charge : c'est elle qui dit si la prochaine course a
+  // lieu, et à quelle marche. Les autres jugent ensuite ce qu'elle a écrit.
+  for (const adj of repriseAdjustments(state, upcoming)) push(adj);
 
   // ── Règle 1 : séances passées jamais réalisées ────────────────────────────
   for (const s of upcoming) {
@@ -1176,6 +1259,41 @@ export async function applyAdjustments(
       case 'swap':
         await db.updateSession(adj.sessionId, { ...told(session, adj.reason), decision: decided(adj.reason) });
         break;
+
+      case 'rewrite': {
+        // La reprise réécrit la séance à sa nouvelle marche : son contenu entier,
+        // présenté comme toute séance, et sa marche avec lui.
+        if (!adj.content) break;
+        model ??= await currentModel(athleteId);
+        const t = adj.content;
+        const presented = presentDecided(
+          {
+            ...session, type: t.type, title: t.title, intent: t.intent, blocks: t.blocks, priority: t.priority,
+            plannedLoad: t.plannedLoad, plannedMechanicalLoad: t.plannedMechanicalLoad, plannedDurationS: t.durationS,
+            plannedElevationGainM: t.elevationGainM, directives: undefined, successCriteria: undefined,
+            decision: decided(adj.reason), rationale: adj.reason,
+          },
+          { model },
+        );
+        await db.updateSession(adj.sessionId, {
+          type: t.type,
+          priority: t.priority,
+          plannedDurationS: totalDuration(presented.blocks) || t.durationS,
+          plannedElevationGainM: elevationGainOf(presented.blocks),
+          plannedDistanceM: t.plannedDistanceM || null,
+          ...measuredOf(presented),
+          title: presented.title,
+          intent: presented.intent,
+          blocks: presented.blocks,
+          rationale: presented.rationale,
+          history: presented.history ?? null,
+          decision: presented.decision,
+          directives: null,
+          successCriteria: null,
+          program: t.program ?? null,
+        } as never);
+        break;
+      }
     }
   }
 
@@ -1205,7 +1323,9 @@ export async function applyAdjustments(
                       ? 'libérée'
                       : a.action === 'soften' || a.action === 'ease' || a.action === 'defer'
                         ? readinessChange(a)
-                        : a.action,
+                        : a.action === 'rewrite' && a.content
+                          ? `réécrite : ${a.content.title}`
+                          : a.action,
         reason: a.reason,
       })),
     });

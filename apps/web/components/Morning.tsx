@@ -27,6 +27,7 @@ import { HomeForm, Itinerary } from '@/components/Itinerary';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { WatchLine } from '@/components/Watch';
 import { ChargeLine, Figures, SessionFlow, sessionFigures } from '@/components/Today';
+import { Questions } from '@/components/Questions';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -120,6 +121,11 @@ export function Morning({
       <Waiting />
 
       <Headline session={session} absence={absence} done={doneToday} early={early} />
+
+      {/* Ce que Cairn a besoin de savoir avant de décider la suite : une question à la fois. */}
+      {state.questions && state.questions.length > 0 && (
+        <Questions key={state.questions.map((q) => q.id).join('|')} questions={state.questions} onReload={onReload} />
+      )}
 
       {/* Un pic de charge que le plan produit aujourd'hui se lit avant la séance qui le produit. */}
       {work && (
