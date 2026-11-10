@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import {
-  GRACE_MS, assertionJSON, fromB64u, lockedAtOpen, lockedAtReturn, requestOf, toB64u,
-} from '../apps/web/lib/lock';
+import { assertionJSON, fromB64u, lockedAtOpen, requestOf, toB64u } from '../apps/web/lib/lock';
 
 /**
- * Face ID à chaque ouverture de l'app (Pierre, le 02/10) : ce que l'app décide
- * à l'ouverture et au retour, et ce qu'elle échange avec la porte.
+ * Face ID une fois par appareil (Pierre, le 10/11) : ce que l'app décide quand
+ * la porte a répondu — ou n'a pas répondu —, et ce qu'elle échange avec elle.
+ *
+ * Le 02/10, c'était Face ID à chaque ouverture. Le téléphone sert quand le Mac
+ * dort : la porte ne répondait pas, l'app demandait Face ID au téléphone seul,
+ * par la feuille d'iOS qui nomme l'adresse du Mac — et le redemandait à chaque
+ * changement d'écran, chaque écran se rechargeant faute de réseau.
  */
 
 describe('Quand l’app se verrouille', () => {
@@ -14,23 +17,19 @@ describe('Quand l’app se verrouille', () => {
     expect(lockedAtOpen(false, { session: false })).toBe(false);
   });
 
-  it('se verrouille à chaque ouverture, réseau ou pas', () => {
-    // Hors réseau, la porte ne répond pas : Face ID se vérifie sur le téléphone.
-    expect(lockedAtOpen(true, null)).toBe(true);
-    expect(lockedAtOpen(true, { session: false })).toBe(true);
-    expect(lockedAtOpen(true, { session: true, verifiedAgoS: 3600, seenAgoS: 90 })).toBe(true);
+  it('ne demande rien quand le Mac dort : la porte muette ne verrouille pas', () => {
+    expect(lockedAtOpen(true, null)).toBe(false);
   });
 
-  it('ne redemande pas Face ID qui vient d’avoir lieu, ni après une minute ailleurs', () => {
-    // La page de connexion vient de l'obtenir et renvoie vers l'app.
+  it('ne redemande pas Face ID à une session ouverte, quel que soit son âge', () => {
     expect(lockedAtOpen(true, { session: true, verifiedAgoS: 4, seenAgoS: 4 })).toBe(false);
-    // iOS a refermé l'app il y a trente secondes, on la rouvre.
-    expect(lockedAtOpen(true, { session: true, verifiedAgoS: 3600, seenAgoS: 30 })).toBe(false);
+    // Le lendemain matin, puis trois semaines plus tard.
+    expect(lockedAtOpen(true, { session: true, verifiedAgoS: 14 * 3600, seenAgoS: 14 * 3600 })).toBe(false);
+    expect(lockedAtOpen(true, { session: true, verifiedAgoS: 21 * 86_400, seenAgoS: 21 * 86_400 })).toBe(false);
   });
 
-  it('se verrouille au retour après une minute ailleurs, pas avant', () => {
-    expect(lockedAtReturn(GRACE_MS - 1000)).toBe(false);
-    expect(lockedAtReturn(GRACE_MS)).toBe(true);
+  it('demande Face ID quand la porte dit qu’il n’y a plus de session, et seulement là', () => {
+    expect(lockedAtOpen(true, { session: false })).toBe(true);
   });
 });
 

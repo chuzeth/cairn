@@ -93,6 +93,9 @@ const WATCH_EVERY_MS = 5 * 60_000;
  * et remet la porte à sa place, plutôt que l'inverse.
  */
 const WATCH_FIRST_AFTER_MS = 90_000;
+/** Le pas auquel la surveillance relit l'heure, et l'écart qui dit que le Mac dormait. */
+const WAKE_CHECK_MS = 15_000;
+const WAKE_GAP_MS = 60_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -232,6 +235,20 @@ function watch() {
   tick();
   // Sans `unref`, l'intervalle retiendrait le processus après l'arrêt des serveurs.
   setInterval(tick, WATCH_EVERY_MS).unref();
+  // Le réveil : un minuteur ne compte pas le temps de la veille, et le passage
+  // suivant pouvait attendre cinq minutes après l'ouverture du capot — cinq
+  // minutes où le téléphone, prévenu que le Mac a du neuf, ne le joignait pas.
+  // L'heure est relue toutes les quinze secondes : un saut dit que le Mac
+  // dormait, et le chemin du téléphone est vérifié aussitôt.
+  let seenAt = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    if (now - seenAt > WAKE_GAP_MS) {
+      log('veille', 'réveil : le chemin du téléphone est revérifié');
+      tick();
+    }
+    seenAt = now;
+  }, WAKE_CHECK_MS).unref();
 }
 
 /**
@@ -943,19 +960,23 @@ function authCounts() {
   try {
     const db = new DatabaseSync(AUTH_DB, { readOnly: true });
     const keys = db.prepare('SELECT COUNT(*) AS n FROM passkeys').get().n;
-    // Une session sert tant qu'une requête est passée dans les deux dernières
-    // minutes (`apps/gate/src/store.ts`) : l'app refermée n'en a plus, et la
-    // rouvrir redemande Face ID. Une base d'avant n'a pas encore la colonne.
-    const idle = db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'seen_at')
-      ? ' AND seen_at > ' + (Date.now() - 2 * 60_000)
-      : '';
+    // Une session vit tant que l'appareil sert : quatre-vingt-dix jours sans une
+    // requête la referment (`apps/gate/src/store.ts`). Le dernier passage d'un
+    // appareil dit ce qu'aucune autre ligne ne dit — si le téléphone a joint le
+    // Mac, et quand. Une base d'avant n'a pas encore la colonne.
+    const dated = db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'seen_at');
+    const idle = dated ? ' AND seen_at > ' + (Date.now() - 90 * 24 * 3600_000) : '';
     const sessions = db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?${idle}`).get(Date.now()).n;
+    const last = dated
+      ? db.prepare(`SELECT MAX(seen_at) AS t FROM sessions WHERE expires_at > ?${idle}`).get(Date.now()).t
+      : null;
     db.close();
     const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
-    return keys === 0
-      ? 'aucune clé d\'accès : npm run service -- passkey'
-      : `${plural(keys, 'clé')} d'accès, ${plural(sessions, 'session')} active${sessions > 1 ? 's' : ''} ` +
-        '(Face ID à chaque ouverture)';
+    if (keys === 0) return 'aucune clé d\'accès : npm run service -- passkey';
+    const seen = last ? `, dernier passage ${new Date(last).toLocaleString('sv-SE')}` : '';
+    return sessions === 0
+      ? `${plural(keys, 'clé')} d'accès, aucun appareil connecté (Face ID à la prochaine ouverture, une fois)`
+      : `${plural(keys, 'clé')} d'accès, ${plural(sessions, 'appareil')} connecté${sessions > 1 ? 's' : ''}${seen}`;
   } catch (e) {
     return `base illisible (${e.message})`;
   }

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ACTIVITIES_DAYS, activitiesUrl, frDate, getStamped, num, type ActivityRow } from '@/lib/api';
-import { Badge, Card, ErrorBox, Loading, Stale, ThreeZoneBar } from '@/components/ui';
+import { Badge, Card, ErrorBox, Loading, SyncLine, ThreeZoneBar } from '@/components/ui';
 import { ActivityCard } from '@/components/ActivityCard';
 
 const RANGES = [
@@ -57,7 +57,7 @@ export default function ActivitiesPage() {
 
   return (
     <>
-      {recordedAt && <Stale recordedAt={recordedAt} />}
+      <SyncLine recordedAt={recordedAt} />
       {/* Une fenêtre jamais lue en ligne n'est pas en réserve : la liste reste
           celle qu'on a, et le dit, plutôt que de s'effacer derrière une erreur. */}
       {error && shownDays !== days && (

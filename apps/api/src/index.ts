@@ -2,8 +2,12 @@ import { buildServer } from './server.js';
 import { env, missingConfig } from './env.js';
 import { startGarminLoop, stopGarminLoop } from './garmin.js';
 import { startActivityPoller, stopActivityPoller } from './poller.js';
+import { notifyDevices } from './push.js';
 import { backfill } from './sync.js';
 import { closeDb, ensureGarminTables } from '@cairn/db';
+
+/** Ce que la notification attend après une relève : le temps que le chemin du téléphone soit rouvert. */
+const NOTIFY_AFTER_MS = 20_000;
 
 async function main() {
   await ensureGarminTables();
@@ -25,10 +29,21 @@ async function main() {
 
   // La relève tourne tant que l'API tourne : c'est elle qui fait entrer les
   // séances, faute de webhook. Son état est lisible sur /health.
+  // Après chaque relève — le Mac vient de se réveiller, une sortie est arrivée,
+  // les règles ont réécrit une séance —, le téléphone est prévenu s'il y a du
+  // neuf, et se synchronise sans qu'on l'ouvre (`push.ts`). Un court délai :
+  // au réveil, Tailscale met quelques secondes à rouvrir le chemin du téléphone.
   const poller = await startActivityPoller({
     athleteId: env.athleteId,
     intervalMs: env.pollIntervalMs,
-    run: backfill,
+    run: async (athleteId, opts) => {
+      const progress = await backfill(athleteId, opts);
+      setTimeout(() => {
+        void notifyDevices(athleteId, { log: (line) => app.log.info(line) })
+          .catch((e) => app.log.warn(`Notification impossible : ${e instanceof Error ? e.message : String(e)}`));
+      }, NOTIFY_AFTER_MS).unref();
+      return progress;
+    },
     log: (level, message) => app.log[level](message),
   });
   const status = poller.status();

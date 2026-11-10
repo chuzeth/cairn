@@ -28,17 +28,56 @@ class FakeCache {
 }
 
 let caches: Map<string, FakeCache>;
-let network: (url: string) => Response | Promise<Response>;
+let network: (url: string, init?: { method?: string; body?: string }) => Response | Promise<Response>;
 let handlers: Record<string, (event: unknown) => void>;
+/** Ce que le worker dit aux écrans ouverts. */
+let told: Record<string, unknown>[];
+/** Les notifications montrées, et les fenêtres ouvertes. */
+let shown: { title: string; options: { body?: string; tag?: string; data?: { url?: string } } }[];
+let opened: string[];
+let windows: { focus: () => Promise<void>; postMessage: (m: Record<string, unknown>) => void }[];
+/** La file d'écritures du téléphone (`lib/offline.ts`), telle qu'IndexedDB la garde. */
+let outbox: { id: number; path: string; body: unknown; queuedAt: string }[];
+
+/** IndexedDB, réduit à ce que la file en demande : tout lire, retirer une écriture. */
+function fakeIndexedDB() {
+  const request = <T>(result: () => T) => {
+    const req: { result?: T; onsuccess?: () => void; onerror?: () => void; onupgradeneeded?: () => void } = {};
+    queueMicrotask(() => { req.result = result(); req.onsuccess?.(); });
+    return req;
+  };
+  const store = {
+    getAll: () => request(() => outbox.map((x) => ({ ...x }))),
+    delete: (id: number) => request(() => { outbox = outbox.filter((x) => x.id !== id); }),
+  };
+  const database = {
+    objectStoreNames: { contains: () => true },
+    transaction: () => ({ objectStore: () => store }),
+    close: () => {},
+  };
+  return { open: () => request(() => database) };
+}
 
 beforeEach(() => {
   caches = new Map();
   handlers = {};
+  told = [];
+  shown = [];
+  opened = [];
+  outbox = [];
+  windows = [{ focus: async () => {}, postMessage: (m) => { told.push(m); } }];
   network = () => { throw new TypeError('Load failed'); };
   const self = {
     location: { origin: ORIGIN },
     addEventListener: (type: string, fn: (event: unknown) => void) => { handlers[type] = fn; },
-    clients: { claim: async () => {} },
+    clients: {
+      claim: async () => {},
+      matchAll: async () => windows,
+      openWindow: async (url: string) => { opened.push(url); },
+    },
+    registration: {
+      showNotification: async (title: string, options: (typeof shown)[number]['options']) => { shown.push({ title, options }); },
+    },
     skipWaiting: async () => {},
   };
   const cacheStorage = {
@@ -46,8 +85,11 @@ beforeEach(() => {
     keys: async () => [...caches.keys()],
     delete: async (name: string) => caches.delete(name),
   };
-  const fetch = async (input: string | { url: string }) => network(new URL(typeof input === 'string' ? input : input.url, ORIGIN).pathname);
-  new Function('self', 'caches', 'fetch', SOURCE)(self, cacheStorage, fetch);
+  const fetch = async (input: string | { url: string }, init?: { method?: string; body?: string }) => {
+    const url = new URL(typeof input === 'string' ? input : input.url, ORIGIN);
+    return network(init?.method === 'POST' || url.search.includes('weeks') || url.search.includes('days') ? url.pathname + url.search : url.pathname, init);
+  };
+  new Function('self', 'caches', 'fetch', 'indexedDB', SOURCE)(self, cacheStorage, fetch, fakeIndexedDB());
 });
 
 /** Une requête du navigateur, et ce qu'en fait le worker, tâches de fond comprises. */
@@ -149,7 +191,7 @@ describe('Hors ligne, toute l’app sur sa dernière lecture', () => {
     await browse('/api/activities/strava-1', 'cors');
     network = () => { throw new TypeError('Load failed'); };
     expect(await (await browse('/plan')).text()).toBe('page /plan');
-    expect(await (await browse('/api/plan?weeks=8', 'cors')).text()).toBe('{"lu":"/api/plan"}');
+    expect(await (await browse('/api/plan?weeks=8', 'cors')).text()).toBe('{"lu":"/api/plan?weeks=8"}');
     expect(await (await browse('/activities/strava-1')).text()).toBe('page /activities/strava-1');
     expect(await (await browse('/api/activities/strava-1', 'cors')).text()).toBe('{"lu":"/api/activities/strava-1"}');
   });
@@ -245,5 +287,159 @@ describe('Le mannequin des schémas 3D', () => {
     expect(caches.get('cairn-figures')).toBe(figures);
     expect(await figures.match('/figures/mannequin-00000000.glb')).toBeUndefined();
     expect(await figures.match(MODEL_URL)).toBeDefined();
+  });
+});
+
+describe('Le Mac dort : rien n’attend', () => {
+  const json = (body: string) => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  const silent = () => new Promise<Response>(() => {});
+
+  it('sert la dernière lecture en une seconde, puis tout de suite tant que le Mac se tait', async () => {
+    // Le 10/11 : le téléphone sert quand le Mac dort. Chaque lecture attendait
+    // quatre secondes un réseau muet, chaque changement d'écran huit.
+    network = () => json('{"athlete":"pierre"}');
+    await browse('/api/state', 'cors');
+    await browse('/api/tests', 'cors');
+    vi.useFakeTimers();
+    try {
+      network = silent;
+      let first: Response | undefined;
+      void respond('/api/state', 'cors').then((r) => { first = r; });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(first, 'servie au bout d’une seconde et demie').toBeDefined();
+      expect(first!.headers.get('x-cairn-recorded-at')).toBeTruthy();
+      // Une seconde sans réponse a suffi : le Mac se tait, les lectures suivantes ne l'attendent plus.
+      let second: Response | undefined;
+      void respond('/api/tests', 'cors').then((r) => { second = r; });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(second, 'servie sans attendre').toBeDefined();
+      // Ni un changement d'écran : le navigateur rouvre la page gardée aussitôt.
+      let screen: Response | undefined;
+      void respond('/plan?_rsc=1a2b', 'cors').then((r) => { screen = r; });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(screen?.type).toBe('error');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dit aux écrans que le Mac a répondu après coup avec du neuf, et seulement s’il y a du neuf', async () => {
+    network = () => json('{"seance":"footing"}');
+    await browse('/api/plan?weeks=9', 'cors');
+    vi.useFakeTimers();
+    try {
+      // Le Mac répond en trois secondes, avec un plan réécrit : la réserve a servi entre-temps.
+      network = () => new Promise((resolve) => setTimeout(() => resolve(json('{"seance":"seuil"}')), 3000));
+      let served: Response | undefined;
+      const background: Promise<unknown>[] = [];
+      handlers.fetch!({
+        request: { url: `${ORIGIN}/api/plan?weeks=9`, method: 'GET', mode: 'cors' },
+        respondWith: (p: Promise<Response>) => { void p.then((r) => { served = r; }); },
+        waitUntil: (p: Promise<unknown>) => { background.push(p); },
+      });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(await served!.text()).toBe('{"seance":"footing"}');
+      await vi.advanceTimersByTimeAsync(2000);
+      await Promise.all(background);
+      expect(told).toContainEqual({ type: 'frais', path: '/api/plan?weeks=9' });
+      expect(await (await data().match('/api/plan?weeks=9'))!.text()).toBe('{"seance":"seuil"}');
+      // La même réponse, en retard : rien à redire.
+      told = [];
+      const again: Promise<unknown>[] = [];
+      handlers.fetch!({
+        request: { url: `${ORIGIN}/api/plan?weeks=9`, method: 'GET', mode: 'cors' },
+        respondWith: () => {}, waitUntil: (p: Promise<unknown>) => { again.push(p); },
+      });
+      await vi.advanceTimersByTimeAsync(3500);
+      await Promise.all(again);
+      expect(told.filter((m) => m.type === 'frais')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Une notification synchronise le téléphone sans qu’on l’ouvre', () => {
+  const json = (body: string) => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+
+  /** Une notification reçue, app fermée : ce que le worker en fait, tâches comprises. */
+  async function push(payload: Record<string, unknown>) {
+    const pending: Promise<unknown>[] = [];
+    handlers.push!({ data: { json: () => payload }, waitUntil: (p: Promise<unknown>) => { pending.push(p); } });
+    await Promise.all(pending);
+  }
+
+  it('se montre, relit tout ce que les écrans lisent, et date la synchronisation', async () => {
+    // Le 10/11, Pierre : « j'ouvre mon ordinateur, il faut que l'application,
+    // même si je ne l'ouvre pas sur mon téléphone, puisse se synchroniser. »
+    windows = [];
+    network = (path) => json(`{"lu":"${path}","v":1}`);
+    await browse('/api/races', 'cors');
+    await browse('/api/activities/strava-1', 'cors');
+    const seen: string[] = [];
+    network = (path) => { seen.push(path); return json(`{"lu":"${path}","v":2}`); };
+    await push({ title: 'Aujourd\'hui : Seuil, 53 min', body: 'Le premier effort soutenu.', url: '/' });
+
+    expect(shown).toEqual([{ title: 'Aujourd\'hui : Seuil, 53 min', options: { body: 'Le premier effort soutenu.', tag: 'cairn', data: { url: '/' } } }]);
+    // Les lectures de l'écran du matin, du plan, des séances, des tests — et ce que le téléphone avait déjà lu.
+    for (const path of ['/api/state', '/api/plan?weeks=9', '/health', '/api/glossary', '/api/activities?days=90&limit=300', '/api/tests', '/api/races']) {
+      expect(seen, path).toContain(path);
+      expect(await (await data().match(path))!.text(), path).toBe(`{"lu":"${path}","v":2}`);
+    }
+    // Le détail d'une sortie ne change plus : il n'est pas relu.
+    expect(seen).not.toContain('/api/activities/strava-1');
+    const sync = await (await browse('/__synchro', 'cors')).json() as { full?: string };
+    expect(Date.now() - Date.parse(sync.full!)).toBeLessThan(5000);
+  });
+
+  it('envoie d’abord ce que le téléphone gardait, dans l’ordre, avant de relire', async () => {
+    windows = [];
+    outbox = [
+      { id: 1, path: '/api/answers', body: { question: 'run_pain', subject: 's11', value: { score: 0 } }, queuedAt: '2026-11-11T06:10:00Z' },
+      { id: 2, path: '/api/checkin', body: { date: '2026-11-11', fatigue: 2 }, queuedAt: '2026-11-11T06:11:00Z' },
+    ];
+    const calls: string[] = [];
+    network = (path, init) => { calls.push(`${init?.method ?? 'GET'} ${path}`); return json('{}'); };
+    await push({ title: 'Plan ajusté', body: '' });
+    expect(calls.slice(0, 2)).toEqual(['POST /api/answers', 'POST /api/checkin']);
+    expect(calls.indexOf('GET /api/state')).toBeGreaterThan(1);
+    expect(outbox).toEqual([]);
+  });
+
+  it('garde en file ce que le Mac n’a pas pris, et ne date rien si la lecture échoue', async () => {
+    windows = [];
+    outbox = [{ id: 1, path: '/api/answers', body: {}, queuedAt: '2026-11-11T06:10:00Z' }];
+    // La notification arrive quand le Mac s'est rendormi : elle se montre quand même.
+    network = () => { throw new TypeError('Load failed'); };
+    await push({ title: 'Cairn a une question', body: 'Une douleur ?' });
+    expect(shown).toHaveLength(1);
+    expect(outbox).toHaveLength(1);
+    expect(await (await browse('/__synchro', 'cors')).json()).toEqual({});
+    // Une écriture que le Mac refuse reste là : c'est l'écran qui le dira.
+    network = (path, init) => (init?.method === 'POST' ? new Response('{"error":"non"}', { status: 400 }) : json('{}'));
+    await push({ title: 'Cairn', body: '' });
+    expect(outbox).toHaveLength(1);
+  });
+
+  it('ouvre l’app quand on touche la notification, ou la ramène devant', async () => {
+    windows = [];
+    const pending: Promise<unknown>[] = [];
+    const notification = { close: vi.fn(), data: { url: '/' } };
+    handlers.notificationclick!({ notification, waitUntil: (p: Promise<unknown>) => { pending.push(p); } });
+    await Promise.all(pending);
+    expect(notification.close).toHaveBeenCalled();
+    expect(opened).toEqual([`${ORIGIN}/`]);
+    const focus = vi.fn(async () => {});
+    windows = [{ focus, postMessage: () => {} }];
+    handlers.notificationclick!({ notification, waitUntil: (p: Promise<unknown>) => { pending.push(p); } });
+    await Promise.all(pending);
+    expect(focus).toHaveBeenCalled();
+    expect(opened).toHaveLength(1);
+  });
+
+  it('relit les mêmes adresses que les écrans', async () => {
+    const { PLAN_URL, activitiesUrl } = await import('../apps/web/lib/api');
+    expect(SOURCE).toContain(`'${PLAN_URL}'`);
+    expect(SOURCE).toContain(`'${activitiesUrl()}'`);
   });
 });

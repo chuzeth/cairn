@@ -36,6 +36,14 @@ npm run service -- passkey            npm run service -- logout-all
 Internet n'atteint Cairn que par Tailscale Funnel, et Funnel que la porte
 (`apps/gate`, 3100) : session par clé d'accès exigée avant tout relais. Le site
 (3000) reste sans connexion pour le Mac seul ; rien ne doit jamais l'exposer.
+Face ID une fois par appareil : la session dure tant que l'appareil sert
+(90 jours sans requête la referment ; `logout-all` les ferme toutes).
+
+Le téléphone sert quand le Mac dort. Il s'ouvre sur ce qu'il a gardé
+(`apps/web/public/sw.js`), sans rien demander, et dit de quand ça date. Le Mac
+le prévient quand il a du neuf (Web Push, `apps/api/src/push.ts`) : la
+notification le fait synchroniser, app fermée. Une notification doit toujours
+se montrer — iOS retire l'abonnement de qui en reçoit en silence.
 
 Le téléphone ouvre le service installé, qui tourne sur un instantané vérifié.
 Commiter sur main, c'est déployer : un crochet git met le service à jour en

@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { LAB_TEST_DATE } from '@/lib/athlete';
 import { ThemeToggle } from './ThemeToggle';
+import { PushLine } from './Push';
 import { Version } from './Version';
 
 /**
@@ -78,6 +79,7 @@ export function Nav() {
             <div className="sheet-foot">
               Pierre Chuzeville · test d&apos;effort du {LAB_TEST_DATE}
               <Version />
+              <PushLine />
             </div>
           </div>
         </div>

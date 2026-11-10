@@ -326,7 +326,7 @@ describe('Enregistrement d\'une clé d\'accès', () => {
 // ── Invariant 4 : la session ────────────────────────────────────────────────
 
 describe('Avec une session', () => {
-  it('pose un cookie HttpOnly, Secure, SameSite=Strict, de douze heures', async () => {
+  it('pose un cookie HttpOnly, Secure, SameSite=Strict, de quatre-vingt-dix jours', async () => {
     const auth = new SoftAuthenticator();
     const res = await register(auth, store.issueCode(clock).code);
     const line = res.headers['set-cookie']!.find((c) => c.startsWith(`${SESSION_COOKIE}=`))!;
@@ -335,7 +335,7 @@ describe('Avec une session', () => {
     expect(line).toMatch(/; SameSite=Strict/);
     expect(line).toMatch(/; Path=\//);
     expect(line).not.toMatch(/Domain=/);
-    expect(line).toMatch(/; Max-Age=43200/);
+    expect(line).toMatch(/; Max-Age=7776000$/);
   });
 
   it('relaie tout vers le site, sans lui transmettre le jeton', async () => {
@@ -373,18 +373,34 @@ describe('Avec une session', () => {
     expect((await call('POST', '/connexion/verifier', { headers: { cookie: ceremony }, body: assertion })).status).toBe(400);
   });
 
-  it('redemande Face ID après deux minutes sans une requête : chaque ouverture de l’app', async () => {
-    // Le 02/10, Pierre veut Face ID à chaque ouverture. La session durait 90
-    // jours : Face ID une fois, au premier jour, puis plus jamais.
+  it('ne redemande pas Face ID à un appareil qui sert : une fois, au début', async () => {
+    // Le 10/11, Pierre : « Je dois mettre ma Face ID à chaque fois que je change
+    // de page. Il faut simplement le faire une fois au début. » La session se
+    // fermait après deux minutes sans requête.
     const { session } = await enrolled();
     const state = () => call('GET', '/api/state', { headers: { cookie: session } });
+    // Le lendemain matin, puis trois semaines plus tard : toujours ouverte.
+    clock += 14 * 3600_000;
+    expect((await state()).status).toBe(200);
+    clock += 21 * 24 * 3600_000;
+    expect((await state()).status).toBe(200);
+    // Chaque passage repousse l'échéance de quatre-vingt-dix jours.
     clock += SESSION_IDLE_MS - 1000;
     expect((await state()).status).toBe(200);
-    // Chaque requête repousse l'échéance : l'app ouverte ne se ferme pas sous les doigts.
-    clock += SESSION_IDLE_MS - 1000;
-    expect((await state()).status).toBe(200);
+    // Quatre-vingt-dix jours sans une requête : l'appareil ne sert plus, la session se referme.
     clock += SESSION_IDLE_MS + 1000;
     expect((await state()).status).toBe(401);
+  });
+
+  it('repose le cookie à chaque ouverture de l’app : sa durée repart, le jeton reste', async () => {
+    const { session } = await enrolled();
+    clock += 30 * 24 * 3600_000;
+    const etat = await call('GET', '/connexion/etat', { headers: { cookie: session } });
+    const line = etat.headers['set-cookie']!.find((c) => c.startsWith(`${SESSION_COOKIE}=`))!;
+    expect(line.split(';')[0]).toBe(session);
+    expect(line).toMatch(/; HttpOnly; Secure; SameSite=Strict; Max-Age=7776000$/);
+    // Sans session, rien n'est posé.
+    expect((await call('GET', '/connexion/etat')).headers['set-cookie']).toBeUndefined();
   });
 
   it('dit depuis quand Face ID a eu lieu, et depuis quand la session a servi', async () => {
@@ -393,21 +409,21 @@ describe('Avec une session', () => {
     const session = cookieFrom(await login(auth), SESSION_COOKIE);
     const etat = async () => JSON.parse((await call('GET', '/connexion/etat', { headers: { cookie: session } })).body);
     expect(await etat()).toEqual({ session: true, verifiedAgoS: 0, seenAgoS: 0 });
-    clock += 40_000;
-    // Lu avant que la requête ne la repousse : 40 s depuis la dernière.
-    expect(await etat()).toEqual({ session: true, verifiedAgoS: 40, seenAgoS: 40 });
+    clock += 70_000;
+    // Lu avant que la requête ne la repousse : 70 s depuis la dernière.
+    expect(await etat()).toEqual({ session: true, verifiedAgoS: 70, seenAgoS: 70 });
     clock += 10_000;
-    expect(await etat()).toEqual({ session: true, verifiedAgoS: 50, seenAgoS: 10 });
+    expect(await etat()).toEqual({ session: true, verifiedAgoS: 80, seenAgoS: 10 });
     clock += SESSION_IDLE_MS;
     expect(await etat()).toEqual({ session: false });
   });
 
-  it('expire au bout de douze heures, même servie sans arrêt', async () => {
+  it('expire au bout de quatre cents jours, même servie sans arrêt', async () => {
     const { session } = await enrolled();
     const state = () => call('GET', '/api/state', { headers: { cookie: session } });
     const start = clock;
-    while (clock + 60_000 < start + SESSION_TTL_MS) {
-      clock += 60_000;
+    while (clock + 24 * 3600_000 < start + SESSION_TTL_MS) {
+      clock += 24 * 3600_000;
       store.validSession(session.split('=')[1], clock);
     }
     expect((await state()).status).toBe(200);
@@ -415,11 +431,16 @@ describe('Avec une session', () => {
     expect((await state()).status).toBe(401);
   });
 
-  it('ne compte que les sessions qui servent encore', async () => {
-    await enrolled();
+  it('compte les appareils connectés, et dit le dernier passage', async () => {
+    expect(store.lastSeen(clock)).toBeNull();
+    const { session } = await enrolled();
     expect(store.sessionCount(clock)).toBe(1);
+    clock += 3 * 24 * 3600_000;
+    await call('GET', '/api/state', { headers: { cookie: session } });
+    expect(store.lastSeen(clock)).toBe(clock);
     clock += SESSION_IDLE_MS + 1000;
     expect(store.sessionCount(clock)).toBe(0);
+    expect(store.lastSeen(clock)).toBeNull();
   });
 
   it('tombe avec logout-all', async () => {

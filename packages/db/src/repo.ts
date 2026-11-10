@@ -1312,6 +1312,99 @@ export async function listAnswers(athleteId: string, since: string): Promise<Ath
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Notifications : les appareils abonnés, et les clefs du service
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Un appareil que Cairn sait prévenir. */
+export interface PushSubscriptionRecord {
+  endpoint: string;
+  athleteId: string;
+  p256dh: string;
+  auth: string;
+  device?: string | null;
+  createdAt: string;
+  lastSentAt?: string | null;
+  lastDigest?: string | null;
+  lastError?: string | null;
+}
+
+let pushReady: Promise<unknown> | null = null;
+
+/** Crée les tables des notifications si elles manquent — le service ne passe pas `db:push`. */
+export function ensurePushTables(): Promise<unknown> {
+  pushReady ??= (async () => {
+    for (const table of [t.pushSubscriptions, t.serviceSecrets]) {
+      for (const statement of createStatements(table)) await getDb().run(sql.raw(statement));
+    }
+  })().catch((e) => {
+    pushReady = null;
+    throw e;
+  });
+  return pushReady;
+}
+
+/** Enregistre un abonnement ; le même appareil qui se réabonne garde sa ligne, avec ses clefs du jour. */
+export async function savePushSubscription(sub: Pick<PushSubscriptionRecord, 'endpoint' | 'athleteId' | 'p256dh' | 'auth' | 'device' | 'createdAt'>): Promise<void> {
+  await ensurePushTables();
+  await getDb()
+    .insert(t.pushSubscriptions)
+    .values({ ...sub, device: sub.device ?? null })
+    .onConflictDoUpdate({
+      target: t.pushSubscriptions.endpoint,
+      set: { p256dh: sub.p256dh, auth: sub.auth, device: sub.device ?? null, lastError: null },
+    });
+}
+
+export async function listPushSubscriptions(athleteId: string): Promise<PushSubscriptionRecord[]> {
+  await ensurePushTables();
+  return getDb().select().from(t.pushSubscriptions).where(eq(t.pushSubscriptions.athleteId, athleteId));
+}
+
+export async function deletePushSubscription(endpoint: string): Promise<void> {
+  await ensurePushTables();
+  await getDb().delete(t.pushSubscriptions).where(eq(t.pushSubscriptions.endpoint, endpoint));
+}
+
+/** Ce qu'un envoi a donné : parti (son empreinte, son heure) ou refusé (pourquoi). */
+export async function markPushSent(
+  endpoint: string,
+  outcome: { at: string; digest: string } | { error: string },
+): Promise<void> {
+  await ensurePushTables();
+  await getDb()
+    .update(t.pushSubscriptions)
+    .set('error' in outcome ? { lastError: outcome.error } : { lastSentAt: outcome.at, lastDigest: outcome.digest, lastError: null })
+    .where(eq(t.pushSubscriptions.endpoint, endpoint));
+}
+
+/** Un secret du service ; `null` s'il n'a jamais été créé. */
+export async function getServiceSecret(key: string): Promise<string | null> {
+  await ensurePushTables();
+  const rows = await getDb().select().from(t.serviceSecrets).where(eq(t.serviceSecrets.key, key));
+  return rows[0]?.value ?? null;
+}
+
+/** Pose ou remplace une valeur que le service garde pour lui. */
+export async function setServiceSecret(key: string, value: string): Promise<void> {
+  await ensurePushTables();
+  await getDb()
+    .insert(t.serviceSecrets)
+    .values({ key, value, createdAt: new Date().toISOString() })
+    .onConflictDoUpdate({ target: t.serviceSecrets.key, set: { value } });
+}
+
+/** Pose un secret s'il n'existe pas, et rend celui qui est en place : deux processus n'en créent pas deux. */
+export async function ensureServiceSecret(key: string, create: () => string): Promise<string> {
+  const existing = await getServiceSecret(key);
+  if (existing != null) return existing;
+  await getDb()
+    .insert(t.serviceSecrets)
+    .values({ key, value: create(), createdAt: new Date().toISOString() })
+    .onConflictDoNothing();
+  return (await getServiceSecret(key))!;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests de force
 // ─────────────────────────────────────────────────────────────────────────────
 

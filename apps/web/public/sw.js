@@ -12,7 +12,16 @@
  * Funnel ne joignait plus. Toute l'app se garde désormais, et rien n'attend
  * plus de quelques secondes.
  *
- * Quatre règles, une seule idée derrière : ce qui sort du cache n'est pas une
+ * Le 10 novembre : le téléphone sert surtout quand le Mac dort, et depuis le
+ * 20 octobre il n'avait pas joint le Mac une seule fois. Chaque lecture
+ * attendait quatre secondes un réseau muet, chaque changement d'écran huit. Une
+ * lecture gardée sort désormais au bout d'une seconde, et tout de suite tant que
+ * le Mac se tait ; quand il répond après coup avec du neuf, l'écran est prévenu
+ * et se relit. Et le Mac prévient le téléphone quand il a du neuf (`push`) : la
+ * notification se montre, et le worker en profite pour envoyer ce que le
+ * téléphone gardait et tout relire — l'app fermée est à jour quand on l'ouvre.
+ *
+ * Six règles, une seule idée derrière : ce qui sort du cache n'est pas une
  * mesure d'aujourd'hui.
  *
  *   pages      chaque page vue en ligne est gardée ; `SHELL_ROUTES` le sont
@@ -22,17 +31,26 @@
  *              elle fait ranger ici les pages du nouveau commit avant de se
  *              recharger (`lib/version.ts`).
  *   lecture    la dernière réponse réussie est gardée, datée du moment où elle
- *              a été obtenue. Le réseau a `DATA_WAIT_MS` pour répondre ; au-delà,
+ *              a été obtenue. Le réseau a `FAST_WAIT_MS` pour répondre ; au-delà,
  *              ou en échec, la réponse gardée sert, avec sa date dans l'en-tête
  *              `x-cairn-recorded-at`, que l'écran affiche. Une réponse du
- *              réseau ne porte rien : elle est d'aujourd'hui.
+ *              réseau ne porte rien : elle est d'aujourd'hui. Arrivée après
+ *              coup et différente, elle est dite aux écrans (`frais`).
+ *   synchro    `syncAll` : les écritures en attente partent, puis tout ce que
+ *              les écrans lisent est relu d'un bloc. À la demande de la page
+ *              qui s'ouvre, et à chaque notification. Sa date se lit sous
+ *              `/__synchro`.
+ *   push       une notification du Mac : elle se montre toujours — iOS retire
+ *              l'abonnement de qui en reçoit sans rien montrer —, puis lance
+ *              la synchronisation.
  *   porte      une réponse de la porte (`x-cairn-connexion`), un 401 ou une
  *              page atteinte par redirection ne se rangent jamais : la page de
  *              connexion ne prend pas la place de l'app, ni un refus celle de la
  *              dernière lecture (`cacheable`).
- *   écriture   rien ici. Une file tenue par un service worker ne peut pas dire
- *              « en attente d'envoi » à l'athlète : c'est la page qui la tient
- *              (`lib/offline.ts`), et qui le dit.
+ *   écriture   la file est à la page (`lib/offline.ts`) : elle seule peut dire
+ *              « en attente d'envoi » à l'athlète. Le worker la vide quand il
+ *              synchronise, app fermée ; ce que le Mac refuse y reste, et
+ *              c'est l'écran qui le dira.
  *   mannequin  le corps des schémas 3D (`lib/figure3d`) est rangé dès
  *              l'installation, à part des pages, et sort du cache avant tout
  *              réseau : il porte son empreinte dans son nom. three.js, lui, est
@@ -96,13 +114,53 @@ const RECORDED_AT = 'x-cairn-recorded-at';
 
 /**
  * Ce que le réseau a pour répondre avant que la réserve serve, ms. Le Mac
- * répond en quelques dizaines de millisecondes ; éteint, Funnel peut garder la
- * connexion ouverte sans jamais rien rendre.
+ * répond en quelques dizaines de millisecondes, quelques centaines par Funnel ;
+ * endormi, Funnel peut garder la connexion ouverte sans jamais rien rendre. Une
+ * seconde : au-delà, l'écran s'affiche sur sa dernière lecture, et se corrige
+ * si le Mac finit par répondre.
  */
-const DATA_WAIT_MS = 4000;
+const FAST_WAIT_MS = 1200;
 
-/** Ce qu'une page jamais vue ou un changement d'écran attend avant d'abandonner, ms. */
+/** Ce qu'une requête a pour aboutir avant d'être tenue pour perdue, ms. */
+const NETWORK_MAX_MS = 10000;
+
+/**
+ * Le Mac vient de ne pas répondre : pendant ce délai, plus rien ne l'attend —
+ * ni une lecture, ni un changement d'écran. Chaque lecture le retente derrière,
+ * sans retenir l'affichage, et la première réponse lève le silence.
+ */
+const DOWN_FOR_MS = 60000;
+let downAt = 0;
+const down = () => Date.now() - downAt < DOWN_FOR_MS;
+
+/** Ce qu'une page jamais vue attend avant d'abandonner, ms. */
 const PAGE_WAIT_MS = 8000;
+
+/**
+ * Ce qu'un changement d'écran attend le Mac avant de rouvrir la page gardée, ms.
+ * Trois secondes, et non huit : la page gardée est là, et s'ouvre sans lui.
+ */
+const RSC_WAIT_MS = 3000;
+
+/**
+ * Ce que les écrans du menu lisent, sous les adresses exactes où ils le
+ * lisent (`PLAN_URL`, `activitiesUrl` de `lib/api.ts` — un test les compare).
+ * Une synchronisation les relit toutes, vues ou non : le téléphone tient alors
+ * tout ce qu'il peut montrer, à la même date.
+ */
+const CORE_READS = [
+  '/api/state', '/api/plan?weeks=9', '/health', '/api/glossary', '/api/activities?days=90&limit=300', '/api/tests',
+];
+
+/** Le détail d'une sortie : une fois analysée, elle ne change plus, et ne se relit pas. */
+const isActivityDetail = (key) => /^\/api\/activities\/[^/?]+$/.test(key);
+
+/** Où se lit la date de la dernière synchronisation — une adresse que seul le worker sert. */
+const SYNC_PATH = '/__synchro';
+
+/** La file d'écritures de la page (`lib/offline.ts`) : même base, même magasin. */
+const OUTBOX_DB = 'cairn';
+const OUTBOX_STORE = 'outbox';
 
 /**
  * Les fragments de Next portent leur empreinte dans leur nom : ceux d'une
@@ -159,16 +217,77 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  if (url.pathname === SYNC_PATH) return event.respondWith(readSync().then((sync) => json(sync)));
   if (kept(url.pathname)) return event.respondWith(reserve(event));
   if (request.mode === 'navigate') return event.respondWith(shell(event));
   if (url.pathname.startsWith('/_next/static/')) return event.respondWith(fragment(request));
   if (FIGURE_ASSETS.includes(url.pathname)) return event.respondWith(figure(url.pathname));
   // Un lien du menu demande à Next l'écran suivant en données. Sans réponse,
   // l'échec rapide lui fait recharger l'adresse — et c'est la page gardée qui
-  // s'ouvre, au lieu d'un toucher qui ne fait rien.
+  // s'ouvre, au lieu d'un toucher qui ne fait rien. Le Mac vient de se taire :
+  // l'échec est immédiat.
   if (url.searchParams.has('_rsc') || request.headers?.get?.('rsc') === '1') {
-    return event.respondWith(within(fetch(request), PAGE_WAIT_MS).catch(() => Response.error()));
+    if (down()) return event.respondWith(Promise.resolve(Response.error()));
+    return event.respondWith(
+      within(fetch(request), RSC_WAIT_MS).then(
+        (res) => { downAt = 0; return res; },
+        () => { downAt = Date.now(); return Response.error(); },
+      ),
+    );
   }
+});
+
+/**
+ * Une notification du Mac. Elle se montre d'abord — toujours, quoi qu'il arrive
+ * ensuite —, puis le téléphone se synchronise : c'est le seul moment où une app
+ * fermée peut le faire. Une seule à l'écran (`tag`) : la nouvelle remplace
+ * l'ancienne.
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    // Un message illisible se montre quand même, sous le nom de l'app.
+  }
+  const title = typeof data.title === 'string' && data.title ? data.title : 'Cairn';
+  const options = {
+    body: typeof data.body === 'string' ? data.body : '',
+    tag: 'cairn',
+    data: { url: typeof data.url === 'string' ? data.url : '/' },
+  };
+  event.waitUntil(Promise.all([self.registration.showNotification(title, options), syncAll().catch(() => {})]));
+});
+
+/** Toucher la notification ouvre l'app — ou la ramène devant, si elle l'est déjà. */
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url ?? '/', self.location.origin).href;
+  event.waitUntil(
+    (async () => {
+      const open = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))[0];
+      if (open) return open.focus();
+      return self.clients.openWindow(url);
+    })(),
+  );
+});
+
+/**
+ * Le système a renouvelé l'abonnement : le nouveau est donné au Mac, sans quoi
+ * les notifications partiraient vers une adresse morte.
+ */
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    (async () => {
+      const { publicKey } = await (await fetch('/api/push/key', { cache: 'no-store' })).json();
+      const subscription = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: publicKey });
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription, origin: self.location.origin, device: 'renouvelé' }),
+      });
+    })().catch(() => {}),
+  );
 });
 
 /**
@@ -177,6 +296,7 @@ self.addEventListener('fetch', (event) => {
  *   skip-waiting   ce worker, neuf, prend la main : la page qui le demande va
  *                  se recharger, rien ne se casse sous elle.
  *   renew-shell    ranger les pages d'un commit ; la réponse dit si c'est fait.
+ *   sync           tout envoyer, tout relire ; la réponse dit ce qui est parti.
  */
 self.addEventListener('message', (event) => {
   const { data } = event;
@@ -185,6 +305,10 @@ self.addEventListener('message', (event) => {
   } else if (data?.type === 'renew-shell' && typeof data.commit === 'string') {
     const reply = (ok) => event.ports[0]?.postMessage({ ok });
     event.waitUntil(renew(data.commit).then(reply, () => reply(false)));
+  } else if (data?.type === 'sync') {
+    // La page qui s'ouvre demande une synchronisation complète ; la réponse dit ce qu'elle a donné.
+    const reply = (result) => event.ports[0]?.postMessage(result);
+    event.waitUntil(syncAll().then(reply, () => reply({ ok: false, sent: 0 })));
   }
 });
 
@@ -267,11 +391,14 @@ async function shell(event) {
     return cached;
   }
 
+  // Jamais vue, et le Mac vient de se taire : on dit tout de suite ce qui manque.
+  if (down()) return absent(route, cache);
   try {
     const res = await within(fetch(event.request), PAGE_WAIT_MS);
     if (isPage(res)) await put(cache, route, res.clone());
     return res;
   } catch {
+    downAt = Date.now();
     return absent(route, cache);
   }
 }
@@ -301,12 +428,14 @@ async function figure(path) {
 }
 
 /**
- * Une lecture gardée : le réseau d'abord, la réserve ensuite.
+ * Une lecture gardée : le réseau d'abord, la réserve très vite ensuite.
  *
  * Le réseau d'abord, parce qu'un chiffre d'aujourd'hui vaut mieux qu'un chiffre
- * d'hier — mais pas plus de `DATA_WAIT_MS` quand une réserve existe : au-delà,
- * elle sert, datée, et le réseau finit derrière de la mettre à jour. L'écran ne
- * montrera pas le relevé de la semaine dernière comme s'il venait d'arriver.
+ * d'hier — mais pas plus de `FAST_WAIT_MS` quand une réserve existe, et pas du
+ * tout quand le Mac vient de se taire : elle sert, datée, et le réseau finit
+ * derrière de la mettre à jour. S'il répond après coup avec autre chose que ce
+ * qui a servi, les écrans l'apprennent (`frais`) et se relisent : on ne reste
+ * pas sur le relevé de la veille alors que celui du jour vient d'arriver.
  */
 async function reserve(event) {
   const { request } = event;
@@ -315,22 +444,180 @@ async function reserve(event) {
   // (`PLAN_URL`, `activitiesUrl`), et la même fenêtre garde la même adresse.
   const url = new URL(request.url);
   const key = url.pathname + url.search;
+  const cached = await cache.match(key, { ignoreVary: true });
+  const before = cached ? cached.clone() : null;
+  /** La réserve a servi avant que le réseau ne réponde. */
+  let late = false;
 
   const network = (async () => {
-    const res = await fetch(request);
+    let res;
+    try {
+      res = await within(fetch(request), NETWORK_MAX_MS);
+    } catch (e) {
+      downAt = Date.now();
+      throw e;
+    }
+    downAt = 0;
     // Un 5xx n'est pas une réponse : le serveur est là, la donnée n'y est pas.
     if (res.status >= 500) throw new Error(`${res.status}`);
-    if (cacheable(res)) await cache.put(key, stamped(await res.clone().blob(), res.headers));
+    if (cacheable(res)) {
+      const body = await res.clone().blob();
+      await cache.put(key, stamped(body, res.headers));
+      await contact();
+      if (late && before && (await before.text()) !== (await body.text())) await tell({ type: 'frais', path: key });
+    }
     return res;
   })();
 
-  const cached = await cache.match(key, { ignoreVary: true });
   // Rien en réserve : la réponse du réseau, ou son erreur, telle quelle. Mentir
   // ici — un corps vide, un 200 — ferait afficher un écran sans données comme
   // un écran sans entraînement.
   if (!cached) return network;
   event.waitUntil(network.catch(() => {}));
-  return within(network, DATA_WAIT_MS).catch(() => cached);
+  if (down()) {
+    late = true;
+    return cached;
+  }
+  return within(network, FAST_WAIT_MS).catch(() => {
+    late = true;
+    // Une seconde sans réponse : le Mac est tenu pour muet dès maintenant, sans
+    // attendre que la requête soit perdue. S'il répond ensuite, le silence est levé.
+    if (!down()) downAt = Date.now();
+    return cached;
+  });
+}
+
+// ── Synchroniser : tout envoyer, tout relire ─────────────────────────────────
+
+/** Ce que le worker dit aux écrans ouverts. */
+async function tell(message) {
+  for (const client of await self.clients.matchAll({ type: 'window' })) client.postMessage(message);
+}
+
+const json = (value) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+
+/** `{ at?, full? }` : la dernière lecture réussie, et la dernière synchronisation complète. */
+async function readSync() {
+  const hit = await (await caches.open(DATA)).match(SYNC_PATH);
+  try {
+    return hit ? await hit.json() : {};
+  } catch {
+    return {};
+  }
+}
+
+async function saveSync(patch) {
+  const cache = await caches.open(DATA);
+  await cache.put(SYNC_PATH, json({ ...(await readSync()), ...patch }));
+}
+
+/** Le Mac vient de répondre : noté, une fois par demi-minute au plus. */
+let contactSavedAt = 0;
+async function contact() {
+  const now = Date.now();
+  if (now - contactSavedAt < 30000) return;
+  contactSavedAt = now;
+  await saveSync({ at: new Date(now).toISOString() });
+}
+
+/** Une seule synchronisation à la fois : la page qui s'ouvre et une notification peuvent la demander ensemble. */
+let syncing = null;
+function syncAll() {
+  syncing ??= synchronize().finally(() => { syncing = null; });
+  return syncing;
+}
+
+/**
+ * Les écritures d'abord — le Mac en tient compte dans ce qu'il rend ensuite —,
+ * puis toutes les lectures : celles des écrans du menu, et tout ce que le
+ * téléphone a déjà lu. La synchronisation n'est datée que si les premières ont
+ * toutes abouti : une date qui couvre des écrans restés sur la veille mentirait.
+ */
+async function synchronize() {
+  const sent = await flushOutbox();
+  const cache = await caches.open(DATA);
+  const held = (await cache.keys())
+    .map((k) => { const u = new URL(k.url); return u.pathname + u.search; })
+    .filter((key) => key !== SYNC_PATH && !isActivityDetail(key));
+  const wanted = [...new Set([...CORE_READS, ...held])];
+  const read = await Promise.all(
+    wanted.map(async (key) => {
+      try {
+        const res = await within(fetch(key, { cache: 'no-store' }), NETWORK_MAX_MS);
+        if (!cacheable(res)) return false;
+        await cache.put(key, stamped(await res.blob(), res.headers));
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  const ok = CORE_READS.every((key) => read[wanted.indexOf(key)]);
+  if (ok) {
+    downAt = 0;
+    const now = new Date().toISOString();
+    await saveSync({ at: now, full: now });
+    // App fermée, les pages suivent la version du Mac : ouverte hors ligne, elle
+    // sera la dernière. App ouverte, c'est elle qui s'en charge (`lib/version.ts`).
+    const windows = await self.clients.matchAll({ type: 'window' });
+    if (windows.length === 0) await renewIfNewer().catch(() => {});
+  }
+  await tell({ type: 'synchro', ok, sent });
+  return { ok, sent };
+}
+
+/** Le Mac sert un autre commit que les pages gardées : elles sont rangées de nouveau. */
+async function renewIfNewer() {
+  const health = await (await caches.open(DATA)).match('/health');
+  const commit = health ? (await health.json()).version?.commit : null;
+  const page = await (await caches.open(SHELL)).match('/', { ignoreVary: true });
+  if (typeof commit !== 'string' || !page) return;
+  const held = commitOf(await page.text());
+  if (held && held !== commit) await renew(commit);
+}
+
+/** Un accès à la file d'écritures ; rejette si IndexedDB manque ou refuse. */
+function outboxStore(run) {
+  return new Promise((resolve, reject) => {
+    const opening = indexedDB.open(OUTBOX_DB, 1);
+    opening.onupgradeneeded = () => {
+      if (!opening.result.objectStoreNames.contains(OUTBOX_STORE)) {
+        opening.result.createObjectStore(OUTBOX_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    opening.onerror = () => reject(opening.error);
+    opening.onsuccess = () => {
+      const database = opening.result;
+      const req = run(database.transaction(OUTBOX_STORE, 'readwrite').objectStore(OUTBOX_STORE));
+      req.onsuccess = () => { database.close(); resolve(req.result); };
+      req.onerror = () => { database.close(); reject(req.error); };
+    };
+  });
+}
+
+/**
+ * Envoie ce que le téléphone gardait, dans l'ordre où il l'a gardé. Le Mac ne
+ * répond pas : la file attend. Il refuse : l'écriture reste, et c'est la page,
+ * à l'ouverture, qui dira ce refus — ici, personne ne le lirait. Le rejeu est
+ * sûr : l'API fusionne (`lib/offline.ts`).
+ */
+async function flushOutbox() {
+  if (typeof indexedDB === 'undefined') return 0;
+  let sent = 0;
+  try {
+    for (const item of await outboxStore((store) => store.getAll())) {
+      const res = await within(
+        fetch(item.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item.body ?? {}) }),
+        NETWORK_MAX_MS,
+      );
+      if (!res.ok) break;
+      await outboxStore((store) => store.delete(item.id));
+      sent++;
+    }
+  } catch {
+    // Hors réseau, ou file illisible : rien n'est perdu, la prochaine fois réessaiera.
+  }
+  return sent;
 }
 
 /**

@@ -15,17 +15,26 @@ import { DatabaseSync } from 'node:sqlite';
  */
 
 /**
- * Face ID à chaque ouverture de l'app (Pierre, le 02/10). Une session se ferme
- * après deux minutes sans une requête : l'app ouverte en envoie une toutes les
- * trente secondes, l'app refermée n'en envoie plus, et la rouvrir redemande
- * Face ID. Elle durait 90 jours : Face ID une fois, au premier jour, puis plus
- * jamais.
+ * Face ID une fois par appareil (Pierre, le 10/11).
+ *
+ * Le 02/10, il avait demandé Face ID à chaque ouverture : la session se fermait
+ * après deux minutes sans requête. Le 10/11, le journal dit ce que cela a
+ * donné — plus une seule session ouverte depuis le 20/10 : le téléphone sert
+ * quand le Mac dort, la porte ne répondait pas, et l'app redemandait Face ID à
+ * chaque écran, par la feuille d'iOS qui nomme l'adresse du Mac. « Il faut
+ * simplement le faire une fois au début. »
+ *
+ * Une session vit donc tant que l'appareil sert : elle se referme après
+ * quatre-vingt-dix jours sans une requête, et de toute façon au bout de quatre
+ * cents — la durée qu'un navigateur accorde au plus à un cookie. Ce qui protège
+ * l'app entre-temps est ce qui protège le téléphone : son code et son Face ID.
+ * `npm run service -- logout-all` referme tout, tout de suite.
  */
-export const SESSION_IDLE_MS = 2 * 60_000;
+export const SESSION_IDLE_MS = 90 * 24 * 3600_000;
 /** Au-delà, même servie sans arrêt, une session se referme. */
-export const SESSION_TTL_MS = 12 * 3600_000;
+export const SESSION_TTL_MS = 400 * 24 * 3600_000;
 /** En deçà, une requête ne réécrit pas l'heure de la dernière : la base n'écrit pas à chaque fragment. */
-const TOUCH_EVERY_MS = 5_000;
+const TOUCH_EVERY_MS = 60_000;
 /** Le code affiché dans le Terminal du Mac. */
 export const CODE_TTL_MS = 10 * 60_000;
 /** Au-delà, le code est brûlé : il faut en redemander un au Mac. */
@@ -78,7 +87,7 @@ export class GateStore {
     `);
     // La dernière requête de chaque session. Une base d'avant n'en a pas : ses
     // sessions valent zéro, donc sont closes — la prochaine ouverture redemande
-    // Face ID, ce qui est la règle.
+    // Face ID, une fois.
     const columns = this.db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
     if (!columns.some((c) => c.name === 'seen_at')) {
       this.db.exec('ALTER TABLE sessions ADD COLUMN seen_at INTEGER NOT NULL DEFAULT 0');
@@ -127,8 +136,8 @@ export class GateStore {
 
   /**
    * Une session ouverte, lue sans la toucher : depuis quand Face ID a eu lieu,
-   * depuis quand elle a servi. `null` : inconnue, expirée, restée deux minutes
-   * sans requête, ou sa clé d'accès n'existe plus.
+   * depuis quand elle a servi. `null` : inconnue, expirée, restée quatre-vingt-dix
+   * jours sans requête, ou sa clé d'accès n'existe plus.
    */
   sessionInfo(token: string | undefined, now: number): { verifiedAt: number; seenAt: number } | null {
     if (!token) return null;
@@ -140,7 +149,7 @@ export class GateStore {
     return { verifiedAt: row.created_at, seenAt: row.seen_at };
   }
 
-  /** Valide, et repoussée : la requête qui la présente la garde ouverte deux minutes de plus. */
+  /** Valide, et repoussée : la requête qui la présente la garde ouverte quatre-vingt-dix jours de plus. */
   validSession(token: string | undefined, now: number): boolean {
     const info = this.sessionInfo(token, now);
     if (!info) return false;
@@ -159,10 +168,17 @@ export class GateStore {
     return Number(this.db.prepare('DELETE FROM sessions').run().changes);
   }
 
-  /** Les sessions qui servent encore : ni expirées, ni restées deux minutes sans requête. */
+  /** Les sessions ouvertes : ni expirées, ni restées quatre-vingt-dix jours sans requête. */
   sessionCount(now: number): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ? AND seen_at > ?')
       .get(now, now - SESSION_IDLE_MS) as { n: number }).n;
+  }
+
+  /** La dernière requête d'un appareil connecté, ms ; `null` sans session ouverte. */
+  lastSeen(now: number): number | null {
+    const row = this.db.prepare('SELECT MAX(seen_at) AS t FROM sessions WHERE expires_at > ? AND seen_at > ?')
+      .get(now, now - SESSION_IDLE_MS) as { t: number | null };
+    return row.t ?? null;
   }
 
   // ── Code d'enregistrement ──────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import {
   type AuthenticationResponseJSON, type RegistrationResponseJSON, type WebAuthnCredential,
 } from '@simplewebauthn/server';
 import { loginPage } from './page.js';
-import { SESSION_TTL_MS, type GateStore } from './store.js';
+import { SESSION_IDLE_MS, type GateStore } from './store.js';
 
 /**
  * La porte : le seul chemin d'internet jusqu'à Cairn.
@@ -16,6 +16,7 @@ import { SESSION_TTL_MS, type GateStore } from './store.js';
  * donc rien. Elle écoute sur son propre port, que seul Funnel atteint, et y
  * exige toujours la même chose — un cookie de session valide — avant de relayer
  * vers le site. Le site, lui, reste sur 3000 sans connexion, pour le Mac seul.
+ * Une session s'ouvre par Face ID, une fois par appareil (`store.ts`).
  *
  * Sans session, seules les routes de `/connexion` répondent ; tout le reste
  * rend 401 — la page de connexion pour une navigation, du JSON sinon — et rien
@@ -211,13 +212,16 @@ export function createGate(opts: GateOptions): Server {
         if (!font) return send(res, 404, 'text/plain; charset=utf-8', '');
         return send(res, 200, 'font/woff2', font, { 'Cache-Control': 'public, max-age=604800' });
       }
-      // L'app la demande à chaque ouverture et toutes les trente secondes : c'est
-      // ce qui garde la session ouverte tant qu'elle sert, et ce qui lui dit si
-      // Face ID vient d'avoir lieu — sur la page de connexion, par exemple.
+      // L'app la demande à chaque ouverture et à chaque retour au premier plan.
+      // La réponse repose le cookie : sa durée repart de cet instant, et un
+      // appareil qui sert ne voit jamais sa session s'éteindre d'elle-même.
       case 'GET /connexion/etat': {
         if (!signedIn || !info) return json(res, 200, { session: false });
         const ago = (t: number) => Math.max(0, Math.round((now() - t) / 1000));
-        return json(res, 200, { session: true, verifiedAgoS: ago(info.verifiedAt), seenAgoS: ago(info.seenAt) });
+        return json(
+          res, 200, { session: true, verifiedAgoS: ago(info.verifiedAt), seenAgoS: ago(info.seenAt) },
+          { 'Set-Cookie': sessionCookie(cookies(req)[SESSION_COOKIE]!) },
+        );
       }
     }
 
@@ -369,8 +373,7 @@ export function createGate(opts: GateOptions): Server {
   }
 
   function openSession(passkeyId: string): string {
-    const { token } = opts.store.openSession(passkeyId, now());
-    return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL_MS / 1000}`;
+    return sessionCookie(opts.store.openSession(passkeyId, now()).token);
   }
 
   // ── Avec session ───────────────────────────────────────────────────────────
@@ -405,6 +408,16 @@ export function createGate(opts: GateOptions): Server {
 }
 
 // ── Outils ───────────────────────────────────────────────────────────────────
+
+/**
+ * Le cookie de session : il dure ce que dure une session sans requête, et se
+ * repose à chaque `/connexion/etat`. Le navigateur ne le rend ni au script
+ * (`HttpOnly`), ni en clair (`Secure`), ni à une requête venue d'un autre site
+ * (`SameSite=Strict`).
+ */
+function sessionCookie(token: string): string {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_IDLE_MS / 1000}`;
+}
 
 function clearCeremony(): string {
   return `${CEREMONY_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;

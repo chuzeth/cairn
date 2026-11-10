@@ -1,30 +1,25 @@
 /**
- * Face ID à chaque ouverture de l'app.
+ * Face ID une fois par appareil.
  *
- * Le 02/10, Pierre : « Face ID à chaque ouverture de l'app. » La porte ouvrait
- * une session de 90 jours : Face ID une fois, au premier jour, puis plus
- * jamais. Elle la ferme maintenant après deux minutes sans requête
- * (`apps/gate/src/store.ts`) ; l'app, elle, se verrouille à chaque ouverture et
- * au retour après une minute ailleurs, et se déverrouille par la même cérémonie
- * que la page de connexion de la porte. Une minute ailleurs ne compte pas :
- * passer voir Garmin Connect et revenir ne redemande rien.
+ * Le 02/10, Pierre : « Face ID à chaque ouverture de l'app. » La porte fermait
+ * la session après deux minutes sans requête, et l'app se verrouillait à chaque
+ * ouverture — par la porte quand elle répondait, par le téléphone seul quand le
+ * Mac dormait. Or le téléphone sert surtout quand le Mac dort : du 20/10 au
+ * 10/11, pas une session ne s'est ouverte. Chaque ouverture, puis chaque
+ * changement d'écran — hors réseau, un écran se recharge —, montrait la feuille
+ * d'iOS : « se connecter à …ts.net avec la clé d'accès pierre ». Cette feuille
+ * est celle du système ; un site ne la réécrit pas, il ne peut que ne pas la
+ * demander.
  *
- * Mac éteint, la porte ne répond pas et ne peut rien vérifier : c'est le
- * téléphone qui demande Face ID, sur la même clé d'accès, et l'app s'ouvre sur
- * sa dernière lecture. Sans porte du tout — sur le Mac, `http://localhost` —,
- * rien ne se verrouille.
+ * Le 10/11 : « Il faut simplement le faire une fois au début. » La session dure
+ * tant que l'appareil sert (`apps/gate/src/store.ts`), et l'app ne demande Face
+ * ID que lorsque la porte dit qu'il n'y a plus de session — à la première
+ * ouverture d'un appareil, puis après quatre-vingt-dix jours sans l'ouvrir, ou
+ * un `logout-all`. Mac éteint, rien n'est demandé : l'app s'ouvre sur ce qu'elle
+ * a gardé, et le dit. Ce qui la protège alors est ce qui protège le téléphone.
  */
 
-/** Au-delà d'une minute ailleurs, revenir redemande Face ID. */
-export const GRACE_MS = 60_000;
-/** L'app ouverte le dit à la porte : sa session reste ouverte tant qu'elle sert. */
-export const HEARTBEAT_MS = 30_000;
-/**
- * Ce que l'app attend la porte avant de se tenir pour hors réseau. Trois
- * secondes ne suffisaient pas toujours à un téléphone en 4G pour joindre Funnel
- * à froid : l'app se croyait Mac éteint, s'ouvrait sur sa dernière lecture, puis
- * chaque lecture refusée redemandait Face ID.
- */
+/** Ce que l'app attend la porte, à l'ouverture, pour savoir où en est sa session. */
 export const GATE_WAIT_MS = 5_000;
 
 /** Ce que la porte dit de la session (`GET /connexion/etat`). */
@@ -40,19 +35,13 @@ export interface GateState {
 export const behindGate = (location: Pick<Location, 'protocol'>): boolean => location.protocol === 'https:';
 
 /**
- * À l'ouverture : verrouillée, sauf si Face ID vient d'avoir lieu — la page de
- * connexion renvoie vers l'app — ou si l'app servait il y a moins d'une minute.
- * Hors réseau (`state` nul), toujours.
+ * Verrouillée seulement quand la porte a répondu qu'il n'y a pas de session.
+ * Une porte muette (`state` nul) — le Mac dort — ne verrouille rien : elle ne
+ * pourrait rien vérifier, et il n'y a rien de neuf à protéger.
  */
 export function lockedAtOpen(gated: boolean, state: GateState | null): boolean {
-  if (!gated) return false;
-  if (!state?.session) return true;
-  const recent = Math.min(state.verifiedAgoS ?? Infinity, state.seenAgoS ?? Infinity);
-  return recent * 1000 >= GRACE_MS;
+  return gated && state != null && !state.session;
 }
-
-/** Au retour au premier plan : verrouillée après une minute ailleurs. */
-export const lockedAtReturn = (hiddenForMs: number): boolean => hiddenForMs >= GRACE_MS;
 
 // ── WebAuthn, sans bibliothèque ─────────────────────────────────────────────
 //

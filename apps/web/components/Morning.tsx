@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  duration, frDate, longDate, markdown, nbsp, num, prime, shortRace, spelledDuration,
+  duration, frDate, longDate, markdown, nbsp, num, prime, shortRace, spelledDuration, todayFor,
   type CheckInResult, type DeclaredAbsence, type PlanResponse, type Readiness, type SessionRow,
   type StateResponse,
 } from '@/lib/api';
@@ -18,7 +18,7 @@ import { isWorkout, stairsEstimated, workoutOf } from '@/lib/workout';
 import { thresholdMinutes } from '@/lib/today';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, RatioAlerts, ReadinessBasis, SessionHistory,
-  Stale, unweighed, Waiting, WhereLine,
+  SyncLine, unweighed, WhereLine,
 } from '@/components/ui';
 import { CountUp } from '@/components/CountUp';
 import { Glossed, Term } from '@/components/Term';
@@ -29,6 +29,7 @@ import { WatchLine } from '@/components/Watch';
 import { ChargeLine, Figures, SessionFlow, sessionFigures } from '@/components/Today';
 import { Questions } from '@/components/Questions';
 import { Criteria } from '@/components/Criteria';
+import { PushInvite } from '@/components/Push';
 
 /**
  * Le chemin du matin, direction « Profil ».
@@ -56,6 +57,10 @@ const answeredStatus = (s: SessionRow) => s.status === 'completed' || s.status =
 /** « Force C : une jambe » dans une phrase : la majuscule du début tombe, pas celle de « C ». */
 const lowerFirst = (text: string) => `${text.slice(0, 1).toLocaleLowerCase('fr')}${text.slice(1)}`;
 
+/** Les jours d'ici une date — recomptés sur le jour de l'écran, pas sur celui du relevé. */
+const daysUntil = (today: string, date: string) =>
+  Math.max(0, Math.round((Date.parse(`${date.slice(0, 10)}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000));
+
 /** « Demain » n'est vrai qu'un jour sur deux : un repos intercalé le rend faux. */
 const isTomorrow = (date: string, today: string) =>
   date === new Date(new Date(`${today}T12:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
@@ -80,7 +85,12 @@ export function Morning({
   onFileNote: (date: string) => void;
   filing: string | null;
 }) {
-  const today = state.today.date;
+  // Sur une lecture gardée de la veille, le jour est celui du téléphone : la
+  // séance d'aujourd'hui est dans le plan gardé. Ce que le Mac calcule pour un
+  // jour — la disponibilité, la charge — attend, lui, la prochaine synchronisation.
+  const today = todayFor(state.today.date, recordedAt);
+  const dayBehind = today !== state.today.date;
+  const questions = dayBehind ? state.questionsAhead?.[today] ?? [] : state.questions;
   const held = plan.sessions.filter(
     (s) => s.date === today && s.status !== 'withdrawn' && s.status !== 'cancelled',
   );
@@ -113,19 +123,18 @@ export function Morning({
 
       <div className="m-top">
         <span>{longDate(today)}</span>
-        {race && <span className="m-goal">J−{race.daysUntil} · {shortRace(race.name)}</span>}
+        {race && <span className="m-goal">J−{daysUntil(today, race.date)} · {shortRace(race.name)}</span>}
       </div>
 
       {/* La fraîcheur avant le contenu : ce qui suit ne se lit pas pareil selon
           qu'il vient du Mac ou de ce que le téléphone avait gardé. */}
-      {recordedAt && <Stale recordedAt={recordedAt} />}
-      <Waiting />
+      <SyncLine recordedAt={recordedAt} />
 
       <Headline session={session} absence={absence} done={doneToday} early={early} />
 
       {/* Ce que Cairn a besoin de savoir avant de décider la suite : une question à la fois. */}
-      {state.questions && (
-        <Questions questions={state.questions} onReload={onReload} />
+      {questions && (
+        <Questions questions={questions} onReload={onReload} />
       )}
 
       {/* Un pic de charge que le plan produit aujourd'hui se lit avant la séance qui le produit. */}
@@ -185,7 +194,10 @@ export function Morning({
 
       <div className="m-rule" />
 
-      <Availability state={state} onReload={onReload} />
+      <Availability state={state} today={today} dayBehind={dayBehind} onReload={onReload} />
+
+      {/* Un toucher, une fois : ensuite le Mac prévient le téléphone, qui se synchronise app fermée. */}
+      <PushInvite />
 
       {/* Ce qui doit être vrai pour courir le dossard, avec ses preuves. */}
       {state.criteria && <Criteria criteria={state.criteria} />}
@@ -703,7 +715,16 @@ function verdictLead(text: string, word: string): [string | null, string] {
  * le ressenti cesse de peser zéro. Le reste du point se remplit sur /point, et
  * s'ajoute à cette réponse au lieu de l'écraser.
  */
-function Availability({ state, onReload }: { state: StateResponse; onReload: () => Promise<void> | void }) {
+function Availability({
+  state, today, dayBehind, onReload,
+}: {
+  state: StateResponse;
+  /** Le jour de l'écran (`todayFor`) : celui que porte une réponse. */
+  today: string;
+  /** La lecture date d'un jour passé : sa disponibilité n'est pas celle d'aujourd'hui. */
+  dayBehind: boolean;
+  onReload: () => Promise<void> | void;
+}) {
   const [before] = useState(state.readiness);
   const [result, setResult] = useState<CheckInResult | null>(null);
   const [sending, setSending] = useState<number | null>(null);
@@ -715,7 +736,8 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
 
   const readiness = result?.readiness ?? state.readiness;
   const question = QUESTIONS[0];
-  const answer = result?.checkIn?.fatigue ?? queued ?? state.checkIn?.fatigue ?? null;
+  // Le point d'hier n'est pas la réponse d'aujourd'hui.
+  const answer = result?.checkIn?.fatigue ?? queued ?? (dayBehind ? null : state.checkIn?.fatigue ?? null);
   const missing = unweighed(readiness).map((k) => MISSING_LABEL[k]);
   const verdict = VERDICT[readiness.verdict];
   const [lead, rest] = verdictLead(readiness.recommendation, verdict.word);
@@ -724,7 +746,7 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
     setSending(value);
     setError(null);
     try {
-      const sent = await sendOrQueue<CheckInResult>('/api/checkin', { date: state.today.date, fatigue: value });
+      const sent = await sendOrQueue<CheckInResult>('/api/checkin', { date: today, fatigue: value });
       // Rien n'est parti : la réponse est retenue, et le score reste celui
       // d'avant. Un score recalculé ici serait un score que personne n'a produit.
       if (!sent) return setQueued(value);
@@ -741,6 +763,13 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
 
   return (
     <section className="m-avail">
+      {/* Une disponibilité calculée hier ne se présente pas comme celle d'aujourd'hui. */}
+      {dayBehind && !result ? (
+        <p className="m-verdict">
+          Ta <Term k="disponibilite">disponibilité</Term> du jour se calcule sur le Mac : elle arrivera à la prochaine
+          synchronisation. Ta séance, elle, est celle du plan.
+        </p>
+      ) : (
       <div className="m-avail-grid">
         <div className="m-gauge">
           <span className="m-score"><CountUp value={readiness.score} /></span>
@@ -771,8 +800,9 @@ function Availability({ state, onReload }: { state: StateResponse; onReload: () 
           </button>
         </div>
       </div>
+      )}
 
-      {basis && (
+      {basis && !(dayBehind && !result) && (
         <div className="m-basis">
           <ReadinessBasis readiness={readiness} before={result ? before : undefined} />
           {/* Ce qui ne pèse rien se dit là où se lisent les poids, et pas trois

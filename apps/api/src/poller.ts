@@ -41,6 +41,25 @@ export const DEFAULT_POLL_INTERVAL_MS = 15 * 60_000;
  */
 const WAKE_CHECK_MS = 60_000;
 
+/**
+ * Le réveil vaut relève. Entre deux relectures de l'heure, il s'écoule une
+ * minute au plus ; quand il s'en est écoulé plus de cinq, c'est que le Mac
+ * dormait. Il vient de se rouvrir : la sortie du matin entre tout de suite, les
+ * règles tournent, et le téléphone est prévenu — sans attendre le reste d'un
+ * quart d'heure entamé avant la veille.
+ */
+const WAKE_GAP_MS = 5 * 60_000;
+
+/**
+ * Après un échec, la relève se retente au bout de deux minutes, trois fois au
+ * plus : au réveil, le réseau arrive quelques secondes après le processus, et
+ * attendre un quart d'heure pour une coupure de dix secondes laisserait le
+ * téléphone sans nouvelles. Au-delà, c'est une vraie panne — jeton expiré,
+ * Strava en dérangement — et la cadence ordinaire reprend.
+ */
+const RETRY_MS = 2 * 60_000;
+const RETRIES = 3;
+
 export type PollOutcome = 'ok' | 'rate-limited' | 'error';
 
 export interface PollerStatus {
@@ -104,6 +123,8 @@ export class ActivityPoller {
   private runs = 0;
   private ingested = 0;
   private consecutiveFailures = 0;
+  /** La dernière relecture de l'heure : un écart de plus de cinq minutes est une veille. */
+  private lastWaitAt: number | null = null;
 
   constructor(opts: PollerOptions) {
     this.athleteId = opts.athleteId;
@@ -228,8 +249,12 @@ export class ActivityPoller {
   private wait(): void {
     const due = this.nextRunAt;
     if (this.stopped || due == null) return;
+    this.lastWaitAt = this.now();
     this.timer = setTimeout(
-      () => (this.now() >= due ? void this.tick() : this.wait()),
+      () => {
+        const woke = this.lastWaitAt != null && this.now() - this.lastWaitAt > WAKE_GAP_MS;
+        return this.now() >= due || woke ? void this.tick() : this.wait();
+      },
       Math.min(Math.max(due - this.now(), 0), WAKE_CHECK_MS),
     );
     // La relève ne doit pas, à elle seule, empêcher le processus de s'arrêter.
@@ -242,8 +267,9 @@ export class ActivityPoller {
     try {
       await this.runOnce();
     } finally {
-      // Quelle que soit l'issue, la relève suivante est reprogrammée.
-      this.schedule(this.intervalMs);
+      // Quelle que soit l'issue, la relève suivante est reprogrammée — plus tôt après un échec.
+      const retry = this.lastOutcome === 'error' && this.consecutiveFailures <= RETRIES - 1;
+      this.schedule(retry ? Math.min(RETRY_MS, this.intervalMs) : this.intervalMs);
     }
   }
 }

@@ -1,3 +1,4 @@
+import { noteContact } from './sync';
 import { BUILD, checkWhileOpen } from './version';
 
 /**
@@ -45,6 +46,7 @@ async function beat(): Promise<void> {
   busy = true;
   try {
     const res = await fetch('/api/pulse', { cache: 'no-store', signal: AbortSignal.timeout(8_000) });
+    noteContact(res.ok);
     if (!res.ok) return;
     const effect = pulseEffect(seen, (await res.json()) as { stamp?: unknown; commit?: unknown }, BUILD);
     seen = effect.stamp;
@@ -52,6 +54,7 @@ async function beat(): Promise<void> {
     if (effect.newVersion) checkWhileOpen();
   } catch {
     // Sans réseau : la lecture affichée reste, datée par l'écran.
+    noteContact(false);
   } finally {
     busy = false;
   }

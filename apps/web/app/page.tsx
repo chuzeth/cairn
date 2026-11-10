@@ -11,7 +11,7 @@ import { onForeground } from '@/lib/version';
 import { useIsDesk } from '@/lib/viewport';
 import {
   AbsenceNotice, Badge, Card, ErrorBox, Loading, LoadName, Metric, MISSING_LABEL,
-  ReadinessBasis, Stale, ThreeZoneBar, unweighed, Waiting,
+  ReadinessBasis, SyncLine, ThreeZoneBar, unweighed,
 } from '@/components/ui';
 import { Gauge, TimeSeriesChart, WeeklyBars } from '@/components/charts';
 import { Morning } from '@/components/Morning';
@@ -191,8 +191,7 @@ export default function Dashboard() {
 
   return (
     <>
-      {recordedAt && <Stale recordedAt={recordedAt} />}
-      <Waiting />
+      <SyncLine recordedAt={recordedAt} />
 
       <TodayHero
         state={state}

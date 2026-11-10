@@ -271,6 +271,20 @@ export function dayName(dow: number): string {
 }
 
 export const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Le jour que l'écran tient pour aujourd'hui.
+ *
+ * Quand le Mac vient de répondre, c'est le sien. Quand la lecture sort de la
+ * réserve (`recordedAt`), elle peut dater de la veille : le jour est alors celui
+ * du téléphone — la séance d'aujourd'hui est dans le plan gardé, et c'est elle
+ * qu'on montre, pas celle du jour où le relevé a été fait. Jamais en arrière.
+ */
+export function todayFor(stateDate: string, recordedAt: string | null): string {
+  if (!recordedAt) return stateDate;
+  const device = todayIso();
+  return device > stateDate ? device : stateDate;
+}
 export const isoOffset = (days: number) =>
   new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
@@ -397,6 +411,8 @@ export interface RaceCriteria {
 export interface StateResponse {
   /** Absentes d'une réponse gardée avant le 09/11. */
   questions?: AskedQuestion[];
+  /** Les questions des deux jours suivants, si rien de neuf n'arrive : le téléphone les pose Mac éteint. */
+  questionsAhead?: Record<string, AskedQuestion[]>;
   /** Les critères du dossard de la reprise ; absents hors reprise, et des réponses d'avant le 09/11. */
   criteria?: RaceCriteria | null;
   athlete: {

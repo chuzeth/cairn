@@ -59,7 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <Offline />
-        {/* Face ID à chaque ouverture : rien de l'app avant lui (`components/Lock.tsx`). */}
+        {/* Face ID une fois par appareil : l'app se monte tout de suite (`components/Lock.tsx`). */}
         <Lock>
           <div className="app">
             <Nav />

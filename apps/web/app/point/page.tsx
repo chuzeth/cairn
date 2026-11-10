@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  frDate, getStamped, markdown, nbsp, num, todayIso,
+  frDate, getStamped, markdown, nbsp, num, todayFor, todayIso,
   type CheckInResult, type Readiness, type StateResponse,
 } from '@/lib/api';
 import {
@@ -11,7 +11,7 @@ import {
 } from '@/lib/checkin';
 import { sendOrQueue, useOutbox } from '@/lib/offline';
 import { useUnsent } from '@/lib/version';
-import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, Stale, unweighed } from '@/components/ui';
+import { Badge, Card, ErrorBox, Loading, MISSING_LABEL, ReadinessBasis, SyncLine, unweighed } from '@/components/ui';
 import { Gauge } from '@/components/charts';
 import { Glossed } from '@/components/Term';
 
@@ -56,12 +56,15 @@ export default function CheckInPage() {
     setError(null);
     try {
       const { data: s, recordedAt: at } = await getStamped<StateResponse>('/api/state');
-      setToday(s.today.date);
+      // Sur une lecture gardée de la veille, le point est celui d'aujourd'hui —
+      // celui du téléphone —, et le point d'hier n'en est pas le début.
+      const day = todayFor(s.today.date, at);
+      setToday(day);
       setBefore(s.readiness);
       setPurpose(s.checkInPurpose ?? null);
       setRecordedAt(at);
       // Un point déjà commencé se reprend, il ne se recommence pas.
-      if (s.checkIn) {
+      if (s.checkIn && day === s.today.date) {
         setAnswers(answersOf(s.checkIn));
         const x = extrasOf(s.checkIn);
         setExtras(x);
@@ -149,7 +152,7 @@ export default function CheckInPage() {
 
       {/* La disponibilité affichée plus bas vient d'un état relevé, pas du Mac :
           la dire d'aujourd'hui ferait répondre l'athlète contre un chiffre faux. */}
-      {recordedAt && <Stale recordedAt={recordedAt} />}
+      <SyncLine recordedAt={recordedAt} />
 
       {/* À quoi il sert, avant d'y répondre : une ligne, celle des règles. */}
       {purpose && (

@@ -12,6 +12,7 @@ import {
 import {
   authorizeUrl, exchangeCode, readOAuthConfig, StravaRateLimitError,
 } from '@cairn/strava';
+import { notifyDevices, readSubscription, rememberOrigin, vapidKeys } from './push.js';
 import type { ActivityStreams, AnswerQuestion, DeclaredAbsence, DecisionOrigin, PlannedSession, TrainingPlan } from '@cairn/core';
 import {
   formatDuration, formatPace, hrProvenanceOf, msToKmh, speedProvenanceOf,
@@ -71,11 +72,26 @@ const ANSWER_QUESTIONS: ReadonlySet<string> = new Set<AnswerQuestion>([
   'clearance', 'run_pain', 'morning_pain', 'run_rpe', 'deviation_cause', 'pain_pattern', 'week_load',
 ]);
 
-async function questionsFor(state: Awaited<ReturnType<typeof loadAthleteState>>) {
-  const today = state.today.date;
-  const sessions = await db.listPlannedSessions(state.profile.id, daysAgo(21), iso(new Date(Date.now() + 10 * dayMs)));
+async function questionsFor(state: Awaited<ReturnType<typeof loadAthleteState>>, on = state.today.date) {
+  const sessions = await db.listPlannedSessions(state.profile.id, daysAgo(21), iso(new Date(Date.now() + 12 * dayMs)));
   const easyCeiling = Math.round(state.zones.find((z) => z.key === 'Z2')?.hrMax ?? 155);
-  return pendingQuestions({ today, sessions, activities: state.recentActivities, answers: state.answers, easyCeiling });
+  return pendingQuestions({ today: on, sessions, activities: state.recentActivities, answers: state.answers, easyCeiling });
+}
+
+/**
+ * Les questions des deux jours qui suivent, telles qu'elles se poseraient si
+ * rien de neuf n'arrivait d'ici là. Le téléphone sert quand le Mac dort : le
+ * matin, il n'a que ce qu'il a relevé la veille, et « ce matin, au réveil : une
+ * douleur ? » doit pouvoir se poser quand même. La réponse attend sur le
+ * téléphone, et part au prochain contact.
+ */
+async function questionsAhead(state: Awaited<ReturnType<typeof loadAthleteState>>) {
+  const ahead: Record<string, Awaited<ReturnType<typeof questionsFor>>> = {};
+  for (const days of [1, 2]) {
+    const day = iso(new Date(Date.parse(`${state.today.date}T12:00:00Z`) + days * dayMs));
+    ahead[day] = await questionsFor(state, day);
+  }
+  return ahead;
 }
 
 function planHead({ weeks: _weeks, revisionLog, ...head }: TrainingPlan) {
@@ -389,6 +405,7 @@ export async function buildServer() {
         // Ce que Cairn a besoin de savoir et qu'aucune donnée ne lui dit : une
         // douleur, l'accord du médecin, l'effort d'une course sans montre.
         questions: await questionsFor(s),
+        questionsAhead: await questionsAhead(s),
         // Ce qui doit être vrai pour courir l'objectif de la reprise, et la donnée
         // qui fonde chaque point : une réassurance se montre avec ses preuves.
         criteria: raceCriteria(s, await db.listPlannedSessions(A, daysAgo(21), iso(new Date(Date.now() + 30 * dayMs)))),
@@ -619,6 +636,39 @@ export async function buildServer() {
       adjustmentSummary: applied > 0 ? describeAdjustments(adjustments) : null,
       questions: await questionsFor(applied > 0 ? await loadAthleteState(A) : state),
     };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Notifications : ce qui atteint le téléphone sans qu'on l'ouvre (`push.ts`)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** La clef publique du service, avec laquelle le téléphone s'abonne. */
+  app.get('/api/push/key', async () => ({
+    publicKey: (await vapidKeys()).publicKey,
+    devices: (await db.listPushSubscriptions(A)).length,
+  }));
+
+  app.post('/api/push/subscribe', async (req, reply) => {
+    const body = (req.body ?? {}) as { subscription?: unknown; origin?: unknown; device?: unknown };
+    const sub = readSubscription(body.subscription);
+    if (!sub) return reply.code(400).send({ error: 'Abonnement illisible, ou relais inconnu.' });
+    if (typeof body.origin === 'string') await rememberOrigin(body.origin);
+    await db.savePushSubscription({
+      ...sub, athleteId: A, device: typeof body.device === 'string' ? body.device.slice(0, 60) : null,
+      createdAt: new Date().toISOString(),
+    });
+    // La première : elle prouve la liaison, et lance la première synchronisation.
+    const outcome = await notifyDevices(A, {
+      force: { title: 'Cairn est relié à ce téléphone', body: 'Les nouveautés du Mac arriveront ici, et l\'app se mettra à jour sans que tu l\'ouvres.' },
+      log: (line) => req.log.info(line),
+    });
+    return { ok: true, sent: outcome.sent, skipped: outcome.skipped };
+  });
+
+  app.post('/api/push/unsubscribe', async (req) => {
+    const endpoint = ((req.body ?? {}) as { endpoint?: unknown }).endpoint;
+    if (typeof endpoint === 'string') await db.deletePushSubscription(endpoint);
+    return { ok: true };
   });
 
   app.post('/api/tests', async (req, reply) => {

@@ -1,13 +1,14 @@
 'use client';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { groundText, itinerary } from '@cairn/core/terrain';
-import { frDate, frStamp, nbsp, num } from '@/lib/api';
+import { frDate, nbsp, num } from '@/lib/api';
 import type {
   DeclaredAbsence, GarminOverview, GarminStatus, HistoryAuthor, LoadRatioAlertRow, Readiness, ReadinessComponent,
   ReadinessSource, SessionRow,
 } from '@/lib/api';
 import type { LoadWord } from '@/lib/figures';
 import { useOutbox } from '@/lib/offline';
+import { syncedLabel, useSync } from '@/lib/sync';
 import { Term } from '@/components/Term';
 
 export function Card({
@@ -142,57 +143,83 @@ const STALE_HOURS = 36;
 
 /** « 37 h », puis « 3 jours » — au-delà de deux jours, les heures ne se lisent plus. */
 function since(hours: number): string {
-  return hours < 48 ? `${num(hours)} h` : `${num(Math.floor(hours / 24))} jours`;
+  return hours < 48 ? `${num(hours)} h` : `${num(Math.floor(hours / 24))} jours`;
 }
 
 /**
- * Ce que l'écran dit quand ce qu'il montre ne vient pas du réseau.
+ * Où en est ce que l'écran montre, en une ligne — la même sur tous les écrans.
  *
- * Jamais un chiffre sans sa fraîcheur : tant que le Mac répond, cette ligne
- * n'existe pas ; dès qu'il ne répond plus, elle porte la date du relevé. Au-delà
- * de {@link STALE_HOURS}, elle dit en toutes lettres que ce n'est pas l'état du
- * jour, parce qu'une date seule finit par se lire comme un détail.
- */
-export function Stale({ recordedAt }: { recordedAt: string }) {
-  const hours = Math.max(0, Math.floor((Date.now() - new Date(recordedAt).getTime()) / 3_600_000));
-  const expired = hours >= STALE_HOURS;
-  return (
-    <div className="stale" data-old={expired}>
-      {expired ? (
-        <>
-          <strong>Sans contact depuis {since(hours)}.</strong> Ce que tu lis a été relevé le{' '}
-          {frStamp(recordedAt)}. Ce n&apos;est pas ton état d&apos;aujourd&apos;hui : ni ta charge, ni
-          ta disponibilité, ni ta séance n&apos;ont été recalculées depuis.
-        </>
-      ) : (
-        <>Hors réseau · relevé du {frStamp(recordedAt)}</>
-      )}
-    </div>
-  );
-}
-
-/**
- * Ce qui attend de partir.
+ * Le 10/11, Pierre : « j'ai toujours un doute sur l'état de la synchronisation ».
+ * La ligne répond à la seule question qui compte : ce que je lis est-il à jour ?
+ * Le Mac vient de répondre : « à jour ». Il dort : « hors ligne », et de quand
+ * date ce qu'on lit. Ce qui attend de partir s'y dit aussi — tant que c'est là,
+ * rien n'est enregistré. Au-delà de {@link STALE_HOURS}, elle dit en toutes
+ * lettres que ce n'est pas l'état du jour : une date seule finit par se lire
+ * comme un détail. Un refus du serveur ne s'efface pas tout seul : l'écriture
+ * est perdue, et se taire reviendrait à la déclarer partie.
  *
- * Tant que cette ligne est là, rien n'est enregistré — c'est toute la raison
- * pour laquelle elle est là. Un refus du serveur, lui, ne s'efface pas tout
- * seul : l'écriture est perdue, et se taire reviendrait à la déclarer partie.
+ * `recordedAt` est la date de la lecture de cet écran quand elle sort de la
+ * réserve ; nulle, elle vient du Mac à l'instant.
  */
-export function Waiting() {
+export function SyncLine({ recordedAt, className }: { recordedAt: string | null; className?: string }) {
   const { pending, refused } = useOutbox();
-  if (refused) {
-    return (
-      <div className="stale" data-old="true">
-        <strong>Ton envoi a été refusé.</strong> {refused} Rien n&apos;a été enregistré.
-      </div>
-    );
+  const { live, syncedAt } = useSync();
+  // Le rendu du serveur et la première passe du navigateur ne connaissent pas l'heure du téléphone.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const waiting = pending > 0
+    ? `${pending === 1 ? '1 réponse partira' : `${num(pending)} réponses partiront`} dès que le Mac répondra`
+    : null;
+  const at = recordedAt ?? (live === false ? syncedAt : null);
+  const hours = at && now != null ? Math.max(0, Math.floor((now - new Date(at).getTime()) / 3_600_000)) : 0;
+  const expired = at != null && hours >= STALE_HOURS;
+
+  let state: 'live' | 'catching' | 'offline' | 'unknown';
+  let text: string;
+  if (recordedAt && live) {
+    // Le Mac répond, l'écran montre encore sa réserve : il se relit.
+    state = 'catching';
+    text = 'Mise à jour…';
+  } else if (at) {
+    state = 'offline';
+    text = now == null ? 'Hors ligne' : `Hors ligne · synchronisé ${syncedLabel(at, new Date(now))}`;
+  } else if (live === false) {
+    state = 'offline';
+    text = 'Hors ligne';
+  } else if (live) {
+    state = 'live';
+    text = 'À jour';
+  } else {
+    state = 'unknown';
+    text = '';
   }
-  if (pending === 0) return null;
+
   return (
-    <div className="stale">
-      {pending === 1 ? 'Une réponse' : `${num(pending)} réponses`} en attente d&apos;envoi
-      {pending === 1 ? ' : elle partira' : ' : elles partiront'} au retour du réseau. Rien n&apos;est
-      encore enregistré.
+    <div className={`sync${className ? ` ${className}` : ''}`} data-state={state} data-old={expired} role="status">
+      {text && (
+        <p className="sync-line">
+          <span className="sync-dot" aria-hidden />
+          {text}
+        </p>
+      )}
+      {/* Tant que cette ligne est là, rien n'est enregistré : c'est toute sa raison d'être. */}
+      {waiting && <p className="sync-line sync-waiting">{waiting}</p>}
+      {expired && (
+        <p className="sync-note">
+          <strong>Sans contact avec le Mac depuis {since(hours)}.</strong> Ni ta charge, ni ta disponibilité, ni tes
+          séances n&apos;ont été recalculées depuis.
+        </p>
+      )}
+      {refused && (
+        <p className="sync-note" data-warn>
+          <strong>Ton envoi a été refusé.</strong> {refused} Rien n&apos;a été enregistré.
+        </p>
+      )}
     </div>
   );
 }

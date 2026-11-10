@@ -107,6 +107,47 @@ describe('Cadence', () => {
   });
 });
 
+describe('Au réveil du Mac', () => {
+  it('relève dans la minute, même quand la relève n’était pas échue', async () => {
+    // Le 10/11 : « j'ouvre mon ordinateur, il faut que l'application se
+    // synchronise. » Le réveil vaut relève : c'est elle qui fait entrer la sortie
+    // du matin, tourner les règles et prévenir le téléphone.
+    const run = vi.fn(async () => progress());
+    const p = poller(run);
+    await p.start();
+    await tourner();
+    await vi.advanceTimersByTimeAsync(2 * MIN);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(Date.now() + 8 * MIN); // le capot fermé huit minutes : la relève suivante n'est due que dans cinq
+    await vi.advanceTimersByTimeAsync(1 * MIN);
+    expect(run).toHaveBeenCalledTimes(2);
+    p.stop();
+  });
+
+  it('retente deux minutes après un échec — le réseau arrive après le réveil —, trois fois au plus', async () => {
+    const run = vi
+      .fn<BackfillFn>()
+      .mockResolvedValueOnce(progress())
+      .mockRejectedValue(new Error('fetch failed'));
+    const p = poller(run);
+    await p.start();
+    await tourner();
+    await vi.advanceTimersByTimeAsync(15 * MIN);
+    expect(run).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2 * MIN);
+    expect(run).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(2 * MIN);
+    expect(run).toHaveBeenCalledTimes(4);
+    // Trois échecs d'affilée : ce n'est plus le réveil, la cadence ordinaire reprend.
+    await vi.advanceTimersByTimeAsync(2 * MIN);
+    expect(run).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(13 * MIN);
+    expect(run).toHaveBeenCalledTimes(5);
+    p.stop();
+  });
+});
+
 describe('Tolérance aux pannes', () => {
   it('poursuit après un échec et compte les échecs consécutifs', async () => {
     const run = vi
@@ -126,11 +167,12 @@ describe('Tolérance aux pannes', () => {
     expect(p.status().lastMessage).toBe('fetch failed');
     expect(p.status().consecutiveFailures).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(15 * MIN);
+    // Un échec se retente deux minutes plus tard.
+    await vi.advanceTimersByTimeAsync(2 * MIN);
     expect(p.status().consecutiveFailures).toBe(2);
 
     // La quatrième relève a bien lieu : l'échec n'a pas arrêté l'horloge.
-    await vi.advanceTimersByTimeAsync(15 * MIN);
+    await vi.advanceTimersByTimeAsync(2 * MIN);
     expect(run).toHaveBeenCalledTimes(4);
     expect(p.status().lastOutcome).toBe('ok');
     expect(p.status().consecutiveFailures).toBe(0);

@@ -514,6 +514,36 @@ export const athleteAnswers = sqliteTable(
   (t) => ({ byAthlete: index('athlete_answers_athlete_idx').on(t.athleteId, t.answeredAt) }),
 );
 
+/**
+ * Les appareils que Cairn sait prévenir (Web Push) : une ligne par abonnement.
+ * `endpoint` est l'adresse que le service de notification du téléphone a donnée
+ * — chez Apple pour un iPhone ; `p256dh` et `auth`, de quoi chiffrer ce qu'on y
+ * envoie, que seul le téléphone sait lire. `digest` est l'empreinte du dernier
+ * message parti : le même ne part pas deux fois.
+ */
+export const pushSubscriptions = sqliteTable('push_subscriptions', {
+  endpoint: text('endpoint').primaryKey(),
+  athleteId: text('athlete_id').notNull(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  device: text('device'),
+  createdAt: text('created_at').notNull(),
+  lastSentAt: text('last_sent_at'),
+  lastDigest: text('last_digest'),
+  lastError: text('last_error'),
+});
+
+/**
+ * Ce que le service garde pour lui, clef par clef : la paire de clefs VAPID qui
+ * signe les notifications, créée au premier besoin. Dans la base, que git
+ * ignore : une clef privée n'a rien à faire dans le dépôt.
+ */
+export const serviceSecrets = sqliteTable('service_secrets', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
 export type AthleteRow = typeof athletes.$inferSelect;
 export type ActivityRow = typeof activities.$inferSelect;
 export type PlannedSessionRow = typeof plannedSessions.$inferSelect;

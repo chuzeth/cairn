@@ -1001,6 +1001,19 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .m-q-choice[data-on] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .m-q-choice[data-primary] { color: var(--bg); background: var(--text); border-color: var(--text); }
 
+/* ── L'invitation aux notifications (`components/Push.tsx`) ─────────────────── */
+
+.m-push { display: flex; flex-direction: column; gap: 10px; padding: 14px 0 14px 14px; border-left: 2px solid var(--text); }
+.m-push-head { margin: 0; font-family: var(--serif); font-size: 21px; line-height: 1.25; color: var(--text); text-wrap: pretty; }
+.m-push-why { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-dim); text-wrap: pretty; }
+.m-push-why[data-warn] { color: var(--warn); }
+.m-push-button {
+  align-self: flex-start; min-height: 44px; padding: 10px 18px; border: 0; border-radius: 0; cursor: pointer;
+  background: var(--text); color: var(--bg); font-size: 12px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.m-push-button:disabled { opacity: 0.5; cursor: default; }
+
 /* ── Les critères du dossard ─────────────────────────────────────────────── */
 
 /* Une colonne étroite pour l'état, une large pour le critère et sa preuve. L'état
@@ -1045,19 +1058,32 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
    en alerte au-delà de 36 h, parce qu'un état périmé servi en silence se lit
    comme l'état du jour. Même ligne pour les écritures qui n'ont pas pu partir :
    c'est le même mensonge qu'on évite, dans l'autre sens. */
-.stale {
-  padding: 10px 12px; margin-bottom: 18px; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--bg-elev);
-  font-size: 12.5px; line-height: 1.45; color: var(--text-dim);
+/* ── Où en est la synchronisation (`SyncLine`) ─────────────────────────────── */
+
+/* Une ligne, la même partout : un point, un état, une date. À jour, elle
+   s'efface presque ; hors ligne, elle se lit ; périmée, elle prévient. */
+.sync { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.sync:empty { display: none; }
+.sync-line {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  font-size: 11px; line-height: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
 }
-.stale[data-old="true"] {
-  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
-  background: color-mix(in srgb, var(--warn) 9%, var(--bg-elev));
-  color: var(--text);
-}
-.stale strong { font-weight: 600; }
+.sync-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+/* Ce qui attend de partir : sous l'état, aligné sur son texte, à l'encre. */
+.sync-waiting { padding-left: 14px; color: var(--text); }
+.sync[data-state="offline"] .sync-line { color: var(--text); }
+.sync[data-state="offline"] .sync-dot { background: none; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+.sync[data-state="catching"] .sync-dot { background: var(--text-faint); animation: sync-pulse 1.2s ease-in-out infinite; }
+.sync[data-state="unknown"] .sync-dot { background: var(--border-strong); }
+.sync[data-old="true"] .sync-dot { background: var(--warn); box-shadow: none; }
+@keyframes sync-pulse { 50% { opacity: 0.3; } }
+.sync-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-dim); text-wrap: pretty; }
+.sync-note strong { font-weight: 600; color: var(--text); }
+.sync-note[data-warn] { color: var(--warn); }
 /* L'écran du matin espace ses blocs lui-même : une marge de plus ferait un trou. */
-.morning .stale { margin-bottom: 0; }
+.morning .sync { margin-bottom: 0; }
+/* Sur l'ordinateur, le Mac se lit lui-même : « à jour » n'y apprend rien. */
+@media (width >= 1100px) { .sync[data-state="live"], .sync[data-state="unknown"] { display: none; } }
 
 /* ── Divers ───────────────────────────────────────────────────────────────── */
 
@@ -1217,10 +1243,9 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   .route-steps { margin-left: 0; }
 }
 
-/* ── L'écran d'ouverture et Face ID (`components/Lock.tsx`) ───────────────── */
-/* Le 14/10, Pierre : « une petite page de chargement et un petit Face ID ». Le
-   papier, les courbes de niveau, le nom ; Face ID se lance seul, le bouton ne
-   vient qu'après un échec. Le même écran couvre l'app en arrière-plan. */
+/* ── L'écran de Face ID (`components/Lock.tsx`) ───────────────────────────── */
+/* Une fois par appareil : le papier, les courbes de niveau, le nom ; Face ID se
+   lance seul, le bouton ne vient qu'après un échec. */
 .lock {
   position: fixed; inset: 0; z-index: 1000;
   display: grid; place-items: center;
@@ -1256,11 +1281,9 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
 .lock-button:disabled { opacity: 0.5; }
 .lock-button-glyph { width: 20px; height: 20px; }
 .lock-message { min-height: 1.5em; margin: 14px 0 0; color: var(--climb); font-size: 14px; line-height: 1.45; }
-.lock-offline { margin: 6px 0 0; color: var(--text-faint); font-size: 13px; line-height: 1.45; }
 /* Face ID passé : l'écran s'efface, l'app est déjà dessous. */
 .lock-leave { animation: lock-leave 420ms var(--ease-out) both; pointer-events: none; }
 @keyframes lock-leave { to { opacity: 0; transform: scale(1.04); } }
-.lock-veil .lock-title { animation: none; }
 
 /* « comment faire » : la fiche de l'exercice, à côté de son nom (`/exercices`). */
 .m-howto {
@@ -1865,5 +1888,5 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   ::view-transition-old(*), ::view-transition-new(*), ::view-transition-group(*) {
     animation-duration: 0s !important; animation-delay: 0s !important;
   }
-  .reveal, .lock-title, .lock-sub, .lock-button, .lock-leave, .lock-topo g, .lock-glyph { animation: none !important; }
+  .reveal, .lock-title, .lock-sub, .lock-button, .lock-leave, .lock-topo g, .lock-glyph, .sync-dot { animation: none !important; }
 }

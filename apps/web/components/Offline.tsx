@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { boot } from '@/lib/offline';
 import { watchLive } from '@/lib/live';
+import { watchSync } from '@/lib/sync';
 import { watchVersion } from '@/lib/version';
 
 /**
@@ -17,6 +18,7 @@ export function Offline() {
   useEffect(() => {
     boot();
     watchVersion();
+    watchSync();
     watchLive();
   }, []);
   return null;

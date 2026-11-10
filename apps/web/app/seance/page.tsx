@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import type { StrengthTestResult } from '@cairn/core';
 import { PLAN_URL, frDate, getStamped, todayIso, type PlanResponse, type SessionRow } from '@/lib/api';
 import { onForeground } from '@/lib/version';
-import { ErrorBox, Loading, Stale } from '@/components/ui';
+import { ErrorBox, Loading, SyncLine } from '@/components/ui';
 import { WorkoutView } from '@/components/Workout';
 
 /**
@@ -80,7 +80,7 @@ function Seance() {
 
   return (
     <>
-      {recordedAt && <Stale recordedAt={recordedAt} />}
+      <SyncLine recordedAt={recordedAt} />
       <WorkoutView
         session={session}
         tests={tests}

@@ -9,7 +9,7 @@ import {
   circuitText, CRITERION_LABELS, originLabel, planName, provenanceText, recoveryText,
 } from '@/lib/sessions';
 import {
-  AbsenceNotice, Badge, ErrorBox, GarminLine, GarminProblems, Loading, RatioAlerts, SessionHistory, Stale, WhereLine,
+  AbsenceNotice, Badge, ErrorBox, GarminLine, GarminProblems, Loading, RatioAlerts, SessionHistory, SyncLine, WhereLine,
 } from '@/components/ui';
 import { Figures } from '@/components/Today';
 import { Term } from '@/components/Term';
@@ -133,7 +133,7 @@ export default function PlanPage() {
   return (
     <div className="p">
       {/* Hors réseau, le plan est celui de la dernière lecture : il le dit d'abord. */}
-      {recordedAt && <Stale recordedAt={recordedAt} />}
+      <SyncLine recordedAt={recordedAt} />
 
       <header className="p-head">
         <div className="p-eyebrow">
