@@ -1,5 +1,12 @@
 node_modules/
 .next/
+# Hors d'iCloud : le dépôt vit dans Documents, qu'iCloud synchronise et vide
+# (« Optimiser le stockage ») ; le service, en arrière-plan, ne peut pas relire
+# un fichier évincé. Les dépendances et le cache de Next vivent donc dans des
+# dossiers `.nosync`, et `node_modules` / `.next` ne sont que des liens vers eux.
+node_modules
+.next
+*.nosync/
 /.service.nosync/
 dist/
 .env

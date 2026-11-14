@@ -518,7 +518,31 @@ async function status() {
     : '';
   console.log(`contact   ${seen.lastContactAt ? `${when(seen.lastContactAt)}, ${ago(seen.lastContactAt)}` : 'aucun enregistré (surveillance démarrée au prochain lancement)'}${reprises}`);
 
+  console.log(`icloud    ${evicted()}`);
   console.log(`journaux  ${LOG} ; mises à jour ${DEPLOY_LOG}`);
+}
+
+/**
+ * Ce qu'iCloud a retiré du disque. Le dépôt vit dans Documents, qu'iCloud
+ * synchronise ; avec « Optimiser le stockage du Mac », il remplace les fichiers
+ * peu lus par des fichiers vides qu'il retélécharge à la lecture — sauf pour un
+ * processus d'arrière-plan comme le service, à qui la lecture est refusée
+ * (« Unknown system error -11 »). Le 14/11, 22 884 fichiers évincés, dont Next.js
+ * et des sources : le site a planté en boucle neuf heures. Les dépendances et le
+ * cache de Next sont depuis hors d'iCloud (`*.nosync`) ; ce qui reste se compte ici.
+ */
+function evicted() {
+  const res = spawnSync('/usr/bin/find', [
+    REPO, '-flags', '+dataless',
+    '-not', '-path', `${REPO}/.claude/*`, '-not', '-path', `${REPO}/node_modules*`, '-not', '-path', `${REPO}/.service.nosync/*`,
+    '-not', '-path', `${REPO}/apps/web/.next*`,
+  ], { encoding: 'utf8', timeout: 20_000 });
+  if (res.error) return `vérification impossible (${res.error.message})`;
+  const files = res.stdout.split('\n').filter(Boolean);
+  if (files.length === 0) return 'aucun fichier évincé';
+  const shown = files.slice(0, 3).map((f) => f.slice(REPO.length + 1)).join(', ');
+  return `⚠ ${files.length} fichier(s) évincé(s) par iCloud (${shown}${files.length > 3 ? '…' : ''}) : ` +
+    'le service ne peut pas les relire — ouvre-les une fois depuis le Finder, ou coupe « Optimiser le stockage du Mac »';
 }
 
 /**
