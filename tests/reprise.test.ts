@@ -229,11 +229,13 @@ describe('La reprise, du 09 au 29/11', () => {
     const answers = ['r0', 'r2', 'r4', 'r6', 'r8', 'r9', 'r10'].map((id) => answer('run_pain', id, { score: 0 }));
     await rules(gateDay, answers, activities);
     expect(at('r19').title).toMatch(/Saintétic/);
-    expect(at('r19').rationale).toMatch(/sortie longue du 2026-11-21 n'a pas été faite/);
+    // Une date se lit comme on l'écrit — « 21/11 », jamais « 2026-11-21 » (le 15/11, sur l'écran du matin).
+    expect(at('r19').rationale).toMatch(/sortie longue du 21\/11 n'a pas été faite/);
+    expect(at('r19').rationale).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     // Faite sans douleur, le critère est rempli ; une douleur de 3 le lendemain, non.
     const long = { sessionId: 'r12', date: day(12), level: 5, kind: 'long' as const, done: true, painDuring: 0, painMorning: 1 };
     const older = { ...long, sessionId: 'r6', date: day(6) };
-    expect(raceGate([older, long], [], CEILING).met).toBe(true);
+    expect(raceGate([older, long], [], CEILING)).toEqual({ met: true, reason: 'la sortie longue du 21/11 faite sans douleur' });
     expect(raceGate([older, { ...long, painMorning: 3 }], [], CEILING).met).toBe(false);
     expect(raceGate([older, { ...long, done: false }], [], CEILING).met).toBe(false);
   });

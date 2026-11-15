@@ -95,6 +95,35 @@ export function weekStartOf(date: string): string {
   return new Date(d.getTime() + (dow === 0 ? -6 : 1 - dow) * 86_400_000).toISOString().slice(0, 10);
 }
 
+/**
+ * Le jour du téléphone, AAAA-MM-JJ. `toISOString` donne le jour UTC : à 0 h 30 à
+ * Lyon, il disait encore hier. `offsetMin` est celui de `getTimezoneOffset`.
+ */
+export function localIso(at = new Date(), offsetMin = at.getTimezoneOffset()): string {
+  return new Date(at.getTime() - offsetMin * 60_000).toISOString().slice(0, 10);
+}
+
+/** Ce qui reste à faire : une séance prévue, ni repos, ni faite, ni retirée. */
+const toDo = (s: { type: string; status: string }) => s.type !== 'rest' && (s.status === 'planned' || s.status === 'moved');
+
+/**
+ * La semaine de `today` est-elle finie ? Plus rien à faire d'ici dimanche —
+ * aujourd'hui compris : la séance du jour faite, il ne reste rien.
+ */
+export function weekDone(sessions: readonly { date: string; type: string; status: string }[], today: string): boolean {
+  const sunday = new Date(Date.parse(`${weekStartOf(today)}T12:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
+  return !sessions.some((s) => s.date >= today && s.date <= sunday && toDo(s));
+}
+
+/**
+ * Le lundi de la semaine à montrer d'abord, quand ce n'est pas celle de `today` :
+ * la semaine suivante, dès que celle-ci n'a plus rien à faire. `null` sinon.
+ */
+export function nextWeekOf(sessions: readonly { date: string; type: string; status: string }[], today: string): string | null {
+  if (!weekDone(sessions, today)) return null;
+  return new Date(Date.parse(`${weekStartOf(today)}T12:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+}
+
 /** Ce qui pèse encore dans une semaine : une séance retirée ou annulée ne compte plus. */
 export const held = (s: Pick<SessionRow, 'status'>) => s.status !== 'withdrawn' && s.status !== 'cancelled';
 

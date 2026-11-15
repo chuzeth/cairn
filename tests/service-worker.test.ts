@@ -341,18 +341,39 @@ describe('Le Mac dort : rien n’attend', () => {
       expect(await served!.text()).toBe('{"seance":"footing"}');
       await vi.advanceTimersByTimeAsync(2000);
       await Promise.all(background);
-      expect(told).toContainEqual({ type: 'frais', path: '/api/plan?weeks=9' });
+      expect(told).toContainEqual({ type: 'frais', path: '/api/plan?weeks=9', changed: true });
       expect(await (await data().match('/api/plan?weeks=9'))!.text()).toBe('{"seance":"seuil"}');
-      // La même réponse, en retard : rien à redire.
-      told = [];
-      const again: Promise<unknown>[] = [];
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dit aussi une réponse en retard identique : l’écran cesse de se dire « mise à jour », et sa relecture attend le Mac', async () => {
+    // Le 15/11, sur le Mac : « Mise à jour… » restait affiché. La réserve avait
+    // servi, le Mac avait répondu la même chose une seconde plus tard, et rien
+    // ne le disait à l'écran — qui gardait sa lecture datée pour toujours.
+    network = () => json('{"seance":"footing"}');
+    await browse('/api/state', 'cors');
+    vi.useFakeTimers();
+    try {
+      network = () => new Promise((resolve) => setTimeout(() => resolve(json('{"seance":"footing"}')), 2000));
+      const background: Promise<unknown>[] = [];
+      let first: Response | undefined;
       handlers.fetch!({
-        request: { url: `${ORIGIN}/api/plan?weeks=9`, method: 'GET', mode: 'cors' },
-        respondWith: () => {}, waitUntil: (p: Promise<unknown>) => { again.push(p); },
+        request: { url: `${ORIGIN}/api/state`, method: 'GET', mode: 'cors' },
+        respondWith: (p: Promise<Response>) => { void p.then((r) => { first = r; }); },
+        waitUntil: (p: Promise<unknown>) => { background.push(p); },
       });
-      await vi.advanceTimersByTimeAsync(3500);
-      await Promise.all(again);
-      expect(told.filter((m) => m.type === 'frais')).toEqual([]);
+      await vi.advanceTimersByTimeAsync(2500);
+      await Promise.all(background);
+      expect(first!.headers.get('x-cairn-recorded-at')).toBeTruthy();
+      expect(told).toContainEqual({ type: 'frais', path: '/api/state', changed: false });
+      // L'écran relit : cette fois la réponse du Mac est attendue, même lente — elle arrive sans date.
+      let second: Response | undefined;
+      void respond('/api/state', 'cors').then((r) => { second = r; });
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(second, 'servie par le réseau').toBeDefined();
+      expect(second!.headers.get('x-cairn-recorded-at')).toBeNull();
     } finally {
       vi.useRealTimers();
     }

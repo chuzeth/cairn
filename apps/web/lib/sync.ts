@@ -86,6 +86,15 @@ export async function requestSync(force = false): Promise<void> {
   worker.postMessage({ type: 'sync' }, [channel.port2]);
 }
 
+let rereadTimer: ReturnType<typeof setTimeout> | null = null;
+function reread(): void {
+  if (rereadTimer) return;
+  rereadTimer = setTimeout(() => {
+    rereadTimer = null;
+    window.dispatchEvent(new Event('cairn:changement'));
+  }, 300);
+}
+
 let started = false;
 
 /** À l'ouverture : ce que le worker sait déjà, et ce qu'il dira ensuite. */
@@ -96,8 +105,9 @@ export function watchSync(): void {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('message', (event) => {
     const message = event.data as { type?: string; ok?: boolean; sent?: number } | null;
-    // Le Mac a répondu après que l'écran s'est affiché sur sa réserve : il se relit.
-    if (message?.type === 'frais') window.dispatchEvent(new Event('cairn:changement'));
+    // Le Mac a répondu après que l'écran s'est affiché sur sa réserve : il se relit — une fois
+    // pour toutes les adresses qui arrivent ensemble.
+    if (message?.type === 'frais') reread();
     if (message?.type === 'synchro') {
       if (message.ok) publish({ syncedAt: new Date().toISOString(), live: true });
       // Le worker a vidé la file : la page recompte ce qui attend encore, et les

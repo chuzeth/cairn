@@ -270,7 +270,11 @@ export function dayName(dow: number): string {
   return DAYS[dow] ?? '';
 }
 
-export const todayIso = () => new Date().toISOString().slice(0, 10);
+/** Le jour du téléphone — pas le jour UTC, qui à 0 h 30 à Lyon dit encore hier. */
+export const todayIso = () => {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+};
 
 /**
  * Le jour que l'écran tient pour aujourd'hui.

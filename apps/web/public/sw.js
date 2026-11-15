@@ -133,6 +133,14 @@ const DOWN_FOR_MS = 60000;
 let downAt = 0;
 const down = () => Date.now() - downAt < DOWN_FOR_MS;
 
+/**
+ * Les adresses auxquelles le Mac vient de répondre après que la réserve a servi.
+ * Leur relecture, dans ce délai, attend le réseau au lieu de la réserve : c'est
+ * elle qui ôte la date de l'écran.
+ */
+const lateAt = new Map();
+const LATE_FOR_MS = 30000;
+
 /** Ce qu'une page jamais vue attend avant d'abandonner, ms. */
 const PAGE_WAIT_MS = 8000;
 
@@ -464,7 +472,12 @@ async function reserve(event) {
       const body = await res.clone().blob();
       await cache.put(key, stamped(body, res.headers));
       await contact();
-      if (late && before && (await before.text()) !== (await body.text())) await tell({ type: 'frais', path: key });
+      // La réserve a servi avant lui : l'écran le sait, et se relit — même à l'identique, il cesse
+      // alors de se présenter comme une lecture datée. Sa relecture, elle, attend le Mac.
+      if (late) {
+        lateAt.set(key, Date.now());
+        await tell({ type: 'frais', path: key, changed: before ? (await before.text()) !== (await body.text()) : true });
+      }
     }
     return res;
   })();
@@ -474,6 +487,11 @@ async function reserve(event) {
   // un écran sans entraînement.
   if (!cached) return network;
   event.waitUntil(network.catch(() => {}));
+  // Le Mac vient de répondre en retard à cette adresse : l'écran la relit pour avoir sa réponse, il l'attend.
+  if (Date.now() - (lateAt.get(key) ?? 0) < LATE_FOR_MS) {
+    lateAt.delete(key);
+    return within(network, NETWORK_MAX_MS).catch(() => cached);
+  }
   if (down()) {
     late = true;
     return cached;

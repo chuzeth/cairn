@@ -15,7 +15,7 @@ import {
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import { estimateNote, loadFigures } from '@/lib/figures';
 import { isWorkout, stairsEstimated, workoutOf } from '@/lib/workout';
-import { thresholdMinutes } from '@/lib/today';
+import { nextWeekOf, thresholdMinutes } from '@/lib/today';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, RatioAlerts, ReadinessBasis, SessionHistory,
   SyncLine, unweighed, WhereLine,
@@ -102,6 +102,7 @@ export function Morning({
     ? undefined
     : plan.sessions.find((s) => s.plannedDate === today && s.date < today && answeredStatus(s));
   const absence = state.absences.find((a) => a.startDate <= today && a.endDate >= today);
+  const weekOver = nextWeekOf(plan.sessions, today);
   const doneToday = plan.completedByDate[today];
   const next = plan.sessions.find(
     (s) => s.date > today && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled',
@@ -192,6 +193,10 @@ export function Morning({
         </section>
       )}
 
+      {/* La semaine finie — la séance du jour faite, plus rien d'ici dimanche —, c'est la
+          suivante qu'on regarde : ses séances, jour par jour. */}
+      {weekOver && <WeekAhead sessions={plan.sessions} monday={weekOver} />}
+
       <div className="m-rule" />
 
       <Availability state={state} today={today} dayBehind={dayBehind} onReload={onReload} />
@@ -216,7 +221,7 @@ export function Morning({
         </section>
       ))}
 
-      {next && !openNext && (
+      {next && !openNext && !weekOver && (
         <>
           <p className="m-after">
             {isTomorrow(next.date, today) ? 'Demain' : 'Ensuite'}, {frDate(next.date, { weekday: true, long: true })}
@@ -238,6 +243,49 @@ export function Morning({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * La semaine qui vient, jour par jour : ce qu'on prépare le dimanche soir. Une
+ * séance que les règles ont réécrite le dit, avec la raison.
+ */
+const SHORT_DAY = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+
+function WeekAhead({ sessions, monday }: { sessions: SessionRow[]; monday: string }) {
+  const sunday = new Date(Date.parse(`${monday}T12:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
+  const days = sessions
+    .filter((s) => s.date >= monday && s.date <= sunday && s.status !== 'cancelled' && s.status !== 'withdrawn')
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (days.length === 0) return null;
+  return (
+    <section className="m-week" aria-label="La semaine prochaine">
+      <div className="m-label">La semaine prochaine</div>
+      <ul className="m-week-list">
+        {days.map((s) => {
+          const rest = s.type === 'rest';
+          const { runS } = runAndAnnex(s, s.plannedDurationS);
+          const ruled = s.decision?.by === 'rules';
+          return (
+            <li key={s.id} className="m-week-day" data-rest={rest || undefined}>
+              <span className="m-week-date">{SHORT_DAY[new Date(`${s.date}T12:00:00Z`).getUTCDay()]} {Number(s.date.slice(8, 10))}</span>
+              <span className="m-week-what">
+                {rest ? (
+                  'Repos'
+                ) : (
+                  <Link href={`/seance?d=${s.date}`} className="m-week-link" transitionTypes={['nav-forward']}>
+                    {sessionHeadline(s)}
+                  </Link>
+                )}
+                {ruled && s.decision && <span className="m-week-why">{nbsp(firstSentence(s.decision.summary))}</span>}
+              </span>
+              {!rest && <span className="m-week-time">{prime(runS || s.plannedDurationS)}</span>}
+            </li>
+          );
+        })}
+      </ul>
+      <Link href="/plan" className="m-link" transitionTypes={['nav-forward']}>Le plan de la semaine →</Link>
+    </section>
   );
 }
 

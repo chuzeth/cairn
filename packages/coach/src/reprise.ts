@@ -110,6 +110,9 @@ const isReprise = (s: PlannedSession) => s.program?.name === 'reprise';
 const isRun = (s: PlannedSession) => isReprise(s) && s.program!.kind !== 'cross' && s.program!.kind !== 'race';
 const DONE = new Set(['completed', 'replaced', 'partial']);
 
+/** Une date comme on l'écrit dans une phrase : « 21/11 ». */
+const dm = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+
 const nextDay = (date: string) => new Date(Date.parse(`${date}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
 const answerFor = (answers: readonly AthleteAnswer[], question: AthleteAnswer['question'], subject: string) =>
@@ -278,13 +281,13 @@ export function allowedLevel(
     if (after.length === 0) {
       return {
         step: 'down', level: Math.max(1, stopped.level - 1), painful: true,
-        reason: `la douleur est retombée (${relief!.value.score} sur 10 le ${relief!.subject}) : on repart une marche plus bas`,
+        reason: `la douleur est retombée (${relief!.value.score} sur 10 le ${dm(relief!.subject)}) : on repart une marche plus bas`,
       };
     }
   }
 
   if (last !== lastDone) {
-    return { step: 'hold', level: lastDone.level, reason: `la course du ${last.date} n'a pas été faite : on reste sur la marche ${lastDone.level}` };
+    return { step: 'hold', level: lastDone.level, reason: `la course du ${dm(last.date)} n'a pas été faite : on reste sur la marche ${lastDone.level}` };
   }
   const verdict = judgeRun(lastDone, easyCeiling);
   // Deux courses de suite au-dessus du cœur ou de l'effort prévus : expliquées ou non, ce n'est plus un jour.
@@ -295,7 +298,7 @@ export function allowedLevel(
     if ((a === 'heart' || a === 'effort') && (b === 'heart' || b === 'effort')) {
       return {
         step: 'hold', level: lastDone.level,
-        reason: `deux courses de suite plus dures que prévu (${before.date} et ${lastDone.date}) : ce n'est plus un écart d'un jour`,
+        reason: `deux courses de suite plus dures que prévu (${dm(before.date)} et ${dm(lastDone.date)}) : ce n'est plus un écart d'un jour`,
       };
     }
   }
@@ -326,14 +329,14 @@ export function raceGate(
 ): { met: boolean; reason: string } {
   const long = runs.filter((r) => r.level >= 5 && r.kind === 'long').at(-1) ?? runs.filter((r) => r.level >= 5).at(-1);
   if (!long) return { met: false, reason: 'la sortie longue n\'a pas encore eu lieu' };
-  if (!long.done) return { met: false, reason: `la sortie longue du ${long.date} n'a pas été faite` };
+  if (!long.done) return { met: false, reason: `la sortie longue du ${dm(long.date)} n'a pas été faite` };
   const since = runs.filter((r) => r.done && r.date >= long.date);
   const sore = since.find((r) => Math.max(r.painDuring ?? 0, r.painMorning ?? 0) > PAIN_HOLD);
   if (sore) {
-    return { met: false, reason: `une douleur de ${Math.max(sore.painDuring ?? 0, sore.painMorning ?? 0)} sur 10 après la course du ${sore.date}` };
+    return { met: false, reason: `une douleur de ${Math.max(sore.painDuring ?? 0, sore.painMorning ?? 0)} sur 10 après la course du ${dm(sore.date)}` };
   }
   if (allowedLevel(runs, answers, easyCeiling).step === 'stop') return { met: false, reason: 'un arrêt pour douleur est en cours' };
-  return { met: true, reason: `la sortie longue du ${long.date} faite sans douleur` };
+  return { met: true, reason: `la sortie longue du ${dm(long.date)} faite sans douleur` };
 }
 
 /** La dernière réponse sur l'accord du médecin pour la reprise (hors arrêt médical). */

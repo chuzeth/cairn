@@ -18,7 +18,7 @@ import { Itinerary } from '@/components/Itinerary';
 import { onForeground } from '@/lib/version';
 import { followsPace } from '@cairn/core/blocks';
 import { isWorkout } from '@/lib/workout';
-import { held, weekStartOf } from '@/lib/today';
+import { held, nextWeekOf, weekStartOf } from '@/lib/today';
 
 /** Le jour de la semaine : une lettre dans la grille, trois dans la liste. */
 const DOW_SHORT = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -118,7 +118,9 @@ export default function PlanPage() {
     byWeek.set(w, [...(byWeek.get(w) ?? []), s]);
   }
   const weeks = [...byWeek.keys()].sort();
-  const weekStart = picked && byWeek.has(picked) ? picked : weeks[0] ?? monday;
+  // La semaine finie — plus rien à faire d'ici dimanche —, le plan s'ouvre sur la suivante.
+  const ahead0 = nextWeekOf(data.sessions, today);
+  const weekStart = picked && byWeek.has(picked) ? picked : ahead0 && byWeek.has(ahead0) ? ahead0 : weeks[0] ?? monday;
   const sessions = byWeek.get(weekStart) ?? [];
   const kept = sessions.filter(held);
   const total = kept.reduce((a, s) => a + s.plannedLoad, 0);
