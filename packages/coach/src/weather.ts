@@ -107,3 +107,24 @@ export async function knownAirTemperatures(activityIds: readonly string[]): Prom
   }
   return out;
 }
+
+/**
+ * Les températures des courses des six derniers mois qui n'en ont pas encore,
+ * `limit` à la fois : la relève les rattrape sans charger l'archive d'un coup.
+ * Rend le nombre de sorties demandées.
+ */
+export async function backfillAirTemperatures(athleteId: string, today: string, limit = 40): Promise<number> {
+  const from = new Date(Date.parse(`${today}T12:00:00Z`) - 200 * DAY_MS).toISOString().slice(0, 10);
+  const runs = (await db.listActivities(athleteId, { from, to: today, limit: 400 }))
+    .filter((a) => ['Run', 'TrailRun', 'VirtualRun'].includes(a.sportType) && !a.trainer);
+  let asked = 0;
+  for (const a of runs) {
+    if (asked >= limit) break;
+    if (await db.getGeo(KEY(a.id))) continue;
+    const stored = await db.getStreams(a.id);
+    if (!stored?.streams.latlng) continue;
+    asked++;
+    await airTemperatureOf(a, stored.streams, today);
+  }
+  return asked;
+}

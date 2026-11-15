@@ -1,7 +1,7 @@
 import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  airTemperatureOf, analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
+  airTemperatureOf, analyzeAndStore, applyAdjustments, backfillAirTemperatures, describeAdjustments, evaluateAdjustments,
   generateActivityInsight, layPlanOnTerrain, loadAthleteState, rebuildPhysiologyModel, recountDecisions,
   rematchRecent, routeUpcoming, type AthleteState,
 } from '@cairn/coach';
@@ -279,6 +279,10 @@ export async function backfill(
         model = await rebuildPhysiologyModel(athleteId);
       }
     }
+
+    // Les températures de l'air des courses passées, quarante par relève : la
+    // chaleur se retire de la FC à allure égale de tout l'historique.
+    await backfillAirTemperatures(athleteId, new Date().toISOString().slice(0, 10)).catch(() => 0);
 
     // Le rattachement des sept derniers jours se refait à chaque relève, qu'elle
     // ait importé ou non : une séance courue la veille ou le lendemain de sa

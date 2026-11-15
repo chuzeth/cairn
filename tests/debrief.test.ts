@@ -267,3 +267,28 @@ describe('La disponibilité lit le cœur à allure égale, à défaut d’une me
     expect(rested.sources.autonomic).toBe('resting-hr');
   });
 });
+
+describe('La température de l’air', () => {
+  it('se demande au dixième de degré près — la ville, jamais la rue', async () => {
+    const { coarseStart } = await import('../packages/coach/src/weather.js');
+    expect(coarseStart({ latlng: [null, [45.76432, 4.83561]] })).toEqual([45.8, 4.8]);
+    expect(coarseStart({ latlng: [] })).toBeNull();
+  });
+
+  it('est la moyenne des heures que la sortie couvre, en UTC', async () => {
+    const { meanOver } = await import('../packages/coach/src/weather.js');
+    const hourly = { time: ['2026-11-15T10:00', '2026-11-15T11:00', '2026-11-15T12:00', '2026-11-15T13:00', '2026-11-15T14:00'], temperature_2m: [10, 12, 14, 16, 30] };
+    // Départ 11 h 21 UTC, 1 h 53 : les heures de 11, 12 et 13 h.
+    expect(meanOver(hourly, '2026-11-15T11:21:34Z', 6780)).toBe(14);
+  });
+
+  it('se retire de la FC à allure égale, au coefficient de l’athlète', () => {
+    const hot = { ...easy('hot', '2026-07-30', 150), airTempC: 30 };
+    const history = Array.from({ length: 6 }, (_, i) => ({ ...easy(`h${i}`, shift('2026-07-30', -2 * (6 - i)), 144), airTempC: 15 }));
+    const d = debrief(hot, history);
+    // Moins de 20 sorties : le repli de 0,4 bpm/°C, dit comme tel.
+    expect(d.heat).toEqual({ bpmPerC: 0.4, provenance: 'default' });
+    expect(d.aerobicTrend.find((p) => p.activityId === 'hot')!.hr).toBeCloseTo(144, 0);
+    expect(d.findings.some((f) => f.code === 'cardiac_strain')).toBe(false);
+  });
+});
