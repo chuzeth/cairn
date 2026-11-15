@@ -249,14 +249,24 @@ export function pendingQuestions(input: {
     });
   }
 
-  // L'effort d'une course sans fréquence cardiaque : sans lui, rien ne dit ce qu'elle a coûté.
+  // L'effort de chaque course. Sans fréquence cardiaque, c'est la seule mesure
+  // de ce qu'elle a coûté ; avec, c'est le second signal qui départage : un
+  // cœur haut à allure égale dit fatigue, chaleur ou capteur — ressenti dur
+  // avec lui, c'est une fatigue (compte rendu, `debrief.ts`). L'effort perçu
+  // juste après la séance est la mesure la mieux validée de ce qu'elle a coûté
+  // (Foster 2001).
   for (const s of recent) {
     const activity = s.completedActivityId ? activities.find((a) => a.id === s.completedActivityId) : undefined;
-    if (activity && activity.averageHr == null && !has('run_rpe', s.id)) {
+    if (activity && !has('run_rpe', s.id)) {
+      const blind = activity.averageHr == null;
       out.push({
         id: `run_rpe:${s.id}`, question: 'run_rpe', subject: s.id,
-        prompt: `Ta course ${dayName(s.date, today)}, sans montre au poignet : quel effort, de 1 à 10 ?`,
-        why: 'Sans fréquence cardiaque, c\'est la seule mesure de ce que la course t\'a coûté.',
+        prompt: blind
+          ? `Ta course ${dayName(s.date, today)}, sans montre au poignet : quel effort, de 1 à 10 ?`
+          : `Ta course ${dayName(s.date, today)} : quel effort, de 1 à 10 ?`,
+        why: blind
+          ? 'Sans fréquence cardiaque, c\'est la seule mesure de ce que la course t\'a coûté.'
+          : 'Ton cœur dit ce que la course a demandé ; toi seul dis ce qu\'elle t\'a coûté. Les deux ensemble séparent une fatigue d\'une journée chaude.',
         choices: RPE, asksSite: false,
       });
     }

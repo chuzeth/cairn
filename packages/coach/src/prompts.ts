@@ -11,6 +11,7 @@ const SOURCE_FR: Record<ReadinessSource, string> = {
   baseline: 'déclaré ce matin, lu contre sa propre norme',
   hrv: 'rMSSD relevé',
   'resting-hr': 'FC de repos relevée',
+  'exercise-hr': 'FC à allure égale de la dernière course, contre la tendance des précédentes',
   default: 'valeur par défaut, rien de relevé',
 };
 

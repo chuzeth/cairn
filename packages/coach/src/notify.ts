@@ -28,6 +28,8 @@ export interface DeviceNotice {
   body: string;
   /** Ce que la notification décrit, partie par partie : la même ne part pas deux fois. */
   digest: string;
+  /** Où elle ouvre l'app : la sortie reçue s'ouvre sur son compte rendu. */
+  url?: string;
 }
 
 /** Ce qu'une notification décrit ; ce qui a changé depuis la précédente décide de ce qu'elle dit. */
@@ -115,6 +117,11 @@ export interface NoticeInput {
   revisions: readonly PlanRevision[];
   /** La dernière notification partie vers cet appareil. */
   last: { digest: string | null; sentAt: string | null };
+  /**
+   * Le verdict du compte rendu des courses récentes (`debriefSession`) : une
+   * sortie reçue se dit par ce qu'elle apprend, pas seulement par sa distance.
+   */
+  verdicts?: readonly { activityId: string; headline: string }[];
   /** L'instant présent, ISO. */
   now: string;
 }
@@ -153,8 +160,15 @@ export function deviceNotice(input: NoticeInput): DeviceNotice | null {
   // Une sortie vient d'arriver : ce qu'elle est, et ce qui en découle.
   if (activity && now.a !== before.a && before.a !== undefined && activity.startDateLocal.slice(0, 10) >= shift(input.today, -1)) {
     const what = `${activity.name} · ${activity.distanceM > 0 ? `${km(activity.distanceM)} km, ` : ''}${sessionDuration(activity.movingTimeS)}`;
+    const verdict = input.verdicts?.find((v) => v.activityId === activity.id)?.headline;
     const then = revision && now.r !== before.r ? ` ${firstSentence(revision.reason)}` : '';
-    return { kind: 'activity', title: 'Séance reçue et analysée', body: short(`${what}.${then}${asks}`), digest };
+    return {
+      kind: 'activity',
+      title: 'Séance reçue et analysée',
+      body: short(`${what}.${verdict ? ` ${verdict}` : ''}${then}${asks}`),
+      digest,
+      url: `/activities/${activity.id}`,
+    };
   }
   // Une question nouvelle : c'est elle qu'on lit.
   if (question && now.q !== before.q && !(before.q ?? '').split(',').includes(question.id)) {

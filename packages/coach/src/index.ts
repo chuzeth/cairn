@@ -29,3 +29,6 @@ export * from './spikes.js';
 export * from './criteria.js';
 export * from './brief.js';
 export * from './notify.js';
+export * from './lessons.js';
+export * from './debriefs.js';
+export * from './weather.js';

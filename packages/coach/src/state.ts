@@ -9,9 +9,11 @@ import {
   computeReadiness, decayedEnvelopeWithCompanion, estimateHrMax, fitCriticalSpeed, gpsQualityOf, hrHistogramOf,
   interpretAcwr, interpretTsb, isRunFree, maximalEffortSupport, measuresGroundSpeed, modelFromLabOnly, monotonize,
   movingIndices, projectFrom, projectLoadRatios, ratioExceedances, type DailyLoad, type EasyRun, type FieldEvidence,
-  type LoadRatioExceedance, type MmpCurve, type ReadinessDay,
+  type LoadRatioExceedance, type MmpCurve, type ReadinessDay, type SessionDebrief,
 } from '@cairn/physiology';
 import { absenceCovering, isQualitySession } from './adapt.js';
+import { debriefRun, isRunActivity, referenceGapFor } from './debriefs.js';
+import { knownAirTemperatures } from './weather.js';
 import { addDays, mondayOf } from './periodization.js';
 import { withHistory } from './presentation.js';
 import { carriesEccentricStrength, eccentricStrengthOf, isMaximalTest } from './sessionLibrary.js';
@@ -110,6 +112,12 @@ export interface AthleteState {
    * forme de fond et de fraîcheur qui viennent d'elles. `default` dès qu'une
    * seule pèse ; `field` quand tout le réalisé qui pèse est mesuré.
    */
+  /**
+   * Les comptes rendus des courses des trois derniers jours, la plus récente
+   * d'abord (`debriefSession`) : la récupération que chacune demande, la
+   * réponse du cœur à allure égale. Les règles les lisent.
+   */
+  debriefs?: SessionDebrief[];
   loadEstimate: {
     provenance: 'field' | 'default';
     sessions: EstimatedSessionLoad[];
@@ -495,6 +503,12 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
   const recentActivities = await db.listActivities(athleteId, { from: daysAgo(45), limit: 60 });
   const answers = await db.listAnswers(athleteId, `${daysAgo(30)}T00:00:00.000Z`);
 
+  // Les comptes rendus des courses des trois derniers jours : la récupération
+  // que demande la dernière, et la réponse du cœur à allure égale, que la
+  // disponibilité lit à défaut d'une mesure au repos.
+  const debriefs = await recentDebriefsOf(athleteId, profile, model, pmc, answers, today);
+  const cardiac = debriefs.find((d) => d.implications.cardiac != null);
+
   // La disponibilité se calcule après le plan et les absences, et pas avant :
   // ce qu'il faut faire d'un score dépend de ce que la journée tient, et le
   // paquet `physiology` ne va rien chercher — on le lui donne.
@@ -503,6 +517,7 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     pmc,
     checkIns,
     day: await situationOn(athleteId, today, absences, recentActivities, model),
+    ...(cardiac ? { exerciseHr: { date: cardiac.date, ...cardiac.implications.cardiac! } } : {}),
   });
 
   const analyses = await db.getAnalyses(recentActivities.map((a) => a.id));
@@ -566,7 +581,36 @@ export async function loadAthleteState(athleteId: string): Promise<AthleteState>
     weeklyTotals: computeWeeklyTotals(recentActivities, analyses),
     eccentricCircuitsDone,
     loadEstimate: loadEstimateOf(realized, pmc, loads[0]?.date ?? daysAgo(90), today),
+    debriefs,
   };
+}
+
+/** Jours d'historique que lit un compte rendu : la meilleure forme, la tendance, le bruit. */
+const DEBRIEF_HISTORY_DAYS = 200;
+/** Les courses dont les règles lisent le compte rendu. */
+const DEBRIEF_RECENT_DAYS = 3;
+
+/** Les comptes rendus des courses des trois derniers jours, la plus récente d'abord. */
+async function recentDebriefsOf(
+  athleteId: string,
+  profile: AthleteProfile,
+  model: PhysiologyModel,
+  pmc: PmcSeries,
+  answers: AthleteAnswer[],
+  today: string,
+): Promise<SessionDebrief[]> {
+  const activities = await db.listActivities(athleteId, { from: daysAgo(DEBRIEF_HISTORY_DAYS), to: today, limit: 400 });
+  const since = addDays(today, -DEBRIEF_RECENT_DAYS);
+  const recent = activities
+    .filter((a) => isRunActivity(a) && a.startDateLocal.slice(0, 10) >= since)
+    .sort((a, b) => b.startDateLocal.localeCompare(a.startDateLocal));
+  if (recent.length === 0) return [];
+  const analyses = await db.getAnalyses(activities.map((a) => a.id));
+  const temps = await knownAirTemperatures(activities.map((a) => a.id));
+  const history = activities.map((a) => ({ activity: a, analysis: analyses.get(a.id) ?? null, airTempC: temps.get(a.id) ?? null }));
+  const sessions = await db.listPlannedSessions(athleteId, addDays(since, -1), addDays(today, 1));
+  const world = { history, model, referenceGapMs: referenceGapFor(profile, model), sessions, answers, pmc };
+  return recent.map((a) => debriefRun({ activity: a, analysis: analyses.get(a.id) ?? null, airTempC: temps.get(a.id) ?? null }, world));
 }
 
 /**
@@ -932,13 +976,14 @@ const JUDGED_FR: Partial<Record<PlannedSession['status'], string>> = {
  * séance rattachée ne change pas — c'est la même passe, sur une activité
  * qu'une séance tient déjà. Ni si la séance est « partielle » : le jugement
  * automatique ne sait dire que « faite » ou « remplacée », et ce que l'athlète
- * a dit avoir fait à moitié, il ne le défait pas.
+ * a dit avoir fait à moitié, il ne le défait pas. `analysisOnly` : l'analyse
+ * se réécrit, le plan reste tel qu'il a été jugé.
  */
 export async function analyzeAndStore(
   athleteId: string,
   activityId: string,
   model: PhysiologyModel,
-  opts: { onlyIfMatched?: boolean; onlyIfRejudged?: boolean } = {},
+  opts: { onlyIfMatched?: boolean; onlyIfRejudged?: boolean; analysisOnly?: boolean } = {},
 ): Promise<ActivityAnalysis | null> {
   const activity = await db.getActivity(activityId);
   if (!activity) return null;
@@ -949,6 +994,7 @@ export async function analyzeAndStore(
   const planned = await db.listPlannedSessions(athleteId, addDays(day, -1), addDays(day, 1));
 
   const stored = await db.getStreams(activityId);
+  if (!stored && opts.analysisOnly) return null;
   if (!stored) {
     // Saisie à la main : ni flux ni analyse, mais un sport, un jour et une durée,
     // de quoi reconnaître une séance hors course.
@@ -975,7 +1021,9 @@ export async function analyzeAndStore(
   const status = compliance?.outcome === 'fulfilled' ? 'completed' : 'replaced';
   if (opts.onlyIfRejudged && (target?.status === status || target?.status === 'partial')) return null;
   await db.saveAnalysis(athleteId, activity.startDateLocal, analysis);
-  if (compliance) await recordAttachment(activity, compliance, target, status);
+  // Une ré-analyse de fond — le moteur a changé — ne rejuge pas le plan : une
+  // séance jugée en septembre avec le modèle de septembre reste jugée ainsi.
+  if (compliance && !opts.analysisOnly) await recordAttachment(activity, compliance, target, status);
   return analysis;
 }
 

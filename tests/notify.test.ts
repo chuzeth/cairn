@@ -107,6 +107,19 @@ describe('Ce qu’une notification dit', () => {
     expect(long.body).toMatch(/pendant la course\.$/);
   });
 
+  it('dit ce que la sortie apprend, et ouvre son compte rendu', () => {
+    const seen = deviceNotice(base)!.digest;
+    const notice = deviceNotice({
+      ...base, hour: 13.5, activities: [run], sessions: [session({ status: 'completed' })],
+      last: { digest: seen, sentAt: base.now }, now: '2026-11-11T12:30:00.000Z',
+      verdicts: [{ activityId: run.id, headline: 'Une sortie 34 % plus longue que tout le mois. 48 h avant une séance dure.' }],
+    })!;
+    expect(notice.body).toBe(
+      'Course à pied le matin · 8,5 km, 46 min. Une sortie 34 % plus longue que tout le mois. 48 h avant une séance dure.',
+    );
+    expect(notice.url).toBe(`/activities/${run.id}`);
+  });
+
   it('pose une question nouvelle, et ne la repose pas', () => {
     const seen = deviceNotice(base)!.digest;
     const asked = deviceNotice({ ...base, questions: [question], last: { digest: seen, sentAt: base.now }, now: '2026-11-11T09:00:00.000Z' })!;

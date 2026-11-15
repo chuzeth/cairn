@@ -154,6 +154,9 @@ export function Morning({
       {early && (
         <>
           {early.status === 'completed' && <Trace session={early} muted />}
+          {early.completedActivityId && state.lastDebrief?.activityId === early.completedActivityId && (
+            <p className="m-verdict">{state.lastDebrief.headline}</p>
+          )}
           {early.completedActivityId && (
             <Link href={`/activities/${early.completedActivityId}`} className="m-link" transitionTypes={['nav-forward']}>
               {plan.completedByDate[early.date]?.id === early.completedActivityId
@@ -169,6 +172,9 @@ export function Morning({
       {done && session && (
         <>
           {session.status === 'completed' && <Trace session={session} muted />}
+          {doneToday && state.lastDebrief?.activityId === doneToday.id && (
+            <p className="m-verdict">{state.lastDebrief.headline}</p>
+          )}
           {doneToday && (
             <Link href={`/activities/${doneToday.id}`} className="m-link" transitionTypes={['nav-forward']}>
               {doneToday.name} · l&apos;analyse →

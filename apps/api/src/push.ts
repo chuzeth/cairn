@@ -117,9 +117,10 @@ export async function notifyDevices(
           today, hour: now.getHours() + now.getMinutes() / 60, sessions, questions,
           activities: state!.recentActivities, revisions: (state!.plan?.plan.revisionLog ?? []).slice(-30),
           last: { digest: sub.lastDigest ?? null, sentAt: sub.lastSentAt ?? null }, now: now.toISOString(),
+          verdicts: (state!.debriefs ?? []).map((d) => ({ activityId: d.activityId, headline: d.headline })),
         });
     if (!notice) continue;
-    const payload: PushPayload = { title: notice.title, body: notice.body, url: '/', at: now.toISOString() };
+    const payload: PushPayload = { title: notice.title, body: notice.body, url: notice.url ?? '/', at: now.toISOString() };
     try {
       await send(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

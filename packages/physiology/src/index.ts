@@ -19,3 +19,5 @@ export * from './sessionMatch.js';
 export * from './analysis.js';
 export * from './lapRace.js';
 export * from './spike.js';
+export * from './markers.js';
+export * from './debrief.js';

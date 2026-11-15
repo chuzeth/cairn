@@ -626,6 +626,98 @@ export interface IntervalDetection {
   deviationFromTargetPct?: number;
 }
 
+// ── Marqueurs d'une sortie (`@cairn/physiology`, markers.ts) ────────────────
+// Ce qui se compare d'une sortie à l'autre : la fiabilité du cardio, des
+// fenêtres d'allure stable avec leur FC, l'intensité par terrain, les montées.
+
+/** Une fenêtre d'allure stable : la vitesse corrigée de la pente, et la FC qu'elle a coûtée. */
+export interface SteadyWindow {
+  /** Début, en secondes de mouvement depuis le départ. */
+  t: number;
+  /** Vitesse corrigée de la pente, m/s. */
+  gap: number;
+  /** FC moyenne, décalée du retard du cardio, bpm. */
+  hr: number;
+  /** Pente moyenne, fractionnelle. */
+  grade: number;
+  /** Cadence moyenne, pas/min, si mesurée. */
+  cadence: number | null;
+  /**
+   * Secondes passées au-dessus du seuil 2 avant la fenêtre. Après plusieurs
+   * minutes d'effort dur, la FC reste haute à allure égale bien après la
+   * récupération : la fenêtre ne dit plus l'état du jour, mais la séance.
+   */
+  hardBeforeS: number;
+}
+
+/** Une montée continue : son dénivelé, sa vitesse ascensionnelle, ce qu'elle a coûté au cœur. */
+export interface ClimbSegment {
+  /** Début, en secondes de mouvement. */
+  t: number;
+  durationS: number;
+  gainM: number;
+  /** Vitesse ascensionnelle, m/h. */
+  vamMh: number;
+  /** Pente moyenne, fractionnelle. */
+  grade: number;
+  /** FC moyenne une fois le cœur monté en régime, à partir de la deuxième minute. */
+  hr: number | null;
+  /** Part du temps marché, déduite de la vitesse et de la pente. */
+  hiked: number;
+}
+
+/**
+ * Ce que vaut le cardio de la sortie.
+ *
+ * Un capteur optique au poignet décroche, se cale sur la cadence ou retarde ;
+ * une FC fausse fausse tout ce qui s'en déduit — zones, dérive, efficience,
+ * charge cardiaque. Ce qui suit n'est jugé qu'une fois cette question réglée.
+ */
+export interface HrQuality {
+  /** Part des secondes de mouvement qui portent une FC. */
+  coverage: number;
+  /** Secondes où la FC suit la cadence plutôt que le cœur. */
+  cadenceLockS: number;
+  /** Secondes perdues dans des trous de 10 s ou plus. */
+  dropoutS: number;
+  /** Sauts de FC sans changement d'allure, ≥ 25 bpm en 5 s. */
+  spikes: number;
+  verdict: 'good' | 'doubtful' | 'unusable';
+  /** Ce qui fonde un verdict qui n'est pas « bon », en clair. */
+  reasons: string[];
+}
+
+/**
+ * Le temps passé au-dessus des seuils, par terrain. Sur une sortie vallonnée,
+ * le cœur passe le seuil 1 dans chaque côte : c'est le terrain, pas une faute
+ * d'allure. Seul le plat dit si l'allure facile a été tenue.
+ */
+export interface TerrainIntensity {
+  /** Au-dessus du seuil 1, s, sur le plat (pente entre −4 et +4 %). */
+  flatAboveVt1S: number;
+  /** Au-dessus du seuil 1, s, en montée (au-delà de +4 %). */
+  climbAboveVt1S: number;
+  /** Au-dessus du seuil 1, s, en descente (au-delà de −4 %). */
+  descentAboveVt1S: number;
+  /** Au-dessus du seuil 2, s, tous terrains. */
+  aboveVt2S: number;
+  /** Secondes de plat, de montée et de descente portant une FC. */
+  flatS: number;
+  climbS: number;
+  descentS: number;
+}
+
+export interface SessionMarkers {
+  version: number;
+  movingS: number;
+  hr: HrQuality;
+  /** Absente sans FC exploitable. */
+  intensity: TerrainIntensity | null;
+  /** Fenêtres d'allure stable, en course, hors échauffement. Vide sans vitesse au sol ou sans FC fiable. */
+  steady: SteadyWindow[];
+  climbs: ClimbSegment[];
+}
+
 export interface ActivityAnalysis {
   activityId: string;
   computedAt: string;
@@ -693,6 +785,12 @@ export interface ActivityAnalysis {
 
   /** Signaux d'alerte détectés automatiquement. */
   flags: AnalysisFlag[];
+
+  /**
+   * Ce qui se compare d'une sortie à l'autre (`extractMarkers`). Absent des
+   * analyses antérieures au moteur 1.5.0.
+   */
+  markers?: SessionMarkers;
 }
 
 export interface GradeBucket {
@@ -824,6 +922,8 @@ export type ReadinessSource =
   | 'baseline'
   | 'hrv'
   | 'resting-hr'
+  /** La FC à allure égale de la dernière course, contre la tendance des précédentes. */
+  | 'exercise-hr'
   | 'default';
 
 export interface ReadinessScore {

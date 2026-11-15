@@ -1,7 +1,7 @@
 import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
+  airTemperatureOf, analyzeAndStore, applyAdjustments, describeAdjustments, evaluateAdjustments,
   generateActivityInsight, layPlanOnTerrain, loadAthleteState, rebuildPhysiologyModel, recountDecisions,
   rematchRecent, routeUpcoming, type AthleteState,
 } from '@cairn/coach';
@@ -106,6 +106,10 @@ export async function ingestActivity(
   if (streams && streams.time.length > 0) {
     await db.saveStreams(activity.id, streams, { gpsQuality, hrCoverage });
   }
+
+  // La température de l'air, d'une archive météo : la chaleur se retire de la FC
+  // à allure égale. Un échec ne coûte rien d'autre que cette correction.
+  if (streams && isRunLike(activity.sportType)) await airTemperatureOf(activity, streams).catch(() => null);
 
   // ── Matériel : suivi du kilométrage des chaussures ────────────────────────
   if (detail.gear_id) {
@@ -264,6 +268,16 @@ export async function backfill(
       // viennent elles-mêmes de déplacer : c'est le second passage.
       const stale = await db.findStaleAnalyses(athleteId, 400);
       for (const id of new Set([...ingestedIds, ...stale])) await analyzeAndStore(athleteId, id, model);
+    } else {
+      // Un moteur d'analyse mis à jour sans sortie nouvelle : l'historique se
+      // ré-analyse à la relève, sans attendre la prochaine activité. Sans quoi
+      // le compte rendu d'une sortie se lit contre un historique sans marqueurs.
+      const stale = await db.findStaleAnalyses(athleteId, 400);
+      if (stale.length > 0) {
+        const current = (await db.getLatestModel(athleteId)) ?? (await rebuildPhysiologyModel(athleteId));
+        for (const id of stale) await analyzeAndStore(athleteId, id, current, { analysisOnly: true });
+        model = await rebuildPhysiologyModel(athleteId);
+      }
     }
 
     // Le rattachement des sept derniers jours se refait à chaque relève, qu'elle

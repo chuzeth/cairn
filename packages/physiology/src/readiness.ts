@@ -24,6 +24,50 @@ export interface ReadinessInput {
   restingHrBaseline?: number;
   /** Ce que la journée tient. Absent : rien n'en est supposé. */
   day?: ReadinessDay;
+  /**
+   * La réponse du cœur à l'effort sur la dernière course, si elle a moins de
+   * 48 h : sa FC à allure égale contre la tendance des courses d'avant
+   * (`debriefSession`). Le signal objectif que le score n'avait pas sans
+   * variabilité cardiaque ni FC de repos.
+   */
+  exerciseHr?: ExerciseHrSignal;
+}
+
+/**
+ * La FC sous-maximale à allure égale : un cœur plus haut qu'à l'habitude pour
+ * la même allure dit une fatigue, une chaleur, un début de maladie ; plus bas,
+ * une forme qui monte ou une fraîcheur retrouvée (Buchheit 2014). Elle ne
+ * remplace pas une mesure au repos : elle n'est lue qu'à défaut.
+ */
+export interface ExerciseHrSignal {
+  /** Le jour de la course, YYYY-MM-DD. */
+  date: string;
+  /** Écart à la tendance, bpm ; positif = cœur plus haut. */
+  deltaBpm: number;
+  /** Le bruit d'une course à l'autre, bpm. */
+  typicalErrorBpm: number;
+  /** Courses d'affilée du même côté de leur tendance (positif au-dessus). */
+  streak: number;
+}
+
+/** Au-delà de deux jours, ce que le cœur a dit d'une course ne dit plus rien du jour. */
+export const EXERCISE_HR_MAX_AGE_DAYS = 2;
+
+/**
+ * La composante cardiaque tirée de la FC à allure égale, 0–100.
+ *
+ * Deux erreurs types au-dessus de la tendance valent 40, sous le neutre de 60 ;
+ * deux au-dessous, 80. Une deuxième course d'affilée au-dessus retire 5 points :
+ * deux signaux dans le même sens ne sont plus du bruit. Un cœur plus bas que
+ * d'habitude sous une charge très lourde n'est pas récompensé : c'est aussi le
+ * visage d'un surmenage, où la FC ne monte plus (Le Meur 2013).
+ */
+export function exerciseHrScore(signal: ExerciseHrSignal, tsb: number): number {
+  const z = signal.typicalErrorBpm > 0 ? signal.deltaBpm / signal.typicalErrorBpm : 0;
+  let value = 60 - 10 * z;
+  if (z > 0 && signal.streak >= 2) value -= 5;
+  if (z < 0 && tsb < -20) value = Math.min(value, 60);
+  return clamp(value, 15, 85);
 }
 
 /**
@@ -80,6 +124,9 @@ export interface ReadinessDay {
  * trompeur, donc celle où la recommandation doit dire autre chose que lui.
  */
 export const IMPACT_GAP_DAYS = 7;
+
+const daysBetween = (a: string, b: string) =>
+  Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86_400_000);
 
 const pointAt = <T extends { date: string }>(series: readonly T[], date: string): T | undefined =>
   series.find((p) => p.date === date) ?? series[series.length - 1];
@@ -230,6 +277,13 @@ export function computeReadiness(input: ReadinessInput): ReadinessScore {
     const delta = today.restingHr - rhrBase;
     autonomic = clamp(65 - delta * 7, 0, 100);
     autonomicSource = 'resting-hr';
+  } else if (
+    input.exerciseHr &&
+    input.exerciseHr.date <= date &&
+    daysBetween(input.exerciseHr.date, date) <= EXERCISE_HR_MAX_AGE_DAYS
+  ) {
+    autonomic = exerciseHrScore(input.exerciseHr, metabolic?.tsb ?? 0);
+    autonomicSource = 'exercise-hr';
   }
 
   // ── Pénalité de pic de charge ─────────────────────────────────────────────

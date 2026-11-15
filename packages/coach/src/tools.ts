@@ -18,6 +18,7 @@ import {
 import { applyAdjustments, withdrawalsFor } from './adapt.js';
 import { buildCoachingBrief } from './brief.js';
 import { describeDirectives } from './directives.js';
+import { debriefActivity } from './lessons.js';
 import { mondayOf } from './periodization.js';
 import { assumedCtl, buildTrainingPlan, describeRatioExceedances, summarizeWeek } from './planner.js';
 import { describeOrigin, type PlanCarryOver } from './preserve.js';
@@ -255,7 +256,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'get_activity_analysis',
     description:
-      "Analyse détaillée d'une activité : charges métabolique et mécanique, répartition par zone, dérive cardiaque, blocs d'effort détectés avec leur régularité, courbes vitesse-durée et VAM, profil par tranche de pente, signaux de durabilité, énergétique, environnement, conformité à la séance prescrite et alertes automatiques.",
+      "Analyse d'une activité. D'abord son compte rendu (`compte_rendu`) : ce que la sortie apprend, lu contre l'historique de l'athlète — constats classés avec leur degré de certitude et ce qui les fonde (FC à allure égale contre la tendance et la meilleure forme, pic de distance, descente nouvelle, dérive, montées, records, intensité par terrain, comparaison au prévu) —, et ce que ça change : heures avant une séance dure et avant une descente rapide, que les règles du plan appliquent. Puis les chiffres : charges, zones, dérive, blocs, courbes, profil de pente, énergétique, environnement, conformité. Pour expliquer une sortie, pars du compte rendu ; ne contredis pas ses délais, ce sont eux qui décident.",
     input_schema: obj({ activity_id: str("Identifiant de l'activité, ex. « strava-123456789 ».") }, ['activity_id']),
   },
   {
@@ -774,9 +775,27 @@ export async function executeTool(
       const analysis = await db.getAnalysis(activityId);
       if (!analysis) throw new Error(`Analyse indisponible pour ${activityId} — flux non téléchargés.`);
       const state = await loadAthleteState(athleteId);
+      const debrief = await debriefActivity(athleteId, activityId);
       return {
-        summary: `Analyse « ${activity.name} » — charge ${analysis.load.metabolic} / mécanique ${analysis.load.mechanical}`,
-        content: summarizeForCoach(activity, analysis, state.model),
+        summary: `Analyse « ${activity.name} » — ${debrief?.headline ?? `charge ${analysis.load.metabolic} / mécanique ${analysis.load.mechanical}`}`,
+        content: {
+          compte_rendu: debrief
+            ? {
+                fait: debrief.what,
+                verdict: debrief.headline,
+                constats: debrief.findings.map((f) => ({
+                  domaine: f.domain, ton: f.tone, certitude: f.confidence, constat: f.title, lecture: f.detail, preuves: f.evidence,
+                })),
+                ce_que_ca_change: debrief.implications,
+                non_lu: debrief.limits,
+                fc_a_allure_egale: {
+                  allure_kmh: Math.round(debrief.referenceGapMs * 36) / 10,
+                  par_sortie: debrief.aerobicTrend.map((p) => ({ date: p.date, fc: p.hr })),
+                },
+              }
+            : null,
+          chiffres: summarizeForCoach(activity, analysis, state.model),
+        },
       };
     }
 

@@ -427,6 +427,8 @@ export interface RaceCriteria {
 }
 
 export interface StateResponse {
+  /** Le verdict de la dernière course (`debriefSession`) ; absent d'une réponse gardée d'avant le 15/11. */
+  lastDebrief?: { activityId: string; date: string; headline: string } | null;
   /** Absentes d'une réponse gardée avant le 09/11. */
   questions?: AskedQuestion[];
   /** Les questions des deux jours suivants, si rien de neuf n'arrive : le téléphone les pose Mac éteint. */
@@ -494,7 +496,7 @@ export interface StateResponse {
 
 /** Provenance d'une composante de disponibilité — miroir de `ReadinessSource`. */
 export type ReadinessSource =
-  | 'load' | 'declared' | 'partial' | 'baseline' | 'hrv' | 'resting-hr' | 'default';
+  | 'load' | 'declared' | 'partial' | 'baseline' | 'hrv' | 'resting-hr' | 'exercise-hr' | 'default';
 
 export type ReadinessComponent = 'tsbMetabolic' | 'tsbMechanical' | 'subjective' | 'autonomic';
 

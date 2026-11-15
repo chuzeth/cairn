@@ -1908,3 +1908,59 @@ label { display: block; font-size: 11.5px; color: var(--text-faint); font-weight
   }
   .reveal, .lock-title, .lock-sub, .lock-button, .lock-leave, .lock-topo g, .lock-glyph, .sync-dot { animation: none !important; }
 }
+
+/* ── Le compte rendu d'une sortie : ce qu'elle apprend, avant les chiffres ── */
+
+.db { display: flex; flex-direction: column; gap: 26px; margin: 4px 0 30px; }
+.db-what {
+  margin: 0; font-size: 11px; line-height: 15px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint);
+}
+.db-headline {
+  margin: -16px 0 0; font-family: var(--serif); font-weight: 400; font-size: 27px; line-height: 1.1;
+  letter-spacing: -0.015em; color: var(--text); text-wrap: balance; overflow-wrap: break-word;
+}
+.db-block { display: flex; flex-direction: column; gap: 10px; }
+.db-label {
+  margin: 0; font-size: 10.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint);
+  padding-bottom: 8px; border-bottom: 1px solid var(--text);
+}
+.db-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.db-finding { padding: 14px 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.db-finding:first-child { padding-top: 4px; }
+.db-finding-head { display: flex; align-items: baseline; gap: 10px; }
+.db-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); transform: translateY(-1px); }
+.db-finding[data-tone="positive"] .db-dot { background: var(--good); }
+.db-finding[data-tone="negative"] .db-dot { background: var(--warn); }
+.db-finding[data-tone="caution"] .db-dot { background: var(--watch); }
+.db-finding-title { font-size: 16px; line-height: 1.3; color: var(--text); text-wrap: pretty; }
+.db-finding-detail { margin: 0 0 0 17px; font-size: 13.5px; line-height: 1.5; color: var(--text-dim); text-wrap: pretty; }
+.db-finding-foot { margin-left: 17px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.db-evidence { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.db-evidence strong { font-weight: 500; color: var(--text); }
+.db-ref { color: var(--text-faint); }
+.db-confidence {
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint);
+  border: 1px solid var(--border-strong); border-radius: 2px; padding: 1px 5px;
+}
+.db-confidence[data-level="low"] { border-style: dashed; }
+.db-next { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; line-height: 1.4; color: var(--text); }
+.db-next strong { font-weight: 500; }
+.db-faint { color: var(--text-faint); }
+.db-why { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-faint); text-wrap: pretty; }
+.db-link { color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); white-space: nowrap; }
+.db-plan-title { margin: 0; font-size: 15px; color: var(--text); }
+.db-limits { display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.5; color: var(--text-faint); }
+.db-limits p { margin: 0; }
+.db-limits strong { font-weight: 500; color: var(--text-dim); }
+.db-trend { width: 100%; max-width: 520px; height: auto; display: block; }
+.db-trend-grid { stroke: var(--border); stroke-width: 1; }
+.db-trend-tick { font-size: 9.5px; fill: var(--text-faint); font-variant-numeric: tabular-nums; }
+.db-trend-dot { fill: var(--text-faint); }
+.db-trend-now { fill: var(--accent); }
+.db-detail-label { margin: 8px 0 14px; }
+@media (min-width: 900px) {
+  .db-headline { font-size: 34px; }
+}
+/* Le verdict de la dernière course, sous la séance faite : ce qu'elle apprend, en une phrase. */
+.m-verdict { margin: 0; font-size: 15px; line-height: 1.45; color: var(--text); text-wrap: pretty; }
+.db-block > .db-finding-detail { margin-left: 0; }

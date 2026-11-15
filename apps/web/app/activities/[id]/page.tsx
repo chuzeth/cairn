@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { clock, duration, frDate, get, markdown, num, pace } from '@/lib/api';
 import { Badge, Card, ErrorBox, Legend, Loading, Metric, ZoneBar } from '@/components/ui';
 import { ElevationProfile, GradeProfileChart, StreamChart } from '@/components/charts';
+import { Debrief, type DebriefView } from '@/components/Debrief';
 
 interface Detail {
   activity: {
@@ -28,6 +29,8 @@ interface Detail {
     compliance?: { verdict: string; detail: string; loadDeviationPct: number; intensityDeviationPct: number | null };
     flags: { code: string; severity: string; message: string }[];
   } | null;
+  /** Ce que la sortie apprend, lu contre l'historique ; absent d'une réponse gardée d'avant le 15/11. */
+  debrief?: DebriefView | null;
   insight: { title: string; body: string; actions: string[]; highlights: { label: string; value: string }[]; severity: string } | null;
   streams: { distance?: number[]; altitude?: number[]; heartrate?: (number | null)[]; velocity?: number[]; grade?: number[]; cadence?: (number | null)[] } | null;
 }
@@ -46,7 +49,7 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
   if (error) return <ErrorBox error={error} onRetry={load} />;
   if (!data) return <Loading />;
 
-  const { activity: a, analysis, insight, streams } = data;
+  const { activity: a, analysis, debrief, insight, streams } = data;
 
   return (
     <>
@@ -60,6 +63,10 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
           </p>
         </div>
       </div>
+
+      {debrief && <Debrief debrief={debrief} startLocal={a.startDateLocal} />}
+
+      {debrief && <h3 className="db-label db-detail-label">Le détail</h3>}
 
       <div className="grid grid-4" style={{ marginBottom: 14 }}>
         <Card><Metric label="Distance" value={num(a.distanceM / 1000, 2)} unit="km" /></Card>
@@ -112,16 +119,6 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
             </Card>
           </div>
 
-          {analysis.flags.filter((f) => f.severity !== 'info').length > 0 && (
-            <div className="stack" style={{ marginBottom: 14 }}>
-              {analysis.flags.filter((f) => f.severity !== 'info').map((f, i) => (
-                <div key={i} className="banner" data-tone={f.severity === 'warn' ? 'warn' : undefined} style={{ marginBottom: 0 }}>
-                  <span>{f.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
           {streams?.distance && streams.altitude && (
             <Card title="Profil du parcours" style={{ marginBottom: 14 }}>
               <ElevationProfile distance={streams.distance} altitude={streams.altitude} />
@@ -165,7 +162,9 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
             </Card>
           </div>
 
-          {analysis.intervals.length > 0 && (
+          {/* Sur une sortie vallonnée, les « blocs » détectés sont les côtes : le
+              compte rendu les lit comme des montées, ils n'ont rien à dire ici. */}
+          {analysis.intervals.length > 0 && !(debrief && a.distanceM > 0 && a.totalElevationGainM / (a.distanceM / 1000) >= 20) && (
             <Card title={`Blocs d'effort détectés (${num(analysis.intervals.length)})`} style={{ marginBottom: 14 }}>
               {/* Neuf colonnes ; à l'étroit, chaque bloc devient une ligne d'étiquettes
                   (`.t-stack`) : la case dit ce qu'elle mesure, puisque l'en-tête n'est plus là. */}
@@ -240,13 +239,6 @@ export default function ActivityDetail({ params }: { params: Promise<{ id: strin
                   <span className="faint">Cadence moyenne</span>
                   <span className="mono">{a.averageCadenceSpm ? `${num(a.averageCadenceSpm)} ppm` : '—'}</span>
                 </div>
-                {analysis.compliance && (
-                  <div style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                    <div className="metric-label" style={{ marginBottom: 4 }}>Conformité au plan</div>
-                    <Badge tone={analysis.compliance.verdict === 'on_target' ? 'good' : 'watch'}>{analysis.compliance.verdict}</Badge>
-                    <p className="tiny muted" style={{ marginTop: 6, marginBottom: 0 }}>{analysis.compliance.detail}</p>
-                  </div>
-                )}
               </div>
             </Card>
           </div>

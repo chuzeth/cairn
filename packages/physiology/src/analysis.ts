@@ -11,6 +11,7 @@ import { computeTrainingLoad, energyExpenditure, fuelingTargets, type LoadSample
 import { companionAtMeanMaximal, meanMaximal } from './mmp.js';
 import { cumulativeVertical, measuresGroundSpeed, movingIndices } from './streams.js';
 import { buildZones, computeZoneDistribution } from './zones.js';
+import { extractMarkers } from './markers.js';
 import {
   VERTICAL_CURVE_DURATIONS, descentCurve, gradeProfile, vamCurve, verticalityIndex,
 } from './vertical.js';
@@ -222,6 +223,8 @@ export function analyzeActivity(
       altitudeFactor: env.altitude,
     },
     flags: [],
+    // Ce qui se compare d'une sortie à l'autre : le compte rendu (`debrief.ts`) le lit contre l'historique.
+    markers: extractMarkers(streams, model, { groundSpeed }),
   };
 
   analysis.flags = buildFlags(activity, analysis, model, {
@@ -310,29 +313,10 @@ function buildFlags(
     });
   }
 
-  // Zone dérivante : trop de temps en zone grise
-  if (analysis.zones.threeZone.moderate > 0.35 && ctx.durationS > 2400) {
-    flags.push({
-      code: 'grey_zone',
-      severity: 'watch',
-      message:
-        `${Math.round(analysis.zones.threeZone.moderate * 100)} % du temps entre les deux seuils. ` +
-        `Cette « zone grise » coûte cher en fraîcheur pour un bénéfice adaptatif limité : soit plus facile, soit plus dur.`,
-      evidence: { moderateFraction: Math.round(analysis.zones.threeZone.moderate * 100) },
-    });
-  }
-
-  // Cadence
-  if (ctx.avgCadence != null && ctx.avgCadence > 100 && ctx.avgCadence < 162) {
-    flags.push({
-      code: 'low_cadence',
-      severity: 'watch',
-      message:
-        `Cadence moyenne à ${Math.round(ctx.avgCadence)} pas/min. Le test de juillet 2025 relevait 168 avec une cible à 170-180. ` +
-        `Une cadence basse allonge le temps de contact et augmente les forces d'impact, en particulier en descente.`,
-      evidence: { cadence: Math.round(ctx.avgCadence) },
-    });
-  }
+  // Ni « zone grise » ni cadence moyenne ici : sur une sortie vallonnée, le
+  // cœur passe le seuil 1 dans chaque côte, et la cadence suit l'allure et la
+  // pente. Les deux se lisent par terrain et à allure égale, dans le compte
+  // rendu (`debrief.ts`) — un reproche fait au terrain apprend à ignorer l'écran.
 
   // Chaleur
   if (analysis.environment.heatStressFactor > 1.04) {

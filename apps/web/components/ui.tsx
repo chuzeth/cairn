@@ -312,6 +312,7 @@ export const READINESS_SOURCE_LABEL: Record<ReadinessSource, string> = {
   baseline: 'vs ta norme',
   hrv: 'variabilité',
   'resting-hr': 'FC repos',
+  'exercise-hr': 'à allure égale',
   default: 'par défaut',
 };
 
@@ -321,9 +322,10 @@ const BASIS_ROWS = [
   ['tsbMetabolic', <Term key="t" k="fraicheur">Fraîcheur</Term>],
   ['tsbMechanical', <><Term key="t" k="fraicheur">Fraîcheur</Term> des jambes</>],
   ['subjective', 'Ressenti déclaré'],
-  // FC de repos ou variabilité cardiaque : ce que le cœur dit au réveil. Le
-  // nom savant de la chose n'apprenait rien à qui la lit.
-  ['autonomic', 'Cœur au repos'],
+  // FC de repos ou variabilité cardiaque : ce que le cœur dit au réveil ; à
+  // défaut, sa FC à allure égale sur la dernière course. Le nom savant de la
+  // chose n'apprenait rien à qui la lit.
+  ['autonomic', 'Cœur'],
 ] as const;
 
 /** Un chiffre de charge nommé par son mot du vocabulaire, qui se définit d'un tap (`lib/figures.ts`). */
@@ -339,7 +341,7 @@ export function LoadName({ w }: { w: LoadWord }) {
 /** Ce que le score n'a pas les moyens de regarder, nommé pour être réclamé. */
 export const MISSING_LABEL: Record<'subjective' | 'autonomic', string> = {
   subjective: 'ton ressenti',
-  autonomic: 'ton cœur au repos',
+  autonomic: 'ton cœur, au repos ou à allure égale',
 };
 
 /** Les composantes qui ne pèsent rien, faute de source. */

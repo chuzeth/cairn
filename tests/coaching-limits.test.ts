@@ -303,3 +303,26 @@ describe('Les preuves avant la réassurance, et le fil relu en base', () => {
     expect(brief).toMatch(/fait foi sur tout ce qui a été dit plus haut/);
   });
 });
+
+describe('La récupération que demande la dernière course (compte rendu)', () => {
+  /** Le compte rendu de la sortie longue du 15/11, réduit à ce que la règle lit. */
+  const debriefOn = (date: string, qualityHours: number, eccentricHours = 0) => ({
+    activityId: 'a', date, what: '', headline: '', findings: [], limits: [], aerobicTrend: [], referenceGapMs: 3,
+    implications: {
+      recovery: { qualityHours, eccentricHours, reasons: ['la sortie la plus longue du mois, de loin : 48 h avant une séance dure'] },
+      cardiac: null, spike: null,
+    },
+  });
+  const withDebrief = (qualityHours: number) =>
+    ({ ...(stateOn(day(6)) as object), debriefs: [debriefOn(day(6), qualityHours)] }) as never;
+
+  it('adoucit la séance de qualité qui tombe dans la fenêtre, et la dit', () => {
+    const adj = lib.recoveryAdjustments(withDebrief(72), store.sessions);
+    expect(adj).toEqual([expect.objectContaining({ sessionId: 'r8', action: 'soften', rule: 'session_recovery' })]);
+    expect(adj[0]!.reason).toMatch(/tombe 48 h après ta course du 15\/11, qui en demande 72/);
+  });
+
+  it('laisse celle qui tombe après, et les footings', () => {
+    expect(lib.recoveryAdjustments(withDebrief(48), store.sessions)).toEqual([]);
+  });
+});

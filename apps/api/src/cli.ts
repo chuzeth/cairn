@@ -26,7 +26,7 @@ async function main() {
       console.log(`${stale.length} activité(s) à ré-analyser…`);
       let done = 0;
       for (const id of stale) {
-        await analyzeAndStore(A, id, model);
+        await analyzeAndStore(A, id, model, { analysisOnly: true });
         if (++done % 25 === 0) console.log(`  ${done}/${stale.length}`);
       }
       await rebuildPhysiologyModel(A);

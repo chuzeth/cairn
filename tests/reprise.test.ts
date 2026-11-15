@@ -255,6 +255,16 @@ describe('Ce que Cairn demande', () => {
     expect(asked[0]!.why).toMatch(/lendemain/);
   });
 
+  it('l’effort de chaque course, montre au poignet ou non : c’est le second signal qui départage le cœur', () => {
+    const cleared = [answer('clearance', 'reprise', { choice: 'yes' })];
+    const withHr = [{ ...doneFirst(), averageHr: 148 }];
+    const asked = pendingQuestions({ today: day(0), sessions: store.sessions, activities: withHr, answers: cleared });
+    const rpe = asked.find((q) => q.question === 'run_rpe')!;
+    expect(rpe.prompt).toMatch(/quel effort, de 1 à 10/);
+    expect(rpe.prompt).not.toMatch(/sans montre/);
+    expect(rpe.why).toMatch(/séparent une fatigue d'une journée chaude/);
+  });
+
   it('n’accepte que les réponses que la question attend', () => {
     expect(validAnswer('clearance', { choice: 'yes' })).toBeNull();
     expect(validAnswer('clearance', { choice: 'self' })).toBeNull();

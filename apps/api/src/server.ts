@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import * as db from '@cairn/db';
 import { EXERCISES, directivesFor, isExerciseKey } from '@cairn/core';
 import {
-  CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, describeAdjustments,
+  CHECK_IN_PURPOSE, GLOSSARY, applyAdjustments, chat, checkInEffect, currentModel, debriefActivity, describeAdjustments,
   describeDirectives, evaluateAdjustments, executeTool, firstParagraph, generateWeeklyReview, isQualitySession, labGaps,
   loadAthleteState, loadRatioView, projectPlanRatios, raceDayGapCost, raceDayNotice, rebuildPhysiologyModel, routeBasis,
   routeUpcoming, summarizeWeek, type SessionState,
@@ -384,6 +384,10 @@ export async function buildServer() {
         // Ce que les chiffres du jour doivent à des séances faites sans mesure.
         loadEstimate: s.loadEstimate,
         readiness: s.readiness,
+        // Le verdict de la dernière course : l'écran du matin le dit sous la séance faite.
+        lastDebrief: s.debriefs?.[0]
+          ? { activityId: s.debriefs[0].activityId, date: s.debriefs[0].date, headline: s.debriefs[0].headline }
+          : null,
         checkIn: s.todayCheckIn ?? null,
         // Ce que Pierre a écrit et dont rien n'a encore été fait. Le tableau de
         // bord le montre : une note qui reste dans sa colonne n'a servi à rien.
@@ -478,9 +482,16 @@ export async function buildServer() {
     const analysis = await db.getAnalysis(req.params.id);
     const insight = await db.getInsightForActivity(req.params.id);
     const streams = await db.getStreams(req.params.id);
+    // Le compte rendu : ce que la sortie apprend, lu contre l'historique. Une
+    // erreur de lecture ne prive pas l'écran des chiffres de la sortie.
+    const debrief = await debriefActivity(A, req.params.id).catch((e) => {
+      req.log.error(e, 'compte rendu indisponible');
+      return null;
+    });
     return {
       activity,
       analysis,
+      debrief,
       insight,
       // Flux sous-échantillonnés : suffisant pour tracer, sans envoyer 3 Mo au navigateur.
       streams: streams ? downsample(streams.streams, 900) : null,

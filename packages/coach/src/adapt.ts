@@ -688,6 +688,67 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
   return out;
 }
 
+/**
+ * Ce que la dernière course demande avant la séance dure suivante.
+ *
+ * Le compte rendu de chaque course (`debriefSession`) dit combien d'heures il
+ * faut avant une nouvelle séance de qualité — 24 h après une sortie facile,
+ * 36 h après une sortie longue ou vingt minutes entre les deux seuils, 48 h
+ * après dix minutes au-dessus du seuil 2, une réserve anaérobie vidée ou la
+ * sortie la plus longue du mois de loin — et avant une nouvelle charge
+ * excentrique : 72 h après une descente plus grosse que tout le mois.
+ *
+ * Une séance de qualité qui tombe dans la fenêtre garde sa forme et se court
+ * au bas de ses fourchettes, comme un jour de vigilance : la fatigue d'une
+ * séance se lit en heures, pas en points de fraîcheur, et la règle de
+ * disponibilité ne la voit qu'en moyenne. Un circuit de renforcement
+ * excentrique dans la fenêtre de la descente est retiré, le reste maintenu.
+ * Rien d'autre : ni footing, ni séance décalée.
+ */
+export function recoveryAdjustments(state: AthleteState, upcoming: readonly PlannedSession[]): Adjustment[] {
+  const out: Adjustment[] = [];
+  const today = state.today.date;
+  const seen = new Set<string>();
+  for (const d of state.debriefs ?? []) {
+    const { qualityHours, eccentricHours } = d.implications.recovery;
+    const hoursTo = (date: string) => Math.round((midnight(date) - midnight(d.date)) / dayMs) * 24;
+    const what = `ta course du ${dayMonth(d.date)}`;
+    for (const s of upcoming) {
+      if (seen.has(s.id) || s.date < today || s.date <= d.date) continue;
+      if (s.status !== 'planned' && s.status !== 'moved') continue;
+      if (absenceCovering(state.absences, s.date)) continue;
+      const gap = hoursTo(s.date);
+      if (gap < qualityHours && isQualitySession(s, state.model) && !isMaximalTest(s, state.model)) {
+        const soft = softenedQuality(s.blocks);
+        if (!soft.lowered && !soft.lastOptional && !soft.shortened) continue;
+        seen.add(s.id);
+        out.push({
+          sessionId: s.id,
+          date: s.date,
+          action: 'soften',
+          rule: 'session_recovery',
+          reason:
+            `« ${formatOf(s.title)} » tombe ${gap} h après ${what}, qui en demande ${qualityHours} avant une séance dure ` +
+            `(${firstSentence(d.implications.recovery.reasons[0] ?? d.headline)}) : elle garde sa forme, se court au bas de ` +
+            `ses fourchettes${soft.lastOptional ? ', et sa dernière répétition devient facultative' : ''}.`,
+        });
+      } else if (gap < eccentricHours && carriesEccentricStrength(s.blocks)) {
+        seen.add(s.id);
+        out.push({
+          sessionId: s.id,
+          date: s.date,
+          action: 'drop_strength',
+          rule: 'session_recovery',
+          reason:
+            `Renforcement excentrique retiré : ${what} demande ${eccentricHours} h avant une nouvelle charge excentrique, ` +
+            `et cette séance tombe ${gap} h après. Le reste de la séance est maintenu.`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function evaluateAdjustments(
   state: AthleteState,
   upcoming: PlannedSession[],
@@ -796,6 +857,11 @@ export function evaluateAdjustments(
   // allègement d'un quart, et une séance n'en reçoit qu'une.
   const readiness = readinessAdjustment(state, upcoming);
   if (readiness?.rule === 'readiness_red') push(readiness);
+
+  // ── Règle 2 ter : la récupération que demande la dernière course ──────────
+  // Après la disponibilité au rouge, qui protège davantage, et avant les règles
+  // de charge : la fatigue d'une séance précise se lit en heures.
+  for (const adj of recoveryAdjustments(state, upcoming)) push(adj);
 
   // ── Règle 2 bis : fatigue musculaire excentrique ──────────────────────────
   // La charge mécanique récupère plus lentement que la métabolique : on protège
