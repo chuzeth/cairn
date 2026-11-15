@@ -1,5 +1,6 @@
 'use client';
 import { useSyncExternalStore } from 'react';
+import { setLive } from './contact';
 import { flush } from './offline';
 
 /**
@@ -44,6 +45,8 @@ export function useSync(): SyncState {
 /** Ce que le pouls vient d'apprendre : le Mac a répondu, ou non. */
 export function noteContact(ok: boolean): void {
   publish({ live: ok });
+  // Un écran s'est affiché sur sa réserve, et le Mac répond : il se relit, au réseau.
+  if (setLive(ok) && typeof window !== 'undefined') reread();
   // Le Mac revient : le téléphone en profite pour tout envoyer et tout relire.
   if (ok) void requestSync();
 }

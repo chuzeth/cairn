@@ -226,6 +226,9 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (url.pathname === SYNC_PATH) return event.respondWith(readSync().then((sync) => json(sync)));
+  // La page demande le réseau, sans la réserve : le Mac lui répond et la réserve
+  // vient de servir (`lib/api.ts`). Le worker s'efface, même s'il ne joint plus le Mac.
+  if (url.searchParams.has('frais')) return;
   if (kept(url.pathname)) return event.respondWith(reserve(event));
   if (request.mode === 'navigate') return event.respondWith(shell(event));
   if (url.pathname.startsWith('/_next/static/')) return event.respondWith(fragment(request));

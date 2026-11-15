@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { todayFor } from '../apps/web/lib/api';
-import { syncedLabel } from '../apps/web/lib/sync';
+import { getStamped, todayFor } from '../apps/web/lib/api';
+import { noteContact, syncedLabel } from '../apps/web/lib/sync';
 
 /**
  * Le téléphone sert quand le Mac dort : il s'ouvre sur ce qu'il a relevé la
@@ -35,5 +35,28 @@ describe('La date d’une synchronisation, telle qu’on la lit', () => {
     expect(syncedLabel(new Date(2026, 10, 10, 18, 38).toISOString(), now)).toBe('hier à 18 h 38');
     expect(syncedLabel(new Date(2026, 10, 8, 9, 5).toISOString(), now)).toBe('dimanche à 9 h 05');
     expect(syncedLabel(new Date(2026, 9, 20, 11, 55).toISOString(), now)).toBe('le 20 oct.');
+  });
+});
+
+describe('Une lecture datée quand le Mac répond', () => {
+  it('se refait au réseau, sans passer par la réserve du worker', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.push(url);
+      return url.includes('frais=1')
+        ? new Response('{"v":"frais"}', { status: 200, headers: { 'content-type': 'application/json' } })
+        : new Response('{"v":"garde"}', { status: 200, headers: { 'content-type': 'application/json', 'x-cairn-recorded-at': '2026-11-15T16:09:05Z' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      // Le Mac ne répond pas encore : la réserve, datée.
+      expect(await getStamped('/api/plan?weeks=9')).toEqual({ data: { v: 'garde' }, recordedAt: '2026-11-15T16:09:05Z' });
+      // Le pouls vient de passer : la réserve ne suffit plus, la lecture se refait au réseau.
+      noteContact(true);
+      expect(await getStamped('/api/plan?weeks=9')).toEqual({ data: { v: 'frais' }, recordedAt: null });
+      expect(calls.at(-1)).toBe('/api/plan?weeks=9&frais=1');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

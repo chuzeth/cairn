@@ -464,3 +464,17 @@ describe('Une notification synchronise le téléphone sans qu’on l’ouvre', (
     expect(SOURCE).toContain(`'${activitiesUrl()}'`);
   });
 });
+
+describe('Un service worker qui ne joint plus le Mac ne retient pas l’app', () => {
+  it('laisse passer au réseau une lecture marquée « frais » : la page la demande quand le Mac répond et que la réserve sert encore', async () => {
+    // Le 15/11, sur le Mac : le worker ne joignait plus le Mac, la page si — et
+    // l'écran restait sur sa réserve, « Mise à jour… », pour toujours.
+    let responded = false;
+    handlers.fetch!({
+      request: { url: `${ORIGIN}/api/state?frais=1`, method: 'GET', mode: 'cors' },
+      respondWith: () => { responded = true; },
+      waitUntil: () => {},
+    });
+    expect(responded).toBe(false);
+  });
+});

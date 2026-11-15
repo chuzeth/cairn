@@ -1,5 +1,6 @@
 import { sessionDuration } from '@cairn/core/format';
 import type { EccentricMovement, SessionRoute, TerrainStretch } from '@cairn/core';
+import { isLive, markStale } from './contact';
 
 /**
  * Les appels partent de l'origine qui a servi la page — `/api/...`, jamais
@@ -46,7 +47,20 @@ export async function getStamped<T>(path: string): Promise<Stamped<T>> {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((body as { error?: string }).error ?? `Erreur ${res.status}`);
   }
-  return { data: (await res.json()) as T, recordedAt: res.headers.get('x-cairn-recorded-at') };
+  const recordedAt = res.headers.get('x-cairn-recorded-at');
+  // La réserve a servi alors que le Mac répond à la page : la lecture se refait au
+  // réseau, sans le service worker (`frais`), qui peut avoir perdu le Mac de vue.
+  if (recordedAt && isLive()) {
+    try {
+      const fresh = await fetch(`${path}${path.includes('?') ? '&' : '?'}frais=1`, { cache: 'no-store' });
+      requireSession(fresh);
+      if (fresh.ok) return { data: (await fresh.json()) as T, recordedAt: null };
+    } catch {
+      // Le Mac vient de se taire : la réserve, datée.
+    }
+  }
+  if (recordedAt) markStale();
+  return { data: (await res.json()) as T, recordedAt };
 }
 
 export async function post<T>(path: string, body?: unknown): Promise<T> {
