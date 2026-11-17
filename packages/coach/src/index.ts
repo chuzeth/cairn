@@ -32,3 +32,4 @@ export * from './notify.js';
 export * from './lessons.js';
 export * from './debriefs.js';
 export * from './weather.js';
+export * from './stravaLog.js';

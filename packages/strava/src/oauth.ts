@@ -5,10 +5,17 @@ import type { StravaTokenResponse } from './types.js';
  *
  * Les portées demandées sont volontairement explicites :
  *  · `activity:read_all` — indispensable pour lire aussi les sorties privées ;
- *  · `profile:read_all`  — donne le poids et les zones cardiaques déclarées.
- * Aucune portée d'écriture n'est demandée : Cairn ne modifie jamais Strava.
+ *  · `profile:read_all`  — donne le poids et les zones cardiaques déclarées ;
+ *  · `activity:write`    — écrit la séance prescrite dans la description d'une
+ *    sortie qui vient d'arriver, et rien d'autre (`stravaLog.ts`). L'API ne
+ *    permet pas de toucher à la visibilité : elle reste celle des réglages
+ *    Strava de l'athlète.
  */
-export const STRAVA_SCOPES = 'read,activity:read_all,profile:read_all';
+export const STRAVA_SCOPES = 'read,activity:read_all,profile:read_all,activity:write';
+
+/** Le jeton porte-t-il le droit d'écrire une description ? Un jeton d'avant le 17/11 ne le porte pas. */
+export const canWriteActivities = (scope: string | null | undefined): boolean =>
+  (scope ?? '').split(/[,\s]+/).includes('activity:write');
 
 export interface StravaOAuthConfig {
   clientId: string;

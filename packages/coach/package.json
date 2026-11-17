@@ -10,6 +10,7 @@
     "@cairn/core": "*",
     "@cairn/db": "*",
     "@cairn/physiology": "*",
+    "@cairn/strava": "*",
     "@anthropic-ai/sdk": "^0.122.0"
   }
 }

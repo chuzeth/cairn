@@ -1,7 +1,7 @@
 import type { Activity, PhysiologyModel } from '@cairn/core';
 import * as db from '@cairn/db';
 import {
-  airTemperatureOf, analyzeAndStore, applyAdjustments, backfillAirTemperatures, describeAdjustments, evaluateAdjustments,
+  airTemperatureOf, analyzeAndStore, applyAdjustments, backfillAirTemperatures, logSessionsToStrava, describeAdjustments, evaluateAdjustments,
   generateActivityInsight, layPlanOnTerrain, loadAthleteState, rebuildPhysiologyModel, recountDecisions,
   rematchRecent, routeUpcoming, type AthleteState,
 } from '@cairn/coach';
@@ -151,6 +151,13 @@ export async function ingestActivity(
   const state = await loadAthleteState(athleteId);
   const { adjustmentCount, adjustmentSummary } = await adjustPlan(athleteId, state);
 
+  // ── La séance prescrite, dans la description Strava ──────────────────────
+  // Une trace de ce qui était demandé, sur la sortie qui le réalise. Sans le
+  // droit d'écrire, ou si Strava refuse, la sortie reste telle quelle.
+  await logSessionsToStrava(athleteId, client, new Date().toISOString().slice(0, 10)).catch((e) =>
+    warnings.push(`Description Strava non écrite : ${e instanceof Error ? e.message : String(e)}`),
+  );
+
   // ── Analyse rédigée ───────────────────────────────────────────────────────
   let insightId: string | undefined;
   if (analysis && opts.withInsight !== false) {
@@ -279,6 +286,10 @@ export async function backfill(
         model = await rebuildPhysiologyModel(athleteId);
       }
     }
+
+    // La séance prescrite dans la description des sorties récentes qui ne
+    // l'ont pas encore : après une ré-autorisation, ou un refus passager.
+    await logSessionsToStrava(athleteId, client, new Date().toISOString().slice(0, 10)).catch(() => 0);
 
     // Les températures de l'air des courses passées, quarante par relève : la
     // chaleur se retire de la FC à allure égale de tout l'historique.

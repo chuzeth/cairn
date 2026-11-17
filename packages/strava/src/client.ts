@@ -164,6 +164,26 @@ export class StravaClient {
     throw lastError ?? new Error(`Échec de la requête Strava ${path}`);
   }
 
+  /**
+   * Écrit la description d'une activité, et seulement elle : le corps de la
+   * requête ne porte aucun autre champ, ni nom, ni sport, ni matériel — la
+   * visibilité, l'API ne permet même pas d'y toucher. Demande `activity:write`.
+   */
+  async updateDescription(activityId: number, description: string): Promise<void> {
+    const token = await this.accessToken();
+    const res = await fetch(`${API}/activities/${activityId}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description }),
+    });
+    this.trackHeaders(res);
+    if (res.status === 429) throw new StravaRateLimitError(15 * 60_000);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Erreur Strava ${res.status} sur /activities/${activityId} : ${text.slice(0, 300)}`);
+    }
+  }
+
   // ── Points d'accès ────────────────────────────────────────────────────────
 
   getAthlete(): Promise<StravaAthlete> {
