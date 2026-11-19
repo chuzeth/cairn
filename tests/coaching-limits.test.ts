@@ -326,3 +326,43 @@ describe('La récupération que demande la dernière course (compte rendu)', () 
     expect(lib.recoveryAdjustments(withDebrief(48), store.sessions)).toEqual([]);
   });
 });
+
+describe('Un rouge ne juge que son jour', () => {
+  /**
+   * Le 18/11 au soir, disponibilité au rouge (44) : « Allure de course
+   * continue » du 19/11 devient un footing. Le 19/11, Pierre la décale au
+   * 20/11. Le verdict du 18 ne jugeait que le 19 : au 20, la séance reprend son
+   * contenu, et c'est la disponibilité de la veille qui en décide.
+   */
+  const eased = () => {
+    const s = store.sessions.find((x) => x.id === 'r10')!;
+    Object.assign(s, {
+      date: day(11), type: 'endurance', title: 'Footing 55 min + souplesse et respiration 20 min',
+      blocks: [{ label: 'Footing', zone: 'Z2', durationS: 3300, hrRange: [0, 155] }],
+      lightenings: [{ rule: 'readiness_amber', on: '2026-11-18' }, { rule: 'readiness_red', on: '2026-11-18' }],
+    });
+    store.sessions = store.sessions.filter((x) => x.id === 'r10' || x.date !== day(11));
+    return s;
+  };
+  const on = (verdict: 'green' | 'amber' | 'red', score: number) =>
+    ({ ...(stateOn(day(10)) as object), readiness: { date: day(10), score, verdict, components: {}, recommendation: '' } }) as never;
+
+  it('rend son contenu à la séance décalée, au bas de ses fourchettes un jour de vigilance', () => {
+    eased();
+    const adj = lib.lapsedEasing(on('amber', 49), store.sessions);
+    expect(adj).toHaveLength(1);
+    expect(adj[0]).toMatchObject({ sessionId: 'r10', action: 'rewrite', rule: 'readiness_lapsed' });
+    const allure = adj[0]!.content!.blocks.find((b) => b.zone === 'Z3')!;
+    expect(allure.durationS).toBe(1500);
+    expect(allure.hrRange).toEqual([158, 163]);
+    expect(adj[0]!.lightenings!.map((l) => l.rule)).toEqual(['readiness_amber']);
+    expect(adj[0]!.reason).toMatch(/jugeait la séance du 19\/11/);
+  });
+
+  it('la garde facile si la veille est encore au rouge, ou si elle n’a pas changé de jour', () => {
+    eased();
+    expect(lib.lapsedEasing(on('red', 40), store.sessions)).toEqual([]);
+    store.sessions.find((x) => x.id === 'r10')!.date = day(10);
+    expect(lib.lapsedEasing(on('amber', 49), store.sessions)).toEqual([]);
+  });
+});

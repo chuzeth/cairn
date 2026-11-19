@@ -1,6 +1,6 @@
 import type {
   DeclaredAbsence, DecisionOrigin, IntervalPolicyDirective, PhysiologyModel, PlannedSession,
-  SessionDecision,
+  SessionDecision, SessionLightening,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { decimal, directivesFor, localDate, sessionDuration, writtenOn } from '@cairn/core';
@@ -54,6 +54,8 @@ export interface Adjustment {
     | 'soften' | 'ease' | 'defer' | 'rewrite';
   /** Sur `rewrite` : le contenu que la séance prend, et sa marche dans la reprise. */
   content?: RepriseDay;
+  /** Sur `rewrite` : les allègements que la séance porte désormais, à la place des siens. */
+  lightenings?: SessionLightening[];
   /** Sur `defer` : le footing que la séance décalée remplace à `newDate`, retiré. */
   displaces?: string;
   /** Sur `ease` : la semaine fermée qui a arrêté le report — affûtage ou semaine de course. */
@@ -756,6 +758,67 @@ export function recoveryAdjustments(state: AthleteState, upcoming: readonly Plan
   return out;
 }
 
+/**
+ * Un rouge ne juge que son jour.
+ *
+ * La disponibilité au rouge fait courir facile la séance de qualité du jour ou
+ * du lendemain : c'est un verdict sur l'état de ce jour-là. Décalée ensuite à un
+ * jour qu'il ne jugeait pas, la séance gardait son footing — le 18/11 au soir,
+ * « Allure de course continue » du 19/11 devenue footing ; décalée au 20/11 par
+ * Pierre, elle restait un footing, alors que la disponibilité était remontée en
+ * vigilance. La séance de la reprise reprend alors le contenu de sa marche, et
+ * la disponibilité de la veille en décide comme pour toute séance : au rouge,
+ * elle reste facile ; en vigilance, elle se court au bas de ses fourchettes.
+ *
+ * Seulement pour une séance de la reprise, dont le contenu se réécrit de sa
+ * marche (`repriseDay`) ; et à la marche que la reprise lui donne.
+ */
+export function lapsedEasing(state: AthleteState, upcoming: readonly PlannedSession[]): Adjustment[] {
+  const today = state.today.date;
+  const tomorrow = addDays(today, 1);
+  const out: Adjustment[] = [];
+  for (const s of upcoming) {
+    const p = s.program;
+    if (p?.name !== 'reprise' || p.day == null || p.level !== p.planned || p.kind !== p.plannedKind) continue;
+    if ((s.status !== 'planned' && s.status !== 'moved') || s.date < today) continue;
+    const red = s.lightenings?.filter((l) => l.rule === 'readiness_red').at(-1);
+    // Le verdict jugeait son jour et le lendemain : la séance y est encore.
+    if (!red || s.date <= addDays(red.on, 1)) continue;
+    if (isQualitySession(s, state.model)) continue;
+    const t = repriseDay(state.model, p.day);
+    if (!isQualitySession({ type: t.type, blocks: t.blocks }, state.model)) continue;
+    // La veille d'une séance, la disponibilité du jour la juge ; plus loin, elle sera jugée le moment venu.
+    const verdict = s.date <= tomorrow ? state.readiness.verdict : 'green';
+    if (verdict === 'red') continue;
+    const soft = verdict === 'amber' ? softenedQuality(t.blocks) : null;
+    const blocks = soft?.blocks ?? t.blocks;
+    const totals = sessionTotals(state.model, blocks);
+    const lightenings = [
+      ...(s.lightenings ?? []).filter((l) => l.rule !== 'readiness_red' && l.rule !== 'readiness_amber'),
+      ...(soft ? [{ rule: 'readiness_amber', on: today }] : []),
+    ];
+    out.push({
+      sessionId: s.id,
+      date: s.date,
+      action: 'rewrite',
+      rule: 'readiness_lapsed',
+      lightenings,
+      content: {
+        ...t, blocks, plannedLoad: totals.load, plannedMechanicalLoad: totals.mechanicalLoad, durationS: totals.durationS,
+        priority: s.priority, program: p,
+      },
+      reason:
+        `La disponibilité au rouge du ${dayMonth(red.on)} jugeait la séance du ${dayMonth(addDays(red.on, 1))} ; ` +
+        `décalée au ${dayMonth(s.date)}, elle reprend son contenu, « ${formatOf(t.title)} »` +
+        (soft
+          ? `, au bas de ses fourchettes : disponibilité en vigilance (${state.readiness.score}/100)` +
+            `${soft.shortened ? `, bloc d'intensité de ${sessionDuration(soft.shortened.fromS)} ramené à ${sessionDuration(soft.shortened.toS)}` : ''}.`
+          : '.'),
+    });
+  }
+  return out;
+}
+
 export function evaluateAdjustments(
   state: AthleteState,
   upcoming: PlannedSession[],
@@ -793,6 +856,12 @@ export function evaluateAdjustments(
   // Avant toute règle de charge : c'est elle qui dit si la prochaine course a
   // lieu, et à quelle marche. Les autres jugent ensuite ce qu'elle a écrit.
   for (const adj of repriseAdjustments(state, upcoming)) push(adj);
+
+  // ── Règle R bis : un rouge ne juge que son jour ───────────────────────────
+  // Une séance de la reprise courue facile pour un rouge, puis décalée à un
+  // jour que ce rouge ne jugeait pas, reprend son contenu ; la disponibilité de
+  // la veille en décide ensuite, ici même.
+  for (const adj of lapsedEasing(state, upcoming)) push(adj);
 
   // ── Règle 1 : séances passées jamais réalisées ────────────────────────────
   for (const s of upcoming) {
@@ -1432,6 +1501,7 @@ export async function applyAdjustments(
           directives: null,
           successCriteria: null,
           program: t.program ?? null,
+          ...(adj.lightenings ? { lightenings: adj.lightenings } : {}),
         } as never);
         break;
       }
