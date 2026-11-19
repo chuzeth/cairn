@@ -4,7 +4,7 @@ import type {
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { decimal, directivesFor, localDate, sessionDuration, writtenOn } from '@cairn/core';
-import { ACWR_SPIKE, SPIKE_BANDS, SPIKE_WINDOW_DAYS, isRunFree } from '@cairn/physiology';
+import { ACWR_SPIKE, SPIKE_BANDS, SPIKE_WINDOW_DAYS, isRunFree, runDurationOf } from '@cairn/physiology';
 import { SPIKE_MIN_RUNS, describeSpike, doneRunsWithin, planSpikes } from './spikes.js';
 import { indexDirectives, isIntervalSession } from './directives.js';
 import { descentReason, eccentricVerdicts, progressionReason, roundsLabel } from './eccentric.js';
@@ -506,10 +506,10 @@ export function readinessAdjustment(
       rule,
       reason:
         `${signal} : le bloc d'intensité de ${name} se court facile, à durée égale — la sortie garde ses ` +
-        `${sessionDuration(quality.plannedDurationS)} et son dénivelé.`,
+        `${sessionDuration(runDurationOf(quality))} de course et son dénivelé.`,
     };
   }
-  const easy = `${sessionDuration(quality.plannedDurationS)} de footing facile à la place de ${name}`;
+  const easy = `${sessionDuration(runDurationOf(quality))} de footing facile à la place de ${name}`;
   const why = test
     ? ` Un test maximal couru fatigué mesure la fatigue, pas la capacité : la vitesse critique qu'il nourrit en ` +
       `sortirait sous-estimée, et toutes les allures avec elle.`
@@ -594,9 +594,16 @@ function freeDayFor(
  * rouge — à la seconde près : la maille de cinq minutes du footing en ferait
  * une séance plus longue que celle qu'elle remplace.
  */
-function easyContent(model: PhysiologyModel, durationS: number) {
+/**
+ * Le footing qui remplace une séance : son temps de course, et ce qui s'y
+ * ajoute — souplesse, respiration — gardé tel quel. Le 18/11, « Allure de
+ * course continue », 55 min et 20 min de souplesse, était devenue 1 h 15 de
+ * footing : la souplesse comptée comme de la course, et retirée.
+ */
+function easyContent(model: PhysiologyModel, from: Pick<PlannedSession, 'blocks' | 'plannedDurationS'>) {
+  const durationS = runDurationOf(from);
   const t = endurance(model, Math.max(1, Math.round(durationS / 60)));
-  const blocks = t.blocks.map((b, i) => (i === 0 ? { ...b, durationS } : b));
+  const blocks = [...t.blocks.map((b, i) => (i === 0 ? { ...b, durationS } : b)), ...from.blocks.filter((b) => b.kind)];
   const totals = sessionTotals(model, blocks);
   return {
     type: t.type, title: t.title, intent: t.intent, priority: t.priority, blocks,
@@ -1330,7 +1337,7 @@ export async function applyAdjustments(
         model ??= await currentModel(athleteId);
         const content = isLongType(session.type)
           ? { blocks: easedLongRun(session.blocks) }
-          : easyContent(model, session.plannedDurationS);
+          : easyContent(model, session);
         const presented = presentDecided(
           { ...session, ...content, decision: decided(adj.reason), rationale: adj.reason },
           { model },
@@ -1379,7 +1386,7 @@ export async function applyAdjustments(
           const written = presentDecided(
             {
               id: `${session.id}-facile-${session.date}`, athleteId, date: session.date, status: 'planned',
-              ...easyContent(model, session.plannedDurationS),
+              ...easyContent(model, session),
               decision: decided(adj.reason), rationale: adj.reason,
               lightenings: [{ rule: adj.rule, on: localDate(at) }],
             },

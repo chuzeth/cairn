@@ -266,6 +266,25 @@ describe('La disponibilité ajuste la séance de qualité du jour ou du lendemai
     );
   });
 
+  it('au rouge, le footing reprend la durée de course, et garde la souplesse qui s’y ajoute', async () => {
+    // Le 18/11 : « Allure de course continue », 55 min et 20 min de souplesse,
+    // devenue « 1 h 15 de footing facile » — la souplesse comptée comme de la course.
+    const annex = [
+      { label: 'Les exercices de ta kiné', kind: 'mobility' as const, zone: 'Z1' as const, durationS: 600 },
+      { label: 'Respiration', kind: 'respiratory' as const, zone: 'Z1' as const, durationS: 600 },
+    ];
+    store.sessions[0] = { ...ALLURE(), blocks: [...ALLURE().blocks, ...annex], plannedDurationS: 3240 + 1200 };
+    store.sessions = store.sessions.filter((s) => s.date <= '2026-10-07');
+    store.sessions.push(
+      ...['2026-10-08', '2026-10-09'].map((d, i) => session({ id: `dur_${i}`, date: d, type: 'tempo', title: 'Tempo' })),
+    );
+    const { adjustments, after } = await checkIn('2026-10-02', 'red', 38);
+    expect(adjustments[0]!.reason).toMatch(/54 min de footing facile/);
+    expect(after.blocks.filter((b) => !b.kind).reduce((a, b) => a + (b.durationS ?? 0), 0)).toBe(3240);
+    expect(after.blocks.filter((b) => b.kind).map((b) => b.label)).toEqual(['Les exercices de ta kiné', 'Respiration']);
+    expect(after.plannedDurationS).toBe(4440);
+  });
+
   it('ne reporte jamais dans l’affûtage : sur le vrai plan, un rouge le 02/10 se court facile sur place', async () => {
     // Le 03/10 et le 04/10 ne sont pas libres ; dès le 05/10, l'affûtage garde
     // ses propres séances d'intensité. Le 09/10 était le jour retenu.

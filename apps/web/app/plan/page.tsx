@@ -185,7 +185,11 @@ export default function PlanPage() {
 
         <ol className="p-days" aria-label="Les séances de la semaine">
           {days.map((date) => {
-            const daily = sessions.filter((s) => s.date === date && s.type !== 'rest');
+            // Une séance annulée ou retirée ne se montre plus : barrée, elle encombrait la
+            // semaine de ce qui n'aura pas lieu — le 19/11, la force de la reprise remplacée
+            // par la course. Ce qui la remplace se lit à sa place ; son histoire, dans la
+            // séance qui lui a succédé et dans le journal du plan.
+            const daily = sessions.filter((s) => s.date === date && s.type !== 'rest' && held(s));
             const completed = data.completedByDate[date];
             const alerted = alerts.some((a) => a.date === date);
             if (daily.length === 0) {
@@ -204,7 +208,6 @@ export default function PlanPage() {
               );
             }
             return daily.map((s, k) => {
-              const off = s.status === 'withdrawn' || s.status === 'cancelled';
               const gain = Math.round(s.plannedElevationGainM ?? 0);
               const body = (
                 <>
@@ -222,12 +225,12 @@ export default function PlanPage() {
                 </>
               );
               // Une séance de renforcement s'ouvre en entier (`/seance`) ; une course se déplie ici.
-              return isWorkout(s) && !off ? (
+              return isWorkout(s) ? (
                 <li key={s.id} className="p-day">
                   <Link href={`/seance?d=${s.date}`} className="p-day-row" transitionTypes={['nav-forward']}>{body}</Link>
                 </li>
               ) : (
-                <li key={s.id} className="p-day" data-off={off}>
+                <li key={s.id} className="p-day">
                   <button type="button" className="p-day-row" aria-expanded={open === s.id} onClick={() => setOpen(open === s.id ? null : s.id)}>
                     {body}
                   </button>
