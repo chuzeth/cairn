@@ -368,7 +368,9 @@ function recoveryDistance(model: PhysiologyModel, b: SessionBlock): number {
   if (!r) return 0;
   if (b.where && ((r.elevationGainM ?? 0) > 0 || (r.elevationLossM ?? 0) > 0)) return b.where.lengthM;
   if (climbsBack(r)) return (r.elevationGainM as number) / Math.sin(Math.atan(DEFAULT_DESCENT_GRADE));
-  return r.durationS * recoveryPaceOf(model, b).groundMs;
+  const run = r.durationS * recoveryPaceOf(model, b).groundMs;
+  // Une récupération qui redescend une montée parcourt sa pente, pas le plat.
+  return (r.elevationLossM ?? 0) > 0 ? Math.min(run, (r.elevationLossM as number) / Math.sin(Math.atan(DEFAULT_DESCENT_GRADE))) : run;
 }
 
 /**
@@ -1141,9 +1143,27 @@ function totalDistance(model: PhysiologyModel, blocks: readonly SessionBlock[]):
     if (b.kind || b.circuit) return a;
     // La distance écrite prime, comme sur la montre : une descente posée sur un
     // tronçon de 405 m en fait 405, quel que soit le temps qu'elle prend.
-    const work = b.distanceM ?? (b.durationS ?? 0) * paceOf(model, b).groundMs;
+    const flat = (b.durationS ?? 0) * paceOf(model, b).groundMs;
+    const work = b.distanceM ?? Math.min(flat, climbRun(b) ?? Infinity);
     return a + (b.repeat ?? 1) * work + recoveryTimes(b) * recoveryDistance(model, b);
   }, 0);
+}
+
+/**
+ * Une montée facile de sentier ne parcourt pas, à l'horizontale, ce que la même
+ * durée parcourt à plat : à 680 m/h sur une pente de trail, l'heure fait 4,5 km,
+ * pas les 9 de la vitesse du sentier. Le 24/11/2026, une journée en montagne de
+ * 6 h et 1 850 m D+ en comptait 50 km, et la règle du pic de distance la
+ * jugeait comme une sortie à plat de 50 km. Seul un bloc facile qui monte à
+ * 400 m/h au moins est une montée ; un footing vallonné garde sa vitesse.
+ */
+const CLIMB_RATE_MH = 400;
+const DEFAULT_CLIMB_GRADE = 0.15;
+function climbRun(b: SessionBlock): number | null {
+  const gain = b.elevationGainM ?? 0;
+  const s = b.durationS ?? 0;
+  if (!isEasyZone(b.zone) || b.effort || gain <= 0 || s <= 0 || (gain / s) * 3600 < CLIMB_RATE_MH) return null;
+  return gain / Math.sin(Math.atan(DEFAULT_CLIMB_GRADE));
 }
 
 /**

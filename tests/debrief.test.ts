@@ -292,3 +292,21 @@ describe('La température de l’air', () => {
     expect(d.findings.some((f) => f.code === 'cardiac_strain')).toBe(false);
   });
 });
+
+describe('La distance d’une journée en montagne', () => {
+  it('compte une montée de sentier sur sa pente, pas à la vitesse du plat', async () => {
+    const { sessionTotals } = await import('@cairn/coach');
+    // 5 montées de 450 m à 680 m/h, chacune redescendue à 1 200 m/h.
+    const climbs = [{
+      label: 'Montées', zone: 'Z2' as const, durationS: 2400, repeat: 5, hrRange: [0, 152] as [number, number], elevationGainM: 450, terrain: 'trail' as const,
+      recovery: { durationS: 1350, zone: 'Z1' as const, active: true, elevationLossM: 450 },
+    }];
+    const km = sessionTotals(PIERRE_MODEL, climbs).distanceM / 1000;
+    // 2 250 m montés et descendus sur des pentes de 15 % : environ 30 km, pas 45.
+    expect(km).toBeGreaterThan(25);
+    expect(km).toBeLessThan(33);
+    // Un footing vallonné (200 m/h) garde sa vitesse de footing.
+    const rolling = [{ label: 'Footing', zone: 'Z2' as const, durationS: 3600, hrRange: [0, 150] as [number, number], elevationGainM: 200, elevationLossM: 200 }];
+    expect(sessionTotals(PIERRE_MODEL, rolling).distanceM / 1000).toBeGreaterThan(9);
+  });
+});
