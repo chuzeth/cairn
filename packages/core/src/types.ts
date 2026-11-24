@@ -270,6 +270,13 @@ export interface AthleteConstraints {
   /** Accès piste / tapis. */
   hasTrackAccess: boolean;
   hasTreadmillAccess: boolean;
+  /**
+   * Des séances de course à pied, et rien d'autre : ni souplesse, ni
+   * respiration, ni circuit de renforcement, ni exercices de kiné. Pierre, le
+   * 24/11/2026 : « je veux que les séances et les plans se cantonnent à la
+   * course à pied ».
+   */
+  runningOnly?: boolean;
   /** Notes libres (blessures anciennes, travail, voyages…). */
   notes?: string[];
 }

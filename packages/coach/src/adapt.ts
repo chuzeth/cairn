@@ -1,6 +1,6 @@
 import type {
   DeclaredAbsence, DecisionOrigin, IntervalPolicyDirective, PhysiologyModel, PlannedSession,
-  SessionDecision, SessionLightening,
+  SessionBlock, SessionDecision, SessionLightening,
 } from '@cairn/core';
 import * as db from '@cairn/db';
 import { decimal, directivesFor, localDate, sessionDuration, writtenOn } from '@cairn/core';
@@ -671,7 +671,7 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
                 : `Course ramenée à la marche ${level} au lieu de ${p.planned} : ${verdict.reason}.`;
       out.push({
         sessionId: next.id, date: next.date, action: 'rewrite', rule: 'reprise_progression', reason: why,
-        content: { ...t, priority: next.priority, program: { ...p, level, kind } },
+        content: { ...runningOnlyContent(state, t), priority: next.priority, program: { ...p, level, kind } },
       });
     }
   }
@@ -689,7 +689,7 @@ function repriseAdjustments(state: AthleteState, sessions: PlannedSession[]): Ad
           reason: fallback
             ? `Le dossard passe à la Saintétic : ${gate.reason}. La SaintéSprint demandait la dernière sortie longue sans douleur.`
             : `La SaintéSprint est confirmée : ${gate.reason}.`,
-          content: { ...t, priority: 'key', program: { ...race.program!, level: fallback ? race.program!.planned - 1 : race.program!.planned } },
+          content: { ...runningOnlyContent(state, t), priority: 'key', program: { ...race.program!, level: fallback ? race.program!.planned - 1 : race.program!.planned } },
         });
       }
     }
@@ -759,6 +759,18 @@ export function recoveryAdjustments(state: AthleteState, upcoming: readonly Plan
 }
 
 /**
+ * Le contenu d'une séance de la reprise réécrite par les règles, sans ce qui ne
+ * se court pas quand l'athlète ne veut que de la course : ni souplesse, ni
+ * respiration, ni exercices de kiné, ni circuit (`runningOnly`).
+ */
+function runningOnlyContent<T extends { blocks: SessionBlock[]; durationS: number }>(state: AthleteState, t: T): T {
+  if (!state.profile?.constraints.runningOnly) return t;
+  const blocks = t.blocks.filter((b) => !b.kind && !b.circuit);
+  const dropped = t.blocks.filter((b) => b.kind || b.circuit).reduce((a, b) => a + (b.durationS ?? 0) * (b.repeat ?? 1), 0);
+  return { ...t, blocks, durationS: Math.max(0, t.durationS - dropped) };
+}
+
+/**
  * Un rouge ne juge que son jour.
  *
  * La disponibilité au rouge fait courir facile la séance de qualité du jour ou
@@ -785,7 +797,7 @@ export function lapsedEasing(state: AthleteState, upcoming: readonly PlannedSess
     // Le verdict jugeait son jour et le lendemain : la séance y est encore.
     if (!red || s.date <= addDays(red.on, 1)) continue;
     if (isQualitySession(s, state.model)) continue;
-    const t = repriseDay(state.model, p.day);
+    const t = runningOnlyContent(state, repriseDay(state.model, p.day));
     if (!isQualitySession({ type: t.type, blocks: t.blocks }, state.model)) continue;
     // La veille d'une séance, la disponibilité du jour la juge ; plus loin, elle sera jugée le moment venu.
     const verdict = s.date <= tomorrow ? state.readiness.verdict : 'green';

@@ -511,7 +511,9 @@ export function buildWeek(input: WeekBuildInput): TrainingWeek {
   ];
   const hosts = remaining.filter((d) => !restDays.includes(d) && assigned.get(d)?.type === 'endurance');
   const strengthDay = hosts.find((d) => !descentAfter(dateOf(d), descending));
-  if (strengthDay != null && spec.phase !== 'taper') {
+  if (input.constraints.runningOnly) {
+    // Course à pied seulement : pas de circuit, et rien à dire de son absence.
+  } else if (strengthDay != null && spec.phase !== 'taper') {
     const existing = assigned.get(strengthDay)!;
     // Le rang du circuit : ceux d'avant la semaine, puis les conservées de la
     // semaine qui le précèdent.
@@ -996,7 +998,8 @@ function honourDirectives(
     if (traces.length > 0) s.directives = traces;
   }
 
-  honourWeeklyFrequency(sessions, set, held);
+  // Course à pied seulement : la souplesse et la respiration du dossier ne s'adossent plus aux séances.
+  if (!input.constraints.runningOnly) honourWeeklyFrequency(sessions, set, held);
 }
 
 /**

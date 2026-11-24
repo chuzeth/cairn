@@ -465,6 +465,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       max_weekly_hours: num("Volume horaire hebdomadaire maximal."),
       max_quality_sessions: num('Nombre maximum de séances de qualité par semaine.'),
       accessible_vert_per_session: num('Dénivelé positif accessible par séance, en mètres.'),
+      running_only: bool("Vrai : les séances ne portent que de la course à pied — ni souplesse, ni respiration, ni renforcement, ni exercices de kiné."),
       notes: str('Note à ajouter au contexte de l\'athlète.'),
     }),
   },
@@ -1913,6 +1914,8 @@ export async function executeTool(
       if (quality) c.maxQualitySessionsPerWeek = quality;
       const vert = arg<number>(input, 'accessible_vert_per_session');
       if (vert) c.accessibleVertPerSession = vert;
+      const runningOnly = arg<boolean>(input, 'running_only');
+      if (typeof runningOnly === 'boolean') c.runningOnly = runningOnly;
       const note = arg<string>(input, 'notes');
       if (note) c.notes = [...(c.notes ?? []), note];
 

@@ -334,6 +334,23 @@ describe('Plan complet', () => {
   });
 });
 
+describe('Course à pied seulement', () => {
+  // Le 24/11/2026, Pierre : « je veux que les séances et les plans se cantonnent
+  // à la course à pied ; enlève la respiration, les exercices du kiné, tout ça ».
+  const build = (runningOnly: boolean) =>
+    buildTrainingPlan({
+      athleteId: 'pierre', model, constraints: { ...PIERRE.constraints, runningOnly }, race: RACE,
+      currentCtl: 45, currentAtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+      directives: directivesFor(PIERRE),
+    }).weeks.flatMap((w) => w.sessions);
+  const offRun = (s: { blocks: { kind?: string; circuit?: unknown }[] }) => s.blocks.some((b) => b.kind || b.circuit);
+
+  it('ne pose ni souplesse, ni respiration, ni circuit', () => {
+    expect(build(false).some(offRun)).toBe(true);
+    expect(build(true).filter(offRun)).toEqual([]);
+  });
+});
+
 describe('Une course intermédiaire dans le plan', () => {
   // Le 24/11/2026, le plan vers Morzine écrivait une rando-course de 3 h 30 le
   // jour du relais de la Sarra : le planificateur ne connaissait que la cible.
