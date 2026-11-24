@@ -15,7 +15,7 @@ import {
 import { metres, sessionProfile, type SessionProfile } from '@/lib/profile';
 import { estimateNote, loadFigures } from '@/lib/figures';
 import { isWorkout, stairsEstimated, workoutOf } from '@/lib/workout';
-import { nextWeekOf, thresholdMinutes } from '@/lib/today';
+import { nextWeekOf, objectiveRace, thresholdMinutes } from '@/lib/today';
 import {
   ABSENCE_KIND_LABEL, GarminLine, GarminProblems, LoadName, MISSING_LABEL, RatioAlerts, ReadinessBasis, SessionHistory,
   SyncLine, unweighed, WhereLine,
@@ -112,7 +112,7 @@ export function Morning({
   // Sans effort aujourd'hui, c'est le prochain qu'on ouvre — sauf le jour où la
   // séance est déjà faite, où il n'y a plus rien à préparer.
   const openNext = !work && !done && !early ? next : undefined;
-  const race = state.upcomingRaces[0];
+  const race = objectiveRace(state.upcomingRaces);
 
   return (
     <div className="morning">

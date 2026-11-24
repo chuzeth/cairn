@@ -4,7 +4,7 @@ import { sessionDuration } from '@cairn/core';
 import type { SessionRow } from '../apps/web/lib/api';
 import { workoutOf } from '../apps/web/lib/workout';
 import {
-  countdownDays, flowOf, heartTarget, partKind, sessionKind, thresholdMinutes, weekShare, weekStartOf,
+  countdownDays, flowOf, heartTarget, objectiveRace, partKind, sessionKind, thresholdMinutes, weekShare, weekStartOf,
 } from '../apps/web/lib/today';
 import { PIERRE_MODEL } from './fixtures/pierre.js';
 
@@ -118,5 +118,17 @@ describe('Les minutes du déroulé', () => {
     const { minutes, segments } = flowOf(p);
     expect(minutes).toBe(total);
     expect(segments.reduce((a, s) => a + s.minutes, 0)).toBe(total);
+  });
+});
+
+describe('La course annoncée', () => {
+  it('est l’objectif A, même quand une course B vient avant', () => {
+    const races = [
+      { name: 'Relais de la Sarra', priority: 'B' as const, date: '2027-05-22' },
+      { name: '100 km de Morzine', priority: 'A' as const, date: '2027-06-19' },
+    ];
+    expect(objectiveRace(races)?.name).toBe('100 km de Morzine');
+    expect(objectiveRace(races.slice(0, 1))?.name).toBe('Relais de la Sarra');
+    expect(objectiveRace([])).toBeUndefined();
   });
 });

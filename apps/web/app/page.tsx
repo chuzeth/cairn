@@ -21,6 +21,7 @@ import { ChargeLine, Countdown, Figures, SessionFlow, sessionFigures } from '@/c
 import { WatchLine } from '@/components/Watch';
 import { firstSentence, sessionHeadline } from '@/lib/sessions';
 import { isWorkout, workoutOf } from '@/lib/workout';
+import { objectiveRace } from '@/lib/today';
 
 interface Health {
   stravaConnected: boolean;
@@ -166,7 +167,7 @@ export default function Dashboard() {
   const upcoming = plan.sessions
     .filter((s) => s.date >= state.today.date && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled')
     .slice(0, 4);
-  const nextRace = state.upcomingRaces[0];
+  const nextRace = objectiveRace(state.upcomingRaces);
   // Les semaines que le graphique dessine vraiment : l'API ne rend que celles
   // des quarante-cinq derniers jours qui ont une séance, et c'est leur nombre
   // que le titre annonce — « dix », « huit » ne se vérifiaient pas.
@@ -487,7 +488,7 @@ function TodayHero({ state, plan, sync }: { state: StateResponse; plan: PlanResp
   const session = plan.sessions.find(
     (s) => s.date === today && s.type !== 'rest' && s.status !== 'withdrawn' && s.status !== 'cancelled',
   );
-  const race = state.upcomingRaces[0];
+  const race = objectiveRace(state.upcomingRaces);
   const done = session != null && (session.status === 'completed' || session.status === 'replaced');
   const workout = session && isWorkout(session) ? workoutOf(session) : null;
 

@@ -203,3 +203,14 @@ export function countdownDays<S extends Pick<SessionRow, 'date' | 'type' | 'stat
   }
   return days;
 }
+
+/**
+ * La course que l'écran du matin et le tableau de bord annoncent : l'objectif
+ * A le plus proche, à défaut la course la plus proche. Le 24/11, le relais de la
+ * Sarra (B, 22/05) passait devant le 100 km de Morzine (A, 19/06), qui est ce
+ * vers quoi tout le plan tend.
+ */
+export function objectiveRace<T extends { priority: 'A' | 'B' | 'C'; date: string }>(races: readonly T[]): T | undefined {
+  const sorted = [...races].sort((a, b) => a.date.localeCompare(b.date));
+  return sorted.find((r) => r.priority === 'A') ?? sorted[0];
+}
