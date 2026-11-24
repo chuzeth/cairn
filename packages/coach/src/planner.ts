@@ -5,7 +5,7 @@ import type {
 import { decimal, signedDecimal, writtenOn } from '@cairn/core';
 import {
   ACWR_SPIKE, DURABILITY_MEASURABLE, fractionalUtilization, interpretDurability, predictRace,
-  prescribedMechanicalLoad, projectFrom, projectLoadRatios, ratioExceedances, steadyRunLoad, targetDistribution,
+  prescribedMechanicalLoad, projectFrom, projectLoadRatios, ratioExceedances, runDurationOf, steadyRunLoad, targetDistribution,
   targetRaceDayTsb, type DailyLoad, type LoadRatioExceedance,
 } from '@cairn/physiology';
 import {
@@ -1144,6 +1144,13 @@ export interface BuildPlanInput {
   startDate?: string;
   /** Directives issues du dossier de l'athlète. */
   directives?: TrainingDirective[];
+  /**
+   * Les courses intermédiaires d'ici la course cible — priorités B et C —, avec
+   * leur durée et leur charge estimées. Chacune prend son jour ; sa veille se
+   * court courte et facile, et ce qui est exigeant à moins de deux jours d'elle
+   * se court facile.
+   */
+  otherRaces?: readonly { race: RaceGoal; durationS: number; load: number }[];
   /** Ambition de long terme, distincte de la course cible. */
   ambition?: AthleteAmbition;
   /**
@@ -1602,7 +1609,23 @@ export function buildTrainingPlan(input: BuildPlanInput): {
   // La course elle-même remplace la séance du jour.
   const raceWeek = fresh.find((w) => w.sessions.some((s) => s.date === raceDate));
   if (raceWeek) {
-    raceWeek.sessions = raceWeek.sessions.filter((s) => s.date !== raceDate);
+    // Après la course, plus rien dans sa semaine : le 24/11/2026, le plan vers
+    // Morzine prescrivait un footing de 1 h 05 et 423 m D+ le lendemain d'un
+    // 100 km. La veille, trente minutes faciles, pas la séance d'un jour d'affûtage.
+    const eve = addDays(raceDate, -1);
+    raceWeek.sessions = raceWeek.sessions
+      .filter((s) => s.date < raceDate)
+      .map((s) => {
+        if (s.date !== eve || s.type === 'rest' || s.plannedDurationS <= 1800) return s;
+        const t = lib.recovery(input.model, 30);
+        const totals = lib.sessionTotals(input.model, t.blocks);
+        return {
+          ...s, type: t.type, title: t.title, intent: t.intent, blocks: t.blocks, plannedLoad: totals.load,
+          plannedMechanicalLoad: totals.mechanicalLoad, plannedDurationS: totals.durationS,
+          plannedElevationGainM: totals.elevationGainM,
+          rationale: `La veille de « ${input.race.name} » : trente minutes faciles pour arriver frais, rien de plus.`,
+        };
+      });
     raceWeek.sessions.push({
       id: uid(),
       athleteId: input.athleteId,
@@ -1632,6 +1655,10 @@ export function buildTrainingPlan(input: BuildPlanInput): {
     });
     raceWeek.sessions.sort((a, b) => a.date.localeCompare(b.date));
   }
+
+  // Les courses intermédiaires prennent leur jour, avant que les décisions du
+  // plan en place ne soient reprises par-dessus.
+  for (const other of input.otherRaces ?? []) layIntermediateRace(fresh, other, input);
 
   // ── Ce qu'une reconstruction n'a pas le droit de réécrire ──────────────────
   // Les semaines se sont écrites autour des décisions du plan en place — jours
@@ -1789,3 +1816,81 @@ export function summarizeWeek(week: TrainingWeek): string {
     .map((s) => `  ${s.date.slice(8, 10)}/${s.date.slice(5, 7)} — ${s.title} (${s.plannedLoad} pts)`);
   return [header, week.focus, ...lines].join('\n');
 }
+
+/**
+ * Une course intermédiaire dans le plan.
+ *
+ * Le 24/11/2026, le plan vers Morzine écrivait une rando-course de 3 h 30 le
+ * jour du relais de 6 h de la Sarra : le planificateur ne connaissait que la
+ * course cible. Une course B ou C prend désormais son jour, comme la cible ;
+ * sa veille devient un décrassage court ; ce qui est exigeant à deux jours
+ * d'elle ou moins — qualité, sortie longue — se court facile, à la même durée
+ * de course. Ni affûtage, ni semaine réécrite : c'est la cible qu'on prépare.
+ */
+export function layIntermediateRace(
+  weeks: TrainingWeek[],
+  other: { race: RaceGoal; durationS: number; load: number },
+  input: Pick<BuildPlanInput, 'athleteId' | 'model' | 'race'>,
+): void {
+  const date = other.race.date.slice(0, 10);
+  if (date >= input.race.date.slice(0, 10)) return;
+  const week = weeks.find((w) => w.weekStart <= date && addDays(w.weekStart, 6) >= date);
+  if (!week) return;
+  const { race, model } = { race: other.race, model: input.model };
+  const day = (d: string) => weeks.find((w) => w.weekStart <= d && addDays(w.weekStart, 6) >= d);
+
+  const fromTemplate = (t: SessionTemplate, on: string, why: string): PlannedSession => {
+    const totals = lib.sessionTotals(model, t.blocks);
+    return {
+      id: uid(), athleteId: input.athleteId, date: on, type: t.type, title: t.title, intent: t.intent,
+      priority: t.priority, status: 'planned', blocks: t.blocks, plannedLoad: totals.load,
+      plannedMechanicalLoad: totals.mechanicalLoad, plannedDurationS: totals.durationS,
+      plannedElevationGainM: totals.elevationGainM, rationale: why,
+    };
+  };
+
+  week.sessions = week.sessions.filter((s) => s.date !== date);
+  week.sessions.push({
+    id: uid(),
+    athleteId: input.athleteId,
+    date,
+    type: 'race',
+    title: `🏁 ${race.name}`,
+    intent: `Course ${race.priority}, sur la route de « ${input.race.name} ».`,
+    blocks: [],
+    plannedLoad: Math.round(other.load),
+    plannedMechanicalLoad: Math.round(prescribedMechanicalLoad({ elevationLossM: race.course.elevationLossM }).total),
+    plannedDurationS: Math.round(other.durationS),
+    plannedDistanceM: race.course.distanceM,
+    plannedElevationGainM: race.course.elevationGainM,
+    priority: 'key',
+    status: 'planned',
+    rationale:
+      `Course ${race.priority} : distance et dénivelé sont ceux du parcours, relevés sur la course et non prescrits. ` +
+      `Elle compte comme la séance exigeante de sa semaine.`,
+  });
+  week.sessions.sort((a, b) => a.date.localeCompare(b.date));
+
+  // Autour d'elle : la veille courte et facile, le reste exigeant à deux jours ou moins couru facile.
+  for (const offset of [-2, -1, 1, 2]) {
+    const on = addDays(date, offset);
+    const w = day(on);
+    if (!w) continue;
+    w.sessions = w.sessions.map((s) => {
+      if (s.date !== on || s.type === 'rest' || s.type === 'race') return s;
+      if (offset === -1) {
+        return fromTemplate(
+          lib.recovery(model, 30), on,
+          `La veille de « ${race.name} » : trente minutes faciles pour arriver frais, rien de plus.`,
+        );
+      }
+      if (!isHardSession(s, model)) return s;
+      const runS = runDurationOf(s);
+      return fromTemplate(
+        lib.endurance(model, Math.max(30, Math.round(runS / 60))), on,
+        `À ${Math.abs(offset)} jour${Math.abs(offset) > 1 ? 's' : ''} de « ${race.name} » : courue facile, à la même durée de course — la course est la séance exigeante.`,
+      );
+    });
+  }
+}
+

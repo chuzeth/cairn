@@ -281,6 +281,14 @@ describe('Plan complet', () => {
     expect(weeks[weeks.length - 1]!.phase).toBe('taper');
   });
 
+  it('ne prescrit rien après la course, et une veille de trente minutes faciles', () => {
+    // Le 24/11/2026 : un footing de 1 h 05 et 423 m D+ le lendemain d'un 100 km.
+    const all = weeks.flatMap((w) => w.sessions);
+    expect(all.filter((s) => s.date > RACE.date)).toEqual([]);
+    const eve = all.filter((s) => s.date === '2026-12-04' && s.type !== 'rest');
+    expect(eve.every((s) => s.plannedDurationS <= 1800)).toBe(true);
+  });
+
   it('insère la course le jour J et remplace la séance prévue', () => {
     const all = weeks.flatMap((w) => w.sessions);
     const raceDay = all.filter((s) => s.date === RACE.date);
@@ -323,6 +331,34 @@ describe('Plan complet', () => {
 
   it('vise un TSB positif le jour de la course', () => {
     expect(plan.targetRaceDayTsb).toBeGreaterThan(0);
+  });
+});
+
+describe('Une course intermédiaire dans le plan', () => {
+  // Le 24/11/2026, le plan vers Morzine écrivait une rando-course de 3 h 30 le
+  // jour du relais de la Sarra : le planificateur ne connaissait que la cible.
+  const relay: RaceGoal = { ...RACE, id: 'relais', name: 'Relais de la Sarra', date: '2026-10-03', priority: 'B' };
+  const { weeks } = buildTrainingPlan({
+    athleteId: 'pierre', model, constraints: PIERRE.constraints, race: RACE,
+    currentCtl: 45, currentAtl: 45, estimatedRaceDurationS: 3 * 3600, startDate: '2026-09-01',
+    otherRaces: [{ race: relay, durationS: 6 * 3600, load: 240 }],
+  });
+  const all = weeks.flatMap((w) => w.sessions);
+  const on = (d: string) => all.filter((s) => s.date === d && s.type !== 'rest');
+
+  it('prend son jour, comme la cible', () => {
+    expect(on('2026-10-03')).toEqual([expect.objectContaining({ type: 'race', title: '🏁 Relais de la Sarra', plannedLoad: 240 })]);
+  });
+
+  it('se prépare la veille par un décrassage, et rien d’exigeant à deux jours ou moins', () => {
+    expect(on('2026-10-02').every((s) => s.type === 'recovery' && s.plannedDurationS <= 1800)).toBe(true);
+    for (const d of ['2026-10-01', '2026-10-04', '2026-10-05']) {
+      expect(on(d).filter((s) => lib.isHardSession(s, model))).toEqual([]);
+    }
+  });
+
+  it('laisse la cible et son affûtage tels quels', () => {
+    expect(on(RACE.date)).toEqual([expect.objectContaining({ type: 'race', title: `🏁 ${RACE.name}` })]);
   });
 });
 

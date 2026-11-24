@@ -531,6 +531,66 @@ export interface ToolResult {
  * et le disent ici plutôt que de laisser le journal écrire « depuis
  * l'interface » pour les deux.
  */
+/**
+ * Durée de course, allure spécifique et charge d'une course — les seules
+ * choses que le planificateur prend de la prédiction. Sur un format à boucle
+ * répétée, les demander à `predictRace` reviendrait à chronométrer 67 km
+ * courus d'affilée : la durée serait fausse, donc l'affûtage et les séances
+ * d'allure spécifique avec elle.
+ */
+function raceEstimateOf(
+  state: Awaited<ReturnType<typeof loadAthleteState>>,
+  race: RaceGoal,
+): { estimatedRaceDurationS: number; racePaceMs: number | undefined; raceLoad: number } {
+  let estimatedRaceDurationS: number;
+  let racePaceMs: number | undefined;
+  // La charge de la course : le temps couru, à l'intensité que la prédiction
+  // y tient — à plat, comme se compte la charge réalisée.
+  let raceLoad: number;
+  const vt2 = state.model.vt2.speedMs;
+
+  if (isLapCourse(race.course)) {
+    const laps = targetLaps(race);
+    if (laps == null) {
+      throw new Error(
+        `« ${race.name} » est un format à boucle répétée sans ambition enregistrée. ` +
+          'Renseigne-la (`target_laps` ou `target_hours`) avant de construire un plan : ' +
+          "sans elle, il n'y a pas de durée de course à préparer.",
+      );
+    }
+    estimatedRaceDurationS = laps * race.course.lap.intervalS;
+    const lapPrediction = predictLapRace({
+      model: state.model,
+      course: race.course,
+      targetLaps: laps,
+      raceDayTsb: targetRaceDayTsb(estimatedRaceDurationS).metabolic,
+      skipCounterfactuals: true,
+    });
+    // L'allure spécifique de ce format est celle de la boucle, pas celle
+    // d'une course continue de même distance.
+    racePaceMs =
+      lapPrediction.runningTimeS > 0 ? lapPrediction.distanceM / lapPrediction.runningTimeS : undefined;
+    // Le repos entre deux boucles ne se court pas.
+    raceLoad = steadyRunLoad(lapPrediction.runningTimeS, racePaceMs ?? 0, vt2);
+  } else {
+    const prediction = predictRace({
+      model: state.model,
+      course: race.course,
+      raceDayTsb: targetRaceDayTsb((race.course.distanceM / state.model.criticalSpeedMs) * 1.25).metabolic,
+      skipLimiters: true,
+    });
+    estimatedRaceDurationS = prediction.predictedTimeS;
+    racePaceMs =
+      prediction.predictedTimeS > 0 ? race.course.distanceM / prediction.predictedTimeS : undefined;
+    raceLoad = steadyRunLoad(
+      prediction.predictedTimeS,
+      prediction.predictedTimeS > 0 ? prediction.flatEquivalentDistanceM / prediction.predictedTimeS : 0,
+      vt2,
+    );
+  }
+  return { estimatedRaceDurationS, racePaceMs, raceLoad };
+}
+
 export async function executeTool(
   athleteId: string,
   name: string,
@@ -1271,57 +1331,7 @@ export async function executeTool(
 
       const state = await loadAthleteState(athleteId);
 
-      // Durée de course et allure spécifique — les deux seules choses que le
-      // planificateur prend de la prédiction. Sur un format à boucle répétée,
-      // les demander à `predictRace` reviendrait à chronométrer 67 km courus
-      // d'affilée : la durée serait fausse, donc l'affûtage et les séances
-      // d'allure spécifique avec elle.
-      let estimatedRaceDurationS: number;
-      let racePaceMs: number | undefined;
-      // La charge de la course : le temps couru, à l'intensité que la prédiction
-      // y tient — à plat, comme se compte la charge réalisée.
-      let raceLoad: number;
-      const vt2 = state.model.vt2.speedMs;
-
-      if (isLapCourse(race.course)) {
-        const laps = targetLaps(race);
-        if (laps == null) {
-          throw new Error(
-            `« ${race.name} » est un format à boucle répétée sans ambition enregistrée. ` +
-              'Renseigne-la (`target_laps` ou `target_hours`) avant de construire un plan : ' +
-              "sans elle, il n'y a pas de durée de course à préparer.",
-          );
-        }
-        estimatedRaceDurationS = laps * race.course.lap.intervalS;
-        const lapPrediction = predictLapRace({
-          model: state.model,
-          course: race.course,
-          targetLaps: laps,
-          raceDayTsb: targetRaceDayTsb(estimatedRaceDurationS).metabolic,
-          skipCounterfactuals: true,
-        });
-        // L'allure spécifique de ce format est celle de la boucle, pas celle
-        // d'une course continue de même distance.
-        racePaceMs =
-          lapPrediction.runningTimeS > 0 ? lapPrediction.distanceM / lapPrediction.runningTimeS : undefined;
-        // Le repos entre deux boucles ne se court pas.
-        raceLoad = steadyRunLoad(lapPrediction.runningTimeS, racePaceMs ?? 0, vt2);
-      } else {
-        const prediction = predictRace({
-          model: state.model,
-          course: race.course,
-          raceDayTsb: targetRaceDayTsb((race.course.distanceM / state.model.criticalSpeedMs) * 1.25).metabolic,
-          skipLimiters: true,
-        });
-        estimatedRaceDurationS = prediction.predictedTimeS;
-        racePaceMs =
-          prediction.predictedTimeS > 0 ? race.course.distanceM / prediction.predictedTimeS : undefined;
-        raceLoad = steadyRunLoad(
-          prediction.predictedTimeS,
-          prediction.predictedTimeS > 0 ? prediction.flatEquivalentDistanceM / prediction.predictedTimeS : 0,
-          vt2,
-        );
-      }
+      const { estimatedRaceDurationS, racePaceMs, raceLoad } = raceEstimateOf(state, race);
 
       // La charge de départ est celle du **premier jour du plan**, pas celle
       // d'aujourd'hui : entre les deux, la forme continue de vivre.
@@ -1332,6 +1342,18 @@ export async function executeTool(
       // Le plan en place entre dans la construction : ses décisions sont
       // reprises, elles ne sont pas réécrites.
       const previous = await db.getActivePlan(athleteId);
+
+      // Les courses intermédiaires d'ici la cible, chacune avec sa durée et sa charge.
+      const otherRaces = state.upcomingRaces
+        .filter((r) => r.id !== race.id && r.date >= planStart && r.date < race.date && r.priority !== 'A')
+        .flatMap((r) => {
+          try {
+            const e = raceEstimateOf(state, r);
+            return [{ race: r, durationS: e.estimatedRaceDurationS, load: e.raceLoad }];
+          } catch {
+            return [];
+          }
+        });
 
       const { plan, weeks, tsbCheck, ratioCheck, volumeCheck, carryOver } = buildTrainingPlan({
         athleteId,
@@ -1355,6 +1377,7 @@ export async function executeTool(
         terrain: await terrainHint(athleteId),
         eccentricCircuitsDone: state.eccentricCircuitsDone,
         descentsDone: await countDescents(athleteId, state.today.date),
+        otherRaces,
       });
 
       // Les semaines que le planificateur a écrites, sans celles d'avant le
